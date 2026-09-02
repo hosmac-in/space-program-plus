@@ -1,0 +1,77 @@
+How is a space program stored? 
+We first need to make a kit of all parts of a space program
+
+
+
+
+What is a space program?
+A space program is a document that clearly defines every room in a building project.
+Typically they are made on excel. However for very complex buildings like a Hospital,
+the number of rooms can exceed 500. This calls for a much more structured document management
+
+
+Section 1: Structure of the Space Program
+
+How have we structured the space program?
+The structure is as follows -
+
+-->buildings
+---->Sections
+------->Department Groups
+---------->Departments
+------------->Rooms/Spaces
+---------------->Objects
+
+Definitions:
+
+buildings:
+Scoped project that the client envisions to function as an entity.
+eg- Hospital, Medical College, Laboratory, etc..
+
+Sections:
+The broad range of services offered in the building.
+eg- Emergency Care, Inpatient Care, Ambulatory Care, Academics, Accomodation, etc..
+
+Department Groups:
+The various departments that constitute a service.
+eg- ICU and Ward/Private Beds in Inpatient care.
+eg- Broad Speciality OPD and Super Speciality OPD in Ambulatory care.
+eg- Staff/ Relative/ Student Accomodation in Accomodation.
+
+Departments:
+A department is a clearly idenitifable collection of rooms/spaces.
+eg- Dermat OPD in BS OPD.
+eg- SICU in ICU
+eg- General Ward in Inpatient care
+
+Rooms/Spaces:
+The singleton element with a defined function. 
+eg- Clean Utility in a Ward.
+eg- AHU Room for an ICU.
+eg- Change Cubical of the Surgical Suite
+
+Objects:
+The beds, furniture, equipment (clinical or mechanical), fixtures that are present in a room.
+eg- Beds in a Ward
+eg- Table in Consultation room
+eg- AHU Machine in an AHU room
+
+Each element on different scales has an entry in the master list tables on Hosmac Database.
+
+
+What is the Space Program Tree?
+The Tree is the pre-configured Section structure of the Space Program.
+It is the template after which each space program is modelled after.
+
+Why does the Tree exist?
+It exists to navigate the building in a clearly defined manner. 
+
+What is fixed by the Tree?
+The Section-->Department Group-->Department locked by the tree.
+This means that a user cannot change the hierachy here without changing the template Tree itself
+The Department-->Room-->Object is pre-filled by the tree, but allows users to add extra rooms and objects
+
+
+
+
+Section 2: Entering Areas & Counts to into the structure
