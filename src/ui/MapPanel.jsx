@@ -6,6 +6,7 @@ import DrawControl from './map/DrawControl.jsx'
 import SiteClusterLayer from './map/SiteClusterLayer.jsx'
 import DepartmentGraph from './option/DepartmentGraph.jsx'
 import TreeCanvas from './tree/TreeCanvas.jsx'
+import QuestionOutline from './questions/QuestionOutline.jsx'
 import { RULE } from './layout.js'
 import { Z } from './primitives/zIndex.js'
 
@@ -65,11 +66,21 @@ export default function MapPanel({
   sectionIds,
   onAddSection,
   onRemoveSection,
+  buildingIds,
+  phaseCount,
   selection,
   onSelectContainer,
   onClearSelection,
   onSelectDepartment,
   selectedDeptInstanceId,
+  selectedPhase,
+  // The Questions tab: which building is being authored, and which node in it
+  // side is reporting on.
+  questionBuildingId,
+  onSelectQuestionBuilding,
+  selectedQuestionId,
+  onSelectQuestion,
+  onLeaveQuestions,
   view,
   isAdmin,
   // The band across the top of main, when the open tab has one. Passed in
@@ -121,11 +132,14 @@ export default function MapPanel({
                 sectionIds={sectionIds}
                 onAddSection={onAddSection}
                 onRemoveSection={onRemoveSection}
+                buildingIds={buildingIds}
+                phaseCount={phaseCount}
                 selection={selection}
                 onSelectContainer={onSelectContainer}
                 onClearSelection={onClearSelection}
                 onSelectDepartment={onSelectDepartment}
                 selectedDeptInstanceId={selectedDeptInstanceId}
+                selectedPhase={selectedPhase}
               />
             </div>
           )}
@@ -135,6 +149,19 @@ export default function MapPanel({
               <TreeCanvas
                 onSelectDepartment={onSelectDepartment}
                 selectedDeptInstanceId={selectedDeptInstanceId}
+                canEdit={isAdmin}
+              />
+            </div>
+          )}
+
+          {view === 'questions' && (
+            <div style={{ position: 'absolute', inset: 0 }}>
+              <QuestionOutline
+                buildingId={questionBuildingId}
+                onSelectBuilding={onSelectQuestionBuilding}
+                selectedId={selectedQuestionId}
+                onSelect={onSelectQuestion}
+                onLeave={onLeaveQuestions}
                 canEdit={isAdmin}
               />
             </div>

@@ -16,6 +16,16 @@ export const PADDING = 16
 export const LABEL_HEIGHT = 30
 const EMPTY_HEIGHT = 36
 
+// A building's heading is a title, not a card header — see CanvasBandHeading.
+// It gets its own height because 30px cannot hold 30px type.
+export const BUILDING_LABEL_HEIGHT = 52
+
+// The air between two buildings, far wider than the GAP between boxes inside
+// one. Buildings are the only thing stacked down the canvas, and with no box
+// around them this gap is most of what separates one from the next — at GAP the
+// bands ran together and the headings stopped reading as titles.
+export const BUILDING_GAP = 88
+
 // Content starts PADDING below the header and ends PADDING above the bottom
 // edge, matching the PADDING used left and right — so a card is inset by the
 // same amount on all four sides of its container.
@@ -53,4 +63,37 @@ export function layoutSectionBox(groupBoxes) {
 
   const contentBottom = groupBoxes.length === 0 ? CONTENT_TOP + EMPTY_HEIGHT : runningY - GAP
   return { width, height: contentBottom + PADDING, placed, isEmpty: groupBoxes.length === 0 }
+}
+
+// A building band: a heading, then section boxes side by side beneath it.
+//
+// The same shape as layoutSectionBox with the axes swapped — groups stack
+// downwards inside a section, sections run across inside a building. Boxes vary
+// in both dimensions here, so the band is as tall as its tallest child.
+//
+// `labelHeight` because a building's heading is a title rather than a card
+// header, and needs the room for it.
+//
+// No PADDING on the left: with no box around a building, there is no edge to be
+// inset from, and its heading and its first section must start on the same
+// line as every other building's.
+export function layoutRowBox(boxes, labelHeight = LABEL_HEIGHT) {
+  const contentTop = labelHeight + PADDING
+
+  let runningX = 0
+  const placed = boxes.map((box) => {
+    const x = runningX
+    runningX += box.width + GAP
+    return { ...box, x, y: contentTop }
+  })
+
+  const contentRight = boxes.length === 0 ? NODE_WIDTH + PADDING * 2 : runningX - GAP
+  const tallest = boxes.length === 0 ? EMPTY_HEIGHT : Math.max(...boxes.map((b) => b.height))
+
+  return {
+    width: contentRight,
+    height: contentTop + tallest,
+    placed,
+    isEmpty: boxes.length === 0,
+  }
 }

@@ -5,8 +5,16 @@
 //   #/uhdp?p=7f3a1c2e…
 //   #/project?p=7f3a1c2e…&o=b21c4f90…
 //   #/tree
+//   #/questions?b=1d9e5a30…
 //
-//   p = sp_project.id      o = sp_option.id
+//   p = sp_project.id      o = sp_option.id      b = sp_building.id
+//
+// The Tree tab takes no parameter: it shows every building at once, stacked.
+//
+// The Questions tab takes `b`, because a questionnaire is authored one building
+// at a time — one row per building, see data/questionnaire.js — and a link to
+// one should open that one. Absent or unrecognised falls back to the first
+// building.
 //
 // The tab is a path segment, named by its visible label; the ids are query
 // parameters, present only when something is selected. Anything unrecognised
@@ -31,8 +39,8 @@ import { useCallback, useEffect, useState } from 'react'
 // `canvas` and `hierarchy` — what these screens were called before — are not
 // read. A link using them falls through to #/uhdp like any other unrecognised
 // path, which is the point: there is one name per screen, not two.
-const VIEW_BY_SLUG = { uhdp: 'map', project: 'project', tree: 'tree' }
-const SLUG_BY_VIEW = { map: 'uhdp', project: 'project', tree: 'tree' }
+const VIEW_BY_SLUG = { uhdp: 'map', project: 'project', tree: 'tree', questions: 'questions' }
+const SLUG_BY_VIEW = { map: 'uhdp', project: 'project', tree: 'tree', questions: 'questions' }
 
 const DEFAULT_VIEW = 'map'
 
@@ -46,13 +54,17 @@ function parseHash(hash = '') {
     view: VIEW_BY_SLUG[path] ?? DEFAULT_VIEW,
     projectId: params.get('p') || null,
     optionId: params.get('o') || null,
+    buildingId: params.get('b') || null,
   }
 }
 
-function buildHash({ view, projectId, optionId }) {
+function buildHash({ view, projectId, optionId, buildingId }) {
   const params = new URLSearchParams()
   if (projectId) params.set('p', projectId)
   if (optionId) params.set('o', optionId)
+  // Only the Questions tab reads it, so it is dropped everywhere else rather
+  // than trailing behind the project and option on every other link.
+  if (buildingId && view === 'questions') params.set('b', buildingId)
 
   const query = params.toString()
   return `#/${SLUG_BY_VIEW[view] ?? 'uhdp'}${query ? `?${query}` : ''}`

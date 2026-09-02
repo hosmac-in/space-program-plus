@@ -94,6 +94,8 @@ export default function ProjectSummary({
           name={option?.name}
           departments={option?.departments}
           sectionCount={option?.sectionIds?.length}
+          buildingCount={option?.buildingIds?.length}
+          phaseCount={option?.phaseCount}
           siteSqft={areas?.sqft ?? null}
         />
       )}

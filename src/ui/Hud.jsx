@@ -8,7 +8,7 @@
 // For now that is areas alone. It's a fixed slot, so anything added later has
 // to earn its place against what's already here rather than being appended.
 
-import { summarize } from '../data/optionData.js'
+import { phaseRows, summarize } from '../data/optionData.js'
 import { siteAreas, formatArea } from './map/area.js'
 import { RULE } from './layout.js'
 
@@ -34,12 +34,18 @@ function Figure({ label, value, unit, muted = false }) {
   )
 }
 
-export default function Hud({ projectName, siteGeojson, optionName, departments }) {
+export default function Hud({ projectName, siteGeojson, optionName, departments, phaseCount = 1 }) {
   // The in-memory departments, as summarize() requires — the wire format has no
   // areas in it (see data/optionData.js).
-  const { areaSqft, roomCount, objectCount } = summarize(departments ?? [])
+  const { areaSqft, roomCount, objectCount, perPhase } = summarize(departments ?? [])
   const site = siteAreas(siteGeojson)
   const coverage = site ? (areaSqft / site.sqft) * 100 : null
+
+  // Empty until the option declares more than one phase. This is a fixed slot
+  // and the figures above are the ones you always want; splitting the programmed
+  // area by phase earns its place when phasing exists and not before. A declared
+  // phase with nothing in it still gets a row — a zero there is the point.
+  const phases = phaseRows(perPhase, phaseCount)
 
   return (
     <div
@@ -87,6 +93,17 @@ export default function Hud({ projectName, siteGeojson, optionName, departments 
         />
         <Figure label="Rooms" value={roomCount} muted={roomCount === 0} />
         <Figure label="Objects" value={objectCount} muted={objectCount === 0} />
+        {phases.map(({ key, label, totals }) => (
+          <Figure
+            key={key}
+            label={label}
+            value={formatArea(totals.areaSqft)}
+            unit="sqft"
+            // A phase nothing is staged in yet reads as a quiet zero rather
+            // than as a figure among the ones that matter.
+            muted={totals.departmentCount === 0}
+          />
+        ))}
       </div>
     </div>
   )

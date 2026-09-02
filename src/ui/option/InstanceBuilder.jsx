@@ -9,21 +9,33 @@ import { UNDO_DEPTH } from '../undo.js'
 import { supabase } from '../../data/supabase.js'
 import { useCatalog } from '../../data/catalog.jsx'
 import { catalogRoomsForNode, resolveNodePlacement } from '../../data/tree.js'
-import { buildInstanceData, loadInstanceData, SCHEMA_VERSION } from '../../data/optionData.js'
+import {
+  buildInstanceData,
+  DEFAULT_PHASE_COUNT,
+  DEFAULT_ROOM_COUNT,
+  loadInstanceData,
+  SCHEMA_VERSION,
+} from '../../data/optionData.js'
 import DepartmentBlock from './DepartmentBlock.jsx'
 import OptionOutline from './OptionOutline.jsx'
 import OptionStats from './OptionStats.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
 import SaveDataButton from './SaveDataButton.jsx'
 
-// A new or unloaded option: no departments, and no sections either — every
-// section is offered on the canvas, none is in the option until added.
-const EMPTY_OPTION = { departments: [], sectionIds: [] }
+// A new or unloaded option: no departments, and no sections or buildings
+// either — every building and section is offered on the canvas, none is in the
+// option until added. One phase, which is what an unstaged option has.
+const EMPTY_OPTION = {
+  departments: [],
+  sectionIds: [],
+  buildingIds: [],
+  phaseCount: DEFAULT_PHASE_COUNT,
+}
 
-// Structural edits — a section or a department added or removed — write
-// themselves; rooms, objects and counts wait for Save Data. See mutateOption.
+// Structural edits — a building, section or department added or removed, or the
+// option's phase count changed — write themselves; rooms, objects and counts
+// wait for Save Data. See mutateOption.
 const PERSIST = { persist: true }
-
 
 export default function InstanceBuilder({
   onSaved,
@@ -34,6 +46,9 @@ export default function InstanceBuilder({
   onSelectDepartment,
   highlightedDepartmentId,
   selectedDeptInstanceId,
+  // Which phase strip of that placement was clicked. Together with the node id
+  // it names exactly one entry — see shownDept.
+  selectedPhase,
   onExposeActions,
 }) {
   const {
@@ -43,6 +58,7 @@ export default function InstanceBuilder({
     groups: groupDefs,
     sections,
     functions,
+    buildings: buildingDefs,
     loaded: catalogLoaded,
     error: catalogError,
   } = useCatalog()
@@ -57,19 +73,16 @@ export default function InstanceBuilder({
   // edits are. Keeping all three in one object makes each edit exactly one
   // transition and the updater pure.
   //
-  // `present` holds the whole option — its departments AND which sections it
-  // includes — so adding or removing a section is one undo step like any other
-  // edit. Sections can't be derived from the departments any more: an option
-  // may hold a section with nothing in it.
+  // `present` holds the whole option — its departments AND which sections and
+  // buildings it includes — so adding or removing either is one undo step like
+  // any other edit. Neither can be derived from the departments any more: an
+  // option may hold a section with nothing in it, and a building with no
+  // sections.
   const [history, setHistory] = useState({ past: [], present: EMPTY_OPTION, future: [] })
-  const { departments, sectionIds } = history.present
+  const { departments, sectionIds, buildingIds, phaseCount } = history.present
   const [optionName, setOptionName] = useState('')
   const [loadError, setLoadError] = useState(null)
   const onToast = useToast()
-  // Which option is actually in memory. Until this matches loadOptionId, what
-  // is in memory is an EMPTY option, and writing it would erase the real row —
-  // so nothing may be saved until they agree.
-  const [loadedOptionId, setLoadedOptionId] = useState(null)
   // The current option and name, kept in refs as well as state: a mutation
   // needs the value it just produced, before the re-render.
   const shownDeptRef = useRef(null)
@@ -78,6 +91,10 @@ export default function InstanceBuilder({
   const historyRef = useRef(history)
   const presentRef = useRef(history.present)
   const optionNameRef = useRef(optionName)
+  // Which option is actually in memory. Until it matches loadOptionId, what is
+  // in memory is an EMPTY option, and writing that would erase the real row —
+  // so nothing may be saved until they agree (see writeOnce). A ref, not state:
+  // nothing renders from it, and a write has to read it at call time.
   const loadedIdRef = useRef(null)
   const loadOptionIdRef = useRef(loadOptionId)
   loadOptionIdRef.current = loadOptionId
@@ -227,7 +244,12 @@ export default function InstanceBuilder({
       .update({
         option_name: name,
         schema_version: SCHEMA_VERSION,
-        data: buildInstanceData(present.departments, present.sectionIds),
+        data: buildInstanceData(
+          present.departments,
+          present.sectionIds,
+          present.buildingIds,
+          present.phaseCount
+        ),
         version: at + 1,
       })
       .eq('id', loadedId)
@@ -298,9 +320,19 @@ export default function InstanceBuilder({
   // clearing it would make that effect immediately re-select the first
   // department, which is the opposite of what the click asked for. So the
   // department face has to be asked for by name, or it shows through.
+  //
+  // Matched on the phase as well as the placement: one placement now holds up
+  // to one entry per phase, and they are different departments to edit. The
+  // fallbacks widen one step at a time — this placement in this phase, then this
+  // placement at all, then the definition — so a selection that arrived without
+  // a phase (or one whose phase has since been dropped) still lands somewhere
+  // rather than emptying the panel.
   const shownDept =
     selection?.kind === 'department'
-      ? departments.find((d) => d.treeNodeId && d.treeNodeId === selectedDeptInstanceId) ??
+      ? departments.find(
+          (d) => d.treeNodeId && d.treeNodeId === selectedDeptInstanceId && d.phase === selectedPhase
+        ) ??
+        departments.find((d) => d.treeNodeId && d.treeNodeId === selectedDeptInstanceId) ??
         departments.find((d) => d.defId === highlightedDepartmentId)
       : null
 
@@ -335,7 +367,6 @@ export default function InstanceBuilder({
     setLoadError(null)
     // Nothing in memory belongs to this option yet, so nothing may be written
     // to it until the row comes back.
-    setLoadedOptionId(null)
     loadedIdRef.current = null
     setSaveError(null)
     versionRef.current = null
@@ -365,15 +396,19 @@ export default function InstanceBuilder({
         }
         // An option saved before sections were stored has none listed; the
         // sections its departments sit in are what it displayed, so those are
-        // what it opens with.
+        // what it opens with. Buildings derive the same way one level up — but
+        // from the SECTIONS, not the departments, so an option holding an empty
+        // section still opens showing the building that section sits in.
+        const openSectionIds = loaded.sectionIds ?? sectionIdsOf(loaded.departments)
         const present = {
           departments: loaded.departments,
-          sectionIds: loaded.sectionIds ?? sectionIdsOf(loaded.departments),
+          sectionIds: openSectionIds,
+          buildingIds: loaded.buildingIds ?? buildingIdsOf(openSectionIds),
+          phaseCount: loaded.phaseCount,
         }
         resetOption(present)
         setOptionName(row.option_name ?? '')
         lastSavedNameRef.current = row.option_name ?? ''
-        setLoadedOptionId(loadOptionId)
         versionRef.current = row.version
         loadedIdRef.current = loadOptionId
         optionNameRef.current = row.option_name ?? ''
@@ -384,37 +419,85 @@ export default function InstanceBuilder({
     }
   }, [loadOptionId, catalogLoaded])
 
-  // Entries arrive already anchored to one tree node — the card that was
-  // clicked IS a specific placement, so there is nothing to disambiguate. The
-  // same department definition twice is fine as long as the placements differ;
-  // the same placement twice is not.
+  // A phase entry starts as a COPY of the closest lower phase of the same
+  // placement, so there is a base to edit rather than an empty department to
+  // rebuild by hand. Nothing is shared: every room and object gets a fresh
+  // instanceId, or the two phases would edit each other through the ids they
+  // had in common. Nothing to copy — phase 1, or the first phase this
+  // department appears in — starts empty.
+  function seedRoomsFrom(depts, treeNodeId, phase) {
+    const source = depts
+      .filter((d) => d.treeNodeId === treeNodeId && d.phase < phase)
+      .sort((a, b) => b.phase - a.phase)[0]
+    if (!source) return []
+    return source.rooms.map((r) => ({
+      ...r,
+      instanceId: crypto.randomUUID(),
+      objects: r.objects.map((o) => ({ ...o, instanceId: crypto.randomUUID() })),
+    }))
+  }
+
+  // Entries arrive already anchored to one tree node AND one phase — the strip
+  // that was clicked IS a specific placement in a specific phase, so there is
+  // nothing to disambiguate. The same department definition twice is fine as
+  // long as the placements differ, and the same placement twice is fine as long
+  // as the phases do; the same placement in the same phase is not.
   function addDepartments(entries) {
     mutateOption((o) => {
       const prev = o.departments
-      const existing = new Set(prev.map((d) => d.treeNodeId).filter(Boolean))
-      const fresh = entries.filter(({ treeNodeId }) => treeNodeId && !existing.has(treeNodeId))
-      // A department can't be in the option without its section being in it —
-      // adding one from a section you haven't added yet brings the section too.
-      const addedSections = fresh
-        .map(({ treeNodeId }) => resolveNodePlacement(sections, treeNodeId, groupDefs)?.sectionId)
-        .filter((id) => id && !o.sectionIds.includes(id))
+      const keyOf = (treeNodeId, phase) => `${treeNodeId}|${phase}`
+      const existing = new Set(prev.filter((d) => d.treeNodeId).map((d) => keyOf(d.treeNodeId, d.phase)))
+      const fresh = entries.filter(({ treeNodeId, phase }) => {
+        if (!treeNodeId) return false
+        const key = keyOf(treeNodeId, phase ?? DEFAULT_PHASE_COUNT)
+        if (existing.has(key)) return false
+        // Added to the set as we go: one click cannot ask for the same strip
+        // twice, but nothing stops a caller passing a list that does.
+        existing.add(key)
+        return true
+      })
+      const placements = fresh.map(({ treeNodeId }) =>
+        resolveNodePlacement(sections, treeNodeId, groupDefs, buildingDefs)
+      )
+      // A department can't be in the option without its section being in it,
+      // and a section can't be without its building, so adding one department
+      // brings the whole chain above it.
+      //
+      // This is now a guard rather than a path: the canvas only offers a + on a
+      // department whose section is already in, and only draws buildings the
+      // option holds. It stays because the invariant is what the rest of the
+      // file assumes — resolveNodePlacement is the only thing that knows where
+      // a department sits, and a department under an absent section would
+      // simply not be drawn.
+      const addedSections = placements.map((p) => p?.sectionId).filter(Boolean)
+      const addedBuildings = placements.map((p) => p?.buildingId).filter(Boolean)
       const departments = [
         ...prev,
-        ...fresh.map(({ def, treeNodeId }) => {
-          const placement = resolveNodePlacement(sections, treeNodeId, groupDefs)
+        ...fresh.map(({ def, treeNodeId, phase }, i) => {
+          const placement = placements[i]
           return {
             instanceId: crypto.randomUUID(),
             defId: def.id,
             name: def.name,
             type: def.type,
             treeNodeId,
+            // Which phase this entry programs. A one-phase option only ever
+            // sends 1, which is what makes it read as it always did.
+            phase: phase ?? DEFAULT_PHASE_COUNT,
             fallbackSectionName: placement?.sectionName ?? null,
             fallbackGroupName: placement?.groupName ?? null,
-            rooms: [],
+            // Seeded from `prev`, not from the array being built: two strips
+            // added in one call are siblings, not sources for each other.
+            rooms: seedRoomsFrom(prev, treeNodeId, phase ?? DEFAULT_PHASE_COUNT),
           }
         }),
       ]
-      return { departments, sectionIds: [...new Set([...o.sectionIds, ...addedSections])] }
+      return {
+        ...o,
+        departments,
+        sectionIds: [...new Set([...o.sectionIds, ...addedSections])],
+        buildingIds: [...new Set([...o.buildingIds, ...addedBuildings])],
+      }
     }, PERSIST)
   }
 
@@ -432,25 +515,84 @@ export default function InstanceBuilder({
     return ids
   }
 
+  // Which buildings the given sections belong to. Straight off the section rows
+  // — a section belongs to exactly one building, so there is nothing to resolve.
+  function buildingIdsOf(sectionIdList) {
+    const ids = []
+    sectionIdList.forEach((sectionId) => {
+      const id = sections.find((s) => s.id === sectionId)?.building_id
+      if (id && !ids.includes(id)) ids.push(id)
+    })
+    return ids
+  }
+
   // A section is added on its own and filled afterwards — including a section
-  // the catalog leaves empty, which is why this doesn't touch departments.
+  // the catalog leaves empty, which is why this doesn't touch departments. Its
+  // building comes with it for the same reason a department brings its section.
   function addSection(sectionId) {
-    mutateOption(
-      (o) => (o.sectionIds.includes(sectionId) ? o : { ...o, sectionIds: [...o.sectionIds, sectionId] }),
-      PERSIST
-    )
+    mutateOption((o) => {
+      if (o.sectionIds.includes(sectionId)) return o
+      const buildingId = sections.find((s) => s.id === sectionId)?.building_id
+      return {
+        ...o,
+        sectionIds: [...o.sectionIds, sectionId],
+        buildingIds:
+          buildingId && !o.buildingIds.includes(buildingId) ? [...o.buildingIds, buildingId] : o.buildingIds,
+      }
+    }, PERSIST)
   }
 
   // Removing a section takes everything in it with it — the departments under
   // it have nowhere left to be shown. The canvas confirms first when there is
   // anything to lose.
+  //
+  // The building stays. An option holding a building with no sections yet is
+  // the empty shell you fill in as you go, exactly as an empty section is one
+  // level down, so emptying a building must not make it disappear from under
+  // you. Removing it is its own deliberate act.
   function removeSection(sectionId) {
     mutateOption(
       (o) => ({
+        ...o,
         sectionIds: o.sectionIds.filter((id) => id !== sectionId),
         departments: o.departments.filter(
           (d) => resolveNodePlacement(sections, d.treeNodeId, groupDefs)?.sectionId !== sectionId
         ),
+      }),
+      PERSIST
+    )
+  }
+
+  // What this option is made of, at the two levels that aren't chosen on the
+  // canvas: which buildings it contains, and how many phases it is built in.
+  //
+  // Not addBuilding/removeBuilding, and not a separate phase setter: both are
+  // set together, in one dialog with one Save (see OptionList), so the edit that
+  // happens is "this is the option now". Applying it as ONE mutation makes it
+  // one undo step and one write, rather than two of each with a half-applied
+  // state in between — and one action for App's guard to hold, which only holds
+  // one.
+  //
+  // Both cascade downwards, for the same reason: nothing below a level that has
+  // gone has anywhere left to be shown.
+  //
+  //   a dropped building   its sections, and every department in any of them
+  //   a dropped phase      every department entry staged in it
+  //
+  // The dialog confirms before either.
+  function setOptionSettings({ buildingIds: nextBuildingIds, phaseCount: nextPhaseCount }) {
+    const kept = new Set(nextBuildingIds)
+    const doomedSectionIds = new Set(sections.filter((s) => !kept.has(s.building_id)).map((s) => s.id))
+    mutateOption(
+      (o) => ({
+        phaseCount: nextPhaseCount,
+        buildingIds: [...nextBuildingIds],
+        sectionIds: o.sectionIds.filter((id) => !doomedSectionIds.has(id)),
+        departments: o.departments.filter((d) => {
+          if (d.phase > nextPhaseCount) return false
+          const at = resolveNodePlacement(sections, d.treeNodeId, groupDefs)
+          return !at || !doomedSectionIds.has(at.sectionId)
+        }),
       }),
       PERSIST
     )
@@ -481,6 +623,7 @@ export default function InstanceBuilder({
               name: def.name,
               type: def.type,
               treeRoomNodeId: matches[0]?.instance_id ?? null,
+              count: DEFAULT_ROOM_COUNT,
               objects: [],
             },
           ],
@@ -501,18 +644,21 @@ export default function InstanceBuilder({
     )
   }
 
-  // Lets the Project tab add and remove departments and sections without App
-  // having to own this component's state.
+  // Lets the Project tab add and remove buildings, sections and departments
+  // without App having to own this component's state.
   useEffect(() => {
     onExposeActions?.({
       departments,
       sectionIds,
+      buildingIds,
+      phaseCount,
       departmentDefs,
       optionName,
       addDepartments,
       removeDepartment,
       addSection,
       removeSection,
+      setOptionSettings,
       undo: handleUndo,
       redo: handleRedo,
       canUndo: history.past.length > 0,
@@ -528,6 +674,8 @@ export default function InstanceBuilder({
   }, [
     departments,
     sectionIds,
+    buildingIds,
+    phaseCount,
     departmentDefs,
     optionName,
     history.past.length,
@@ -538,44 +686,8 @@ export default function InstanceBuilder({
     shownDept,
   ])
 
-  // Lets the Project tab add and remove departments and sections without App
-  // having to own this component's state.
-  useEffect(() => {
-    onExposeActions?.({
-      departments,
-      sectionIds,
-      departmentDefs,
-      optionName,
-      addDepartments,
-      removeDepartment,
-      addSection,
-      removeSection,
-      undo: handleUndo,
-      redo: handleRedo,
-      canUndo: history.past.length > 0,
-      canRedo: history.future.length > 0,
-      dirty,
-      saving,
-      saveError,
-      save: saveData,
-      // Which department the unsaved edits belong to, for the prompt that
-      // appears when something would take it off the panel.
-      editingName: shownDept?.name ?? null,
-    })
-  }, [
-    departments,
-    sectionIds,
-    departmentDefs,
-    optionName,
-    history.past.length,
-    history.future.length,
-    dirty,
-    saving,
-    saveError,
-    shownDept,
-  ])
-
-  const isContainer = selection?.kind === 'group' || selection?.kind === 'section'
+  const isContainer =
+    selection?.kind === 'group' || selection?.kind === 'section' || selection?.kind === 'building'
 
   const error = catalogError || loadError
 
@@ -606,7 +718,10 @@ export default function InstanceBuilder({
           departments={departments}
           sections={sections}
           groupDefs={groupDefs}
+          buildingDefs={buildingDefs}
+          sectionIds={sectionIds}
           functions={functions}
+          phaseCount={phaseCount}
         />
       ) : shownDept ? (
         <DepartmentBlock
@@ -618,6 +733,11 @@ export default function InstanceBuilder({
           objectDefs={objectDefs}
           functions={functions}
           departmentFunctionId={departmentDefs.find((d) => d.id === shownDept.defId)?.function_id}
+          buildingDefs={buildingDefs}
+          // Which of the option's phases this entry is, and how many there are.
+          // Read-only: the phase is which strip you clicked, not a field on the
+          // department.
+          phaseCount={phaseCount}
           onAddRoom={(def) => addRoom(shownDept.instanceId, def)}
           onRoomChange={(roomInstanceId, updater, opts) =>
             updateRoom(shownDept.instanceId, roomInstanceId, updater, opts)
@@ -626,9 +746,15 @@ export default function InstanceBuilder({
         />
       ) : (
         <>
-          <OptionStats name={optionName} departments={departments} sectionCount={sectionIds.length} />
+          <OptionStats
+            name={optionName}
+            departments={departments}
+            sectionCount={sectionIds.length}
+            buildingCount={buildingIds.length}
+            phaseCount={phaseCount}
+          />
           {departments.length === 0 && (
-            <PanelNote pad>Add a section on the canvas, then the departments that go in it.</PanelNote>
+            <PanelNote pad>Add a building on the canvas, then the sections and departments inside it.</PanelNote>
           )}
         </>
       )}

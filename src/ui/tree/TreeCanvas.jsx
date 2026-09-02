@@ -27,7 +27,7 @@ function byName(a, b) {
 }
 
 function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }) {
-  const { departments, groups, sections, functions } = useCatalog()
+  const { departments, groups, sections, functions, buildings } = useCatalog()
   const editor = useTreeEditorContext()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const { getIntersectingNodes, screenToFlowPosition } = useReactFlow()
@@ -36,9 +36,12 @@ function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }
   const draggingCarouselRef = useRef(null)
   const nodesRef = useRef([])
   const computedRef = useRef(null)
-  // Section widths only ever grow. Without this floor, removing a department
-  // would shrink its section and slide every section to the right of it.
+  // Section widths and building heights only ever grow. Without these floors,
+  // removing a department would shrink its section and slide every section to
+  // the right of it, or shorten its building and drag every building below it
+  // upwards.
   const stableSectionWidthsRef = useRef(new Map())
+  const stableBuildingHeightsRef = useRef(new Map())
 
   useEffect(() => {
     nodesRef.current = nodes
@@ -50,15 +53,17 @@ function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }
   const computed = useMemo(
     () =>
       buildTreeLayout(
-        { sections, groups, departments, functions, canEdit },
+        { sections, groups, departments, buildings, functions, canEdit },
         selectedDeptInstanceId,
         { onSelectDepartment, onRemoveDepartment: onCardRemoveDept, onRemoveGroup: onCardRemoveGroup },
-        stableSectionWidthsRef.current
+        stableSectionWidthsRef.current,
+        stableBuildingHeightsRef.current
       ),
     [
       sections,
       groups,
       departments,
+      buildings,
       functions,
       canEdit,
       selectedDeptInstanceId,
@@ -78,43 +83,41 @@ function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }
         stableSectionWidthsRef.current.set(sectionId, width)
       }
     })
+    computed.buildingHeights.forEach((height, buildingIdKey) => {
+      if (height > (stableBuildingHeightsRef.current.get(buildingIdKey) ?? 0)) {
+        stableBuildingHeightsRef.current.set(buildingIdKey, height)
+      }
+    })
     setNodes(computed.nodes)
     computedRef.current = computed
   }, [computed, setNodes])
 
   // --- Carousels ------------------------------------------------------------
   //
-  // A non-duplicable item disappears from its carousel once placed, since it
-  // can only exist in one spot. Duplicable items can be placed any number of
-  // times, so they get their own always-visible rows.
+  // EVERY DEFINITION, ALWAYS, ALPHABETICALLY. Nothing is hidden, nothing is
+  // dimmed, nothing is disabled, and nothing is reordered by what you have
+  // already done.
+  //
+  // It used to hide a non-duplicable item once it was placed anywhere, which
+  // made is_duplicable a trap rather than a convenience: place Lobby in the
+  // Hospital and it was gone from the Medical College too, permanently, with no
+  // way back short of editing the column in the database. The flag never
+  // enforced anything — instance_id already keeps every placement independent,
+  // and the only real guard is placeDept's "not twice in the same group".
+  //
+  // It then dimmed instead, scoped to a chosen "working" building. That scope
+  // was the only thing the building chip row still decided, and it was a whole
+  // control to answer a question the canvas answers better: every building is
+  // stacked on screen, so what is placed where is visible by looking.
+  //
+  //   >>> is_duplicable decides nothing in this UI. It is authored data the
+  //   >>> canvas no longer reads. Reintroducing a filter on it — hiding,
+  //   >>> dimming, sorting — recreates the dead end.
 
-  const placedGroupDefIds = useMemo(() => {
-    const ids = new Set()
-    sections.forEach((s) => (s.tree?.groups || []).forEach((g) => ids.add(g.group_def_id)))
-    return ids
-  }, [sections])
+  const byNameAsc = (list) => [...list].sort(byName)
 
-  const placedDeptDefIds = useMemo(() => {
-    const ids = new Set()
-    sections.forEach((s) =>
-      (s.tree?.groups || []).forEach((g) => (g.departments || []).forEach((d) => ids.add(d.department_def_id)))
-    )
-    return ids
-  }, [sections])
-
-  const unplacedGroups = useMemo(
-    () => groups.filter((g) => g.is_duplicable === false && !placedGroupDefIds.has(g.id)).sort(byName),
-    [groups, placedGroupDefIds]
-  )
-  const unplacedDepts = useMemo(
-    () => departments.filter((d) => d.is_duplicable === false && !placedDeptDefIds.has(d.id)).sort(byName),
-    [departments, placedDeptDefIds]
-  )
-  const duplicableGroups = useMemo(() => groups.filter((g) => g.is_duplicable !== false).sort(byName), [groups])
-  const duplicableDepts = useMemo(
-    () => departments.filter((d) => d.is_duplicable !== false).sort(byName),
-    [departments]
-  )
+  const groupItems = useMemo(() => byNameAsc(groups), [groups])
+  const deptItems = useMemo(() => byNameAsc(departments), [departments])
 
   // --- Drag and drop --------------------------------------------------------
 
@@ -311,13 +314,16 @@ function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }
       )}
 
       {/* The carousels exist only to place things, so a read-only viewer gets
-          the canvas without them. */}
-      {/* The carousels are bands of their own, above and below the canvas —
-          bounded so it's clear where each ends and the canvas begins. */}
+          the canvas without them.
+
+          One band, above the canvas. Every definition is always listed, so the
+          second band that used to sit below it holding the duplicable rows is
+          gone — and so is the building chip row, since every building is drawn
+          on the canvas and the carousels are no longer scoped to one. */}
       {canEdit && (
         <Band edge="bottom">
-          <CarouselRow title="Groups" items={unplacedGroups} kind="group" {...carouselProps} />
-          <CarouselRow title="Departments" items={unplacedDepts} kind="department" last {...carouselProps} />
+          <CarouselRow title="Groups" items={groupItems} kind="group" {...carouselProps} />
+          <CarouselRow title="Departments" items={deptItems} kind="department" last {...carouselProps} />
         </Band>
       )}
 
@@ -348,12 +354,6 @@ function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }
         </ReactFlow>
       </div>
 
-      {canEdit && (
-        <Band edge="top">
-          <CarouselRow title="Dup. Groups" items={duplicableGroups} kind="group" {...carouselProps} />
-          <CarouselRow title="Dup. Departments" items={duplicableDepts} kind="department" last {...carouselProps} />
-        </Band>
-      )}
     </div>
   )
 }

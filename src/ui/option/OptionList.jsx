@@ -8,11 +8,77 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../../data/supabase.js'
+import { useCatalog } from '../../data/catalog.jsx'
 import AddButton from '../primitives/AddButton.jsx'
 import Modal from '../primitives/Modal.jsx'
+import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
 
-import { SCHEMA_VERSION } from '../../data/optionData.js'
+import {
+  clampPhaseCount,
+  DEFAULT_PHASE_COUNT,
+  MAX_PHASE_COUNT,
+  SCHEMA_VERSION,
+} from '../../data/optionData.js'
+
+// How many phases an option is built in. The same control does both jobs —
+// chosen when the option is created, changed afterwards — for the same reason
+// BuildingChecklist does: they are the same question, and two copies of one
+// field is how things drift.
+//
+// A number, not a list of phases to name: a phase has no name (see
+// data/optionData.js). Lowering it is what makes a phase stop existing, and it
+// takes what was staged in it, so the caller warns first.
+function PhaseCountField({ value, onChange, note }) {
+  return (
+    <label style={{ display: 'block', fontSize: 13 }}>
+      <span style={{ display: 'block', marginBottom: 4 }}>Phases</span>
+      <input
+        type="number"
+        min={DEFAULT_PHASE_COUNT}
+        max={MAX_PHASE_COUNT}
+        value={value}
+        onChange={(e) => onChange(clampPhaseCount(parseInt(e.target.value, 10)))}
+        style={{ width: 72, padding: 6 }}
+      />
+      {note && <span style={{ marginLeft: 10, fontSize: 12, color: '#777' }}>{note}</span>}
+    </label>
+  )
+}
+
+// Which buildings an option contains, as a checkbox each.
+//
+// The same list does both jobs — picked when the option is created, changed
+// afterwards — because they are the same question, and two lists of the same
+// checkboxes is how things drift.
+function BuildingChecklist({ buildings, selected, onToggle, countFor }) {
+  if (buildings.length === 0) {
+    return <PanelNote>No buildings yet — run sql/building_setup.sql.</PanelNote>
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {buildings.map((b) => {
+        const on = selected.includes(b.id)
+        // Only ever set when editing an existing option: how much would be lost
+        // by unticking this. Said here, next to the tick, rather than only in
+        // the confirmation after you have already decided.
+        const losing = !on && (countFor?.(b.id) ?? 0)
+        return (
+          <label key={b.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13 }}>
+            <input type="checkbox" checked={on} onChange={() => onToggle(b.id)} />
+            <span style={{ flex: 1, minWidth: 0 }}>{b.name}</span>
+            {losing > 0 && (
+              <span style={{ fontSize: 11, color: '#c0392b', whiteSpace: 'nowrap' }}>
+                drops {losing} department{losing === 1 ? '' : 's'}
+              </span>
+            )}
+          </label>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function OptionList({
   projectId,
@@ -24,16 +90,34 @@ export default function OptionList({
   // words itself differently for a project with none, and this list is what
   // knows.
   onCount,
+  // The OPEN option's buildings and phase count, and how to set them — from
+  // InstanceBuilder via App. Absent in the large chooser, where no option is
+  // open yet, which is exactly when there is nothing to edit.
+  openBuildingIds,
+  openPhaseCount = DEFAULT_PHASE_COUNT,
+  onSetOptionSettings,
+  departmentCountByBuilding,
+  departmentCountByPhase,
 }) {
+  const { buildings } = useCatalog()
   const [options, setOptions] = useState([])
   const [error, setError] = useState(null)
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [newOptionName, setNewOptionName] = useState('')
   const [duplicateFromId, setDuplicateFromId] = useState('')
+  const [newBuildingIds, setNewBuildingIds] = useState([])
+  const [newPhaseCount, setNewPhaseCount] = useState(DEFAULT_PHASE_COUNT)
   const [creating, setCreating] = useState(false)
   const creatingRef = useRef(false)
   const [createError, setCreateError] = useState(null)
+
+  // The settings editor for the option already open. Null when closed; an array
+  // of ids while open, so ticking is local until Save. The phase count is
+  // edited alongside it and committed by the same button.
+  const [editBuildingIds, setEditBuildingIds] = useState(null)
+  const [editPhaseCount, setEditPhaseCount] = useState(DEFAULT_PHASE_COUNT)
+  const [confirmDrop, setConfirmDrop] = useState(null)
 
   // Returns its own canceller: a response for the project you just left must
   // not overwrite the one you are on.
@@ -75,7 +159,15 @@ export default function OptionList({
     setCreateError(null)
     setCreating(true)
 
-    let data = { departments: [] }
+    // The buildings are the one thing chosen up front — the canvas draws only
+    // those, and every section it offers is one of theirs. Sections and
+    // departments start empty and are filled in on the canvas.
+    let data = {
+      phase_count: newPhaseCount,
+      buildings: [...newBuildingIds],
+      sections: [],
+      departments: [],
+    }
 
     if (duplicateFromId) {
       const { data: source, error: sourceError } = await supabase
@@ -116,8 +208,55 @@ export default function OptionList({
     setShowCreateModal(false)
     setNewOptionName('')
     setDuplicateFromId('')
+    setNewBuildingIds([])
+    setNewPhaseCount(DEFAULT_PHASE_COUNT)
     loadOptions()
     onSelectOption?.(inserted.id)
+  }
+
+  const toggle = (list, id) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id])
+
+  // Clicking the option you already have open is what opens its building list.
+  // A first click selects, as it always did; only the chip that is already
+  // selected does this, so nothing you click changes an option you cannot see.
+  function handleOptionClick(id) {
+    // Re-selecting opens the list only where there is an open option to edit —
+    // the band. The large chooser has no handler, so a click there stays a
+    // plain select however many times you make it.
+    if (id === selectedOptionId && onSetOptionSettings) {
+      setEditBuildingIds([...(openBuildingIds ?? [])])
+      setEditPhaseCount(openPhaseCount)
+      return
+    }
+    onSelectOption?.(id)
+  }
+
+  // Both settings go in one call: one Save, one undo step, one write.
+  function applySettings(buildingIds, phaseCount) {
+    onSetOptionSettings({ buildingIds, phaseCount })
+    setEditBuildingIds(null)
+  }
+
+  function commitSettings() {
+    const dropped = (openBuildingIds ?? []).filter((id) => !editBuildingIds.includes(id))
+    const losingBuildings = dropped.reduce((sum, id) => sum + (departmentCountByBuilding?.[id] ?? 0), 0)
+    // Every entry staged in a phase that would no longer exist.
+    const losingPhases = Object.entries(departmentCountByPhase ?? {}).reduce(
+      (sum, [phase, count]) => (Number(phase) > editPhaseCount ? sum + count : sum),
+      0
+    )
+
+    // Nothing to lose, so nothing to ask about.
+    if (losingBuildings === 0 && losingPhases === 0) {
+      applySettings(editBuildingIds, editPhaseCount)
+      return
+    }
+    setConfirmDrop({
+      ids: [...editBuildingIds],
+      phases: editPhaseCount,
+      losingBuildings,
+      losingPhases,
+    })
   }
 
   if (!projectId) return null
@@ -144,12 +283,16 @@ export default function OptionList({
         >
           {options.map((o) => {
             const selected = o.id === selectedOptionId
+            const editable = selected && !!onSetOptionSettings
             return (
               <button
                 key={o.id}
                 type="button"
                 className="spp-option"
-                onClick={() => onSelectOption?.(o.id)}
+                title={
+                  editable ? `${o.option_name} — click again to set its buildings and phases` : o.option_name
+                }
+                onClick={() => handleOptionClick(o.id)}
                 style={{
                   padding: large ? '18px 24px' : '6px 12px',
                   minWidth: large ? 160 : undefined,
@@ -165,6 +308,17 @@ export default function OptionList({
                 }}
               >
                 {o.option_name}
+                {/* The only hint that the open chip does something more. A
+                    count, not an icon: it says what the second click is about
+                    as well as that there is one. */}
+                {editable && (
+                  <span style={{ marginLeft: 8, fontWeight: 400, opacity: 0.7 }}>
+                    {(openBuildingIds ?? []).length} bldg
+                    {/* Only when there is something to say: every option has
+                        buildings, but most have one phase. */}
+                    {openPhaseCount > 1 && ` · ${openPhaseCount} ph`}
+                  </span>
+                )}
               </button>
             )
           })}
@@ -205,12 +359,102 @@ export default function OptionList({
             </select>
           </div>
 
+          {/* Duplicating copies the source option's buildings and phases along
+              with everything else, so choosing them here would be choosing
+              twice. */}
+          {!duplicateFromId && (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <label>Buildings</label>
+                <BuildingChecklist
+                  buildings={buildings}
+                  selected={newBuildingIds}
+                  onToggle={(id) => setNewBuildingIds((prev) => toggle(prev, id))}
+                />
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <PhaseCountField
+                  value={newPhaseCount}
+                  onChange={setNewPhaseCount}
+                  note="One phase is an option built in one go."
+                />
+              </div>
+            </>
+          )}
+
           {createError && <p style={{ color: 'red' }}>{createError}</p>}
 
           <button type="button" onClick={handleCreate} disabled={creating}>
             {creating ? 'Creating...' : 'Create Option'}
           </button>
         </Modal>
+      )}
+
+      {editBuildingIds && (
+        <Modal title="This option" onClose={() => setEditBuildingIds(null)}>
+          <BuildingChecklist
+            buildings={buildings}
+            selected={editBuildingIds}
+            onToggle={(id) => setEditBuildingIds((prev) => toggle(prev, id))}
+            countFor={(id) => departmentCountByBuilding?.[id] ?? 0}
+          />
+
+          <p style={{ fontSize: 12, color: '#777', marginTop: 12 }}>
+            The canvas draws the buildings ticked here, and offers the sections inside them.
+          </p>
+
+          <div style={{ marginTop: 12 }}>
+            <PhaseCountField
+              value={editPhaseCount}
+              onChange={setEditPhaseCount}
+              // Said next to the field, before you commit — the same courtesy
+              // the building rows pay.
+              note={
+                editPhaseCount < openPhaseCount
+                  ? `drops ${Object.entries(departmentCountByPhase ?? {}).reduce(
+                      (sum, [phase, count]) => (Number(phase) > editPhaseCount ? sum + count : sum),
+                      0
+                    )} staged departments`
+                  : null
+              }
+            />
+            <p style={{ fontSize: 12, color: '#777', marginTop: 6 }}>
+              Each department card is divided into this many phases, and each phase is programmed on its own.
+            </p>
+          </div>
+
+          <button type="button" onClick={commitSettings}>
+            Save
+          </button>
+        </Modal>
+      )}
+
+      {confirmDrop && (
+        <ConfirmModal
+          title="Remove from this option?"
+          onConfirm={() => {
+            applySettings(confirmDrop.ids, confirmDrop.phases)
+            setConfirmDrop(null)
+          }}
+          onCancel={() => setConfirmDrop(null)}
+        >
+          {confirmDrop.losingBuildings > 0 && (
+            <>
+              That removes {confirmDrop.losingBuildings} department
+              {confirmDrop.losingBuildings === 1 ? '' : 's'} from this option, with their rooms and objects —
+              everything in the buildings you unticked.{' '}
+            </>
+          )}
+          {confirmDrop.losingPhases > 0 && (
+            <>
+              Cutting to {confirmDrop.phases} phase{confirmDrop.phases === 1 ? '' : 's'} drops{' '}
+              {confirmDrop.losingPhases} staged department
+              {confirmDrop.losingPhases === 1 ? '' : 's'} from the phases that go, with their rooms and objects.{' '}
+            </>
+          )}
+          You can undo this after.
+        </ConfirmModal>
       )}
     </>
   )

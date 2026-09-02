@@ -1,7 +1,7 @@
 // THE CATALOG TREE — sp_section.tree
 // =======================================
 //
-// The shared catalog of what a hospital can contain is one row per section in
+// The shared catalog of what a building can contain is one row per section in
 // `sp_section`, with the entire tree underneath it stored as nested JSON
 // in that row's `tree` column:
 //
@@ -48,6 +48,18 @@
 // Names and areas are never stored here — only ids. Every *_def_id is resolved
 // against the definition tables (see catalog.js) at render time, so renaming a
 // room in sp_room updates every placement of it everywhere at once.
+//
+// WHERE THE BUILDING IS
+//
+// One level above this file. `sp_section.building_id` says which building a
+// section belongs to, and a section belongs to exactly one — so the catalog is
+// partitioned by building, and a tree never spans two. There is no building key
+// anywhere inside this JSON, and there should not be: a node's building is a
+// fact about the section holding it, resolved by resolveNodePlacement below.
+//
+// Departments and groups have no building of their own. The same Lobby can be
+// placed in the Hospital and in the Medical College; those are two nodes with
+// two instance_ids, independent for exactly the reason above.
 //
 // Everything below except writeSectionTree is a pure function over a plain JS
 // object: it takes a tree, returns a new tree, and touches nothing else.
@@ -179,12 +191,19 @@ export function findDeptContext(sections, deptInstanceId) {
 // Where a department node currently sits, resolved live rather than frozen, so
 // reorganising the tree is reflected wherever this is displayed. Returns
 // null once that node no longer exists.
-export function resolveNodePlacement(sections, deptInstanceId, groupDefs = []) {
+//
+// The building comes from the section, never from anything stored on the
+// department: a section belongs to exactly one building, so the node's building
+// is a fact about where it sits, and moving a section between buildings moves
+// everything in it without touching a single option.
+export function resolveNodePlacement(sections, deptInstanceId, groupDefs = [], buildingDefs = []) {
   if (!deptInstanceId) return null
   for (const section of sections) {
     for (const group of section.tree?.groups || []) {
       if ((group.departments || []).some((d) => d.instance_id === deptInstanceId)) {
         return {
+          buildingId: section.building_id ?? null,
+          buildingName: buildingDefs.find((b) => b.id === section.building_id)?.name,
           sectionId: section.id,
           sectionName: section.name,
           // The group's PLACEMENT, not its definition: the same group def can
@@ -212,4 +231,104 @@ export function catalogRoomsForNode(sections, deptInstanceId) {
 export function catalogObjectsForRoom(catalogRooms, roomInstanceId) {
   if (!catalogRooms || !roomInstanceId) return null
   return catalogRooms.find((r) => r.instance_id === roomInstanceId)?.objects ?? null
+}
+
+// --- The whole catalog as a flat list ---------------------------------------
+
+// Every PLACEMENT in the catalog, one row each, with the full path to it.
+//
+// For anything that has to point at one node out of the whole tree — the
+// questionnaire's department bindings and number targets (see
+// data/questionnaire.js) — where a picker has to list them and a person has to
+// tell them apart.
+//
+// The path is the whole point. A definition placed twice is two rows that differ
+// by nothing else: two "Lobby" entries in a list are indistinguishable, while
+// "Hospital → Diagnostics → Imaging → Lobby" and "Medical College → Academic →
+// Lobby" are not. It is also what gets frozen alongside a stored instance_id, so
+// a node deleted from the catalog later still reads as something.
+//
+// `kinds` picks which levels to include; the default is all three. Groups and
+// sections are deliberately absent — nothing points at one, and adding them
+// would put rows in the picker that cannot be chosen.
+//
+// Every row carries the `deptInstanceId` it belongs to — its own, for a
+// department — so a caller can narrow the list to one department's rooms without
+// walking the tree again. The questionnaire needs exactly that: a question's
+// number points at a room INSIDE the department that question adds, never at one
+// somewhere else in the catalog.
+export function flattenTreeNodes(
+  sections,
+  { departments = [], rooms = [], objects = [], groups = [], buildings = [] } = {},
+  { kinds = ['department', 'room', 'object'] } = {}
+) {
+  const want = new Set(kinds)
+  const out = []
+  const nameOf = (list, id) => list.find((x) => x.id === id)?.name
+
+  for (const section of sections) {
+    const buildingName = buildings.find((b) => b.id === section.building_id)?.name
+    for (const groupNode of section.tree?.groups || []) {
+      const groupName = nameOf(groups, groupNode.group_def_id)
+      for (const deptNode of groupNode.departments || []) {
+        const deptName = nameOf(departments, deptNode.department_def_id) ?? 'Department'
+        // Each level's path is its ancestors, so the row's own name is never
+        // repeated in its own path.
+        const deptPath = [buildingName, section.name, groupName]
+        if (want.has('department')) {
+          out.push({
+            id: deptNode.instance_id,
+            instanceId: deptNode.instance_id,
+            deptInstanceId: deptNode.instance_id,
+            kind: 'department',
+            name: deptName,
+            path: formatNodePath(deptPath),
+          })
+        }
+
+        for (const roomNode of deptNode.rooms || []) {
+          const roomName = nameOf(rooms, roomNode.room_def_id) ?? 'Room'
+          const roomPath = [...deptPath, deptName]
+          if (want.has('room')) {
+            out.push({
+              id: roomNode.instance_id,
+              instanceId: roomNode.instance_id,
+              deptInstanceId: deptNode.instance_id,
+              kind: 'room',
+              name: roomName,
+              path: formatNodePath(roomPath),
+            })
+          }
+
+          if (!want.has('object')) continue
+          for (const objectNode of roomNode.objects || []) {
+            out.push({
+              id: objectNode.instance_id,
+              instanceId: objectNode.instance_id,
+              deptInstanceId: deptNode.instance_id,
+              kind: 'object',
+              name: nameOf(objects, objectNode.object_def_id) ?? 'Object',
+              path: formatNodePath([...roomPath, roomName]),
+            })
+          }
+        }
+      }
+    }
+  }
+
+  return out
+}
+
+// The ancestors of a node, as one line. An unresolvable step shows as a dash
+// rather than blanking, so the shape of the path survives a missing definition —
+// the same rule ui/panel/panelParts.jsx `formatPath` follows, and deliberately
+// the same separator, because they are read side by side.
+export function formatNodePath(names) {
+  return names.map((n) => n ?? '—').join(' → ')
+}
+
+// One row from flattenTreeNodes, or null — for resolving a stored instance_id
+// back to the node it names.
+export function findFlatNode(flat, instanceId) {
+  return instanceId ? flat.find((n) => n.instanceId === instanceId) ?? null : null
 }

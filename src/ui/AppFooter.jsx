@@ -1,9 +1,9 @@
 // The footer: the full-width band under both main and side.
 //
-// It holds the undo/redo ribbon on the left and the Tree tab on the right —
-// the app's only tab, and a toggle: it opens the catalog from wherever you are,
-// and pressing it again returns you to the canvas you left. Without that second
-// press there'd be no way back but Home, which throws away the open option.
+// It holds the undo/redo ribbon on the left and two tabs on the right — Tree and
+// Questions, each a toggle: it opens from wherever you are, and pressing it
+// again returns you to the canvas you left. Without that second press there'd be
+// no way back but Home, which throws away the open option.
 // The ribbon used to be drawn inside each canvas — so it stopped at main's edge
 // and vanished entirely on UHDP, where there is no canvas to draw it. One band
 // now, always present and always the same height, so the regulating line above
@@ -40,8 +40,15 @@ export default function AppFooter({ view, canEdit, builder, onViewChange }) {
 
   return (
     <UndoRedoRibbon {...props}>
-      {/* Pushes the tab to the far right of the band. */}
+      {/* Pushes the tabs to the far right of the band. */}
       <div style={{ flex: 1 }} />
+      {/* Questions sits left of Tree: it is the further-back step — what the
+          catalog is asked FOR — and the one reached less often. */}
+      <TabButton
+        label="Questions"
+        active={view === 'questions'}
+        onClick={() => onViewChange(view === 'questions' ? 'project' : 'questions')}
+      />
       <TabButton
         label="Tree"
         active={view === 'tree'}

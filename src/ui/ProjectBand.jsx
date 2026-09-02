@@ -25,6 +25,13 @@ export default function ProjectBand({
   optionsRefreshKey,
   selectedOptionId,
   onSelectOption,
+  // The open option's buildings and phases, and how to set them. Clicking the
+  // chip that is already selected opens the dialog — see OptionList.
+  openBuildingIds,
+  openPhaseCount,
+  onSetOptionSettings,
+  departmentCountByBuilding,
+  departmentCountByPhase,
 }) {
   return (
     <Band edge="bottom">
@@ -50,6 +57,11 @@ export default function ProjectBand({
             refreshKey={optionsRefreshKey}
             selectedOptionId={selectedOptionId}
             onSelectOption={onSelectOption}
+            openBuildingIds={openBuildingIds}
+            openPhaseCount={openPhaseCount}
+            onSetOptionSettings={onSetOptionSettings}
+            departmentCountByBuilding={departmentCountByBuilding}
+            departmentCountByPhase={departmentCountByPhase}
           />
         ) : (
           <span style={{ fontSize: 12, color: '#bbb' }}>Pick a project first</span>

@@ -1,18 +1,29 @@
 // THE CATALOG — every read of the shared definition tables
 // ========================================================
 //
-// Five tables describe what a hospital can contain. They're global: shared by
+// These tables describe what a building can contain. They're global: shared by
 // every project and option, edited only by an admin.
 //
 //   sp_department  id, name, type, is_duplicable, function_id
 //   sp_group       id, name, is_duplicable, function_id
 //   sp_room        id, name, type, function_id
 //   sp_object      id, name, type, area_sqft
-//   sp_section     id, name, tree, function_id   <- the tree itself, see tree.js
+//   sp_section     id, name, tree, function_id, building_id  <- see tree.js
+//   sp_building    id, name, function_id, sort_order
 //   sp_function    id, name, bg_colour, text_colour  <- see functions.js
+//   sp_questionnaire  id, building_id, definition, version  <- see questionnaire.js
 //
 // function_id is nullable everywhere and resolves to the 'default' function
 // row when unset — see data/functions.js.
+//
+// building_id is NOT nullable: every section belongs to exactly one building,
+// and that is the only thing that partitions the catalog. Departments and
+// groups deliberately have no building — they are placeable in any of them.
+//
+// There is no phase table here on purpose. A phase is a natural number on a
+// department in sp_option.data, not an entity — see data/optionData.js. A
+// questionnaire is the opposite and does get one: it is authored, it outlives
+// every option made from it, and it points at catalog placements by id.
 //
 // Four different components used to fetch these independently, which meant each
 // held its own snapshot and they drifted apart: place a department in the
@@ -21,7 +32,8 @@
 // exists"). One provider, one copy, one reload — the drift is now structurally
 // impossible rather than patched per component.
 //
-// After any write to sp_section.tree, call reloadSections().
+// After any write to sp_section.tree, call reloadSections(); after any write to
+// sp_questionnaire.definition, reloadQuestionnaires().
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { supabase } from './supabase.js'
@@ -33,8 +45,18 @@ const TABLES = {
   groups: { table: 'sp_group', columns: 'id, name, is_duplicable, function_id', order: 'name' },
   rooms: { table: 'sp_room', columns: 'id, name, type, function_id', order: 'name' },
   objects: { table: 'sp_object', columns: 'id, name, type, area_sqft', order: 'name' },
-  sections: { table: 'sp_section', columns: 'id, name, tree, function_id', order: 'name' },
+  sections: { table: 'sp_section', columns: 'id, name, tree, function_id, building_id', order: 'name' },
   functions: { table: 'sp_function', columns: 'id, name, bg_colour, text_colour', order: 'name' },
+  // Ordered by sort_order, not name: buildings have a conventional order that
+  // is not alphabetical (Hospital before Laboratory).
+  buildings: { table: 'sp_building', columns: 'id, name, function_id, sort_order', order: 'sort_order' },
+  // One row per building. `version` is fetched because every write is
+  // conditional on it — see data/questionnaire.js.
+  questionnaires: {
+    table: 'sp_questionnaire',
+    columns: 'id, building_id, definition, version',
+    order: 'building_id',
+  },
 }
 
 async function fetchTable(key) {
@@ -44,13 +66,23 @@ async function fetchTable(key) {
   return data ?? []
 }
 
-const EMPTY = { departments: [], groups: [], rooms: [], objects: [], sections: [], functions: [] }
+const EMPTY = {
+  departments: [],
+  groups: [],
+  rooms: [],
+  objects: [],
+  sections: [],
+  functions: [],
+  buildings: [],
+  questionnaires: [],
+}
 
 const CatalogContext = createContext({
   ...EMPTY,
   error: null,
   loaded: false,
   reloadSections: async () => {},
+  reloadQuestionnaires: async () => {},
   reloadAll: async () => {},
 })
 
@@ -97,12 +129,28 @@ export function CatalogProvider({ children }) {
     }
   }, [])
 
+  // Same argument as reloadSections, one table along: authoring a questionnaire
+  // is a run of small edits and none of them touches anything else.
+  const reloadQuestionnaires = useCallback(async () => {
+    const mine = ++requestRef.current
+    try {
+      const questionnaires = await fetchTable('questionnaires')
+      if (mine !== requestRef.current) return
+      setData((prev) => ({ ...prev, questionnaires }))
+      setError(null)
+    } catch (err) {
+      if (mine === requestRef.current) setError(err.message)
+    }
+  }, [])
+
   useEffect(() => {
     reloadAll()
   }, [reloadAll])
 
   return (
-    <CatalogContext.Provider value={{ ...data, error, loaded, reloadSections, reloadAll }}>
+    <CatalogContext.Provider
+      value={{ ...data, error, loaded, reloadSections, reloadQuestionnaires, reloadAll }}
+    >
       {children}
     </CatalogContext.Provider>
   )

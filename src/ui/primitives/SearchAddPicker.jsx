@@ -10,14 +10,25 @@ import { Z } from './zIndex.js'
 // boxes, one per room, each as wide as the panel and none of them in use.
 // Clicking + opens the field in a popover; typing filters; clicking an option
 // adds it immediately and closes.
-export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'Add', size }) {
+//
+// An option may carry a `path` — where in the catalog it sits — which is drawn
+// as a quiet second line and searched alongside the name. A definition placed
+// twice gives two rows identical in every other respect, so without it the
+// pickers that list PLACEMENTS rather than definitions would offer a column of
+// indistinguishable "Lobby"s. Options without one draw exactly as they always
+// did: a single line.
+export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'Add', size, width = 260 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const pool = q ? options.filter((o) => o.name.toLowerCase().includes(q)) : options
+    const pool = q
+      ? options.filter(
+          (o) => o.name.toLowerCase().includes(q) || (o.path ?? '').toLowerCase().includes(q)
+        )
+      : options
     return pool.slice(0, 50)
   }, [options, query])
 
@@ -51,7 +62,7 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
             top: '100%',
             left: 0,
             marginTop: 4,
-            width: 260,
+            width,
             maxWidth: '100%',
             background: '#fff',
             border: '1px solid #ccc',
@@ -101,7 +112,10 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                   onMouseEnter={(e) => (e.currentTarget.style.background = '#f2f7ff')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = '#fff')}
                 >
-                  {opt.name}
+                  <div>{opt.name}</div>
+                  {opt.path && (
+                    <div style={{ fontSize: 11, color: '#999', overflowWrap: 'anywhere' }}>{opt.path}</div>
+                  )}
                 </div>
               ))
             )}

@@ -10,7 +10,7 @@
 // Colours always arrive as a resolved palette from data/functions.js — this
 // file never reads bg_colour itself.
 
-import { LABEL_HEIGHT, PADDING } from './canvasLayout.js'
+import { BUILDING_LABEL_HEIGHT, LABEL_HEIGHT, PADDING } from './canvasLayout.js'
 
 // A ghost's dashes get finer the deeper you go — section, then group, then
 // department — so the nesting reads from the strokes alone, the same way the
@@ -41,6 +41,9 @@ export function CanvasContainer({
   ghostText = '#999',
   pulse = false,
   headerClassName,
+  // Before the name and after it. A ghost section's single + lives on the
+  // left, where it reads as "add this" against the name it would add.
+  headerLeft,
   headerRight,
   children,
 }) {
@@ -94,6 +97,7 @@ export function CanvasContainer({
           pointerEvents: 'auto',
         }}
       >
+        {headerLeft}
         <span
           title={title ?? name}
           style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
@@ -101,6 +105,70 @@ export function CanvasContainer({
           {name}
         </span>
         {headerRight}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// A building. Deliberately NOT a card: no box, no fill, no border — a large
+// name over a rule, with its sections sitting beneath it.
+//
+// A building isn't a container in the way a section or a group is. Those are
+// places you drop things into, and their box is what tells you where the edge
+// of the drop is. A building is never a drop target — a section's building is a
+// column in sp_section, not a placement — so a box around it would draw an edge
+// that means nothing and add a fourth nested border to look past.
+//
+// It reads as a title because that is what it is: the buildings are stacked
+// down the canvas, and this is the heading you scroll between.
+export function CanvasBandHeading({
+  colours,
+  name,
+  isGhost = false,
+  isSelected = false,
+  ghostText = '#999',
+  right,
+  children,
+}) {
+  // Selection is the rule and the name going blue. There is no box to put a
+  // ring around, and blue is what selection means everywhere else on the canvas.
+  const ink = isSelected ? '#1a73e8' : isGhost ? ghostText : colours.border
+
+  return (
+    <div style={{ width: '100%', height: '100%', boxSizing: 'border-box', pointerEvents: 'auto' }}>
+      <div
+        style={{
+          height: BUILDING_LABEL_HEIGHT,
+          boxSizing: 'border-box',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          // The rule runs the full width of the band, under the name — the
+          // thing that says how far this building reaches, now that no border
+          // does.
+          borderBottom: `${isSelected ? 3 : 2}px solid ${ink}`,
+          color: ink,
+        }}
+      >
+        <span
+          title={name}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            fontSize: 30,
+            fontWeight: 800,
+            letterSpacing: '-0.01em',
+            textTransform: 'uppercase',
+            opacity: isGhost ? 0.65 : 1,
+          }}
+        >
+          {name}
+        </span>
+        {right}
       </div>
       {children}
     </div>

@@ -29,6 +29,8 @@ export default function DepartmentBlock({
   objectDefs,
   functions,
   departmentFunctionId,
+  buildingDefs = [],
+  phaseCount = 1,
   onAddRoom,
   onRoomChange,
   onSelectDepartment,
@@ -39,7 +41,8 @@ export default function DepartmentBlock({
   // the filters treat as unrestricted rather than as "nothing allowed".
   const colours = functionColours(functions, departmentFunctionId)
   const catalogRooms = catalogRoomsForNode(sections, dept.treeNodeId)
-  const placement = resolveNodePlacement(sections, dept.treeNodeId, groupDefs)
+  const placement = resolveNodePlacement(sections, dept.treeNodeId, groupDefs, buildingDefs)
+  const buildingName = placement?.buildingName
   const sectionName = placement?.sectionName ?? dept.fallbackSectionName
   const groupName = placement?.groupName ?? dept.fallbackGroupName
 
@@ -69,14 +72,29 @@ export default function DepartmentBlock({
     <PanelShell colours={colours}>
       <div
         style={{ cursor: onSelectDepartment ? 'pointer' : 'default', minWidth: 0 }}
-        onClick={() => onSelectDepartment?.(dept.defId, dept.treeNodeId)}
+        onClick={() => onSelectDepartment?.(dept.defId, dept.treeNodeId, dept.phase)}
       >
         <PanelHeading
           name={`${dept.name}${dept.type ? ` (${dept.type})` : ''}`}
-          path={formatPath(sectionName, groupName)}
+          path={formatPath(buildingName, sectionName, groupName)}
           note={!placement ? '(no longer in the tree)' : null}
         />
       </div>
+
+      {/* Which phase this pane is editing, stated rather than chosen.
+
+          It used to be a <select>, when a department had one phase and its
+          rooms were that phase's rooms. Now each phase of a department is its
+          own entry with its own rooms, so the phase is not a property to change
+          here — it is which strip on the card you clicked. Changing it would
+          mean moving these rooms to a phase that may already have its own.
+
+          Silent on a one-phase option, where there is nothing to distinguish. */}
+      {phaseCount > 1 && (
+        <div style={{ margin: '10px 0', fontSize: 12, color: '#777' }}>
+          Phase {dept.phase} of {phaseCount}
+        </div>
+      )}
 
       <SearchAddPicker
         options={roomDefs.filter((def) => {
@@ -105,6 +123,16 @@ export default function DepartmentBlock({
             colours={functionColours(functions, roomDefs.find((d) => d.id === room.defId)?.function_id)}
             name={room.name}
             type={room.type}
+            count={room.count}
+            onCountChange={(count) =>
+              onRoomChange(
+                room.instanceId,
+                (r) => ({ ...r, count }),
+                // Typing a number is one undo step, however many keystrokes —
+                // the same treatment an object's count gets.
+                { coalesce: `roomCount:${room.instanceId}` }
+              )
+            }
             onRemove={() =>
               setConfirmTarget({
                 roomInstanceId: room.instanceId,

@@ -4,7 +4,7 @@
 
 import RemoveButton from '../primitives/RemoveButton.jsx'
 import { functionColours } from '../../data/functions.js'
-import { CanvasCard, CanvasContainer } from '../canvas/canvasCards.jsx'
+import { CanvasBandHeading, CanvasCard, CanvasContainer } from '../canvas/canvasCards.jsx'
 import { NODE_HEIGHT, NODE_WIDTH, PADDING } from './treeLayout.js'
 import { BandRow } from '../primitives/Band.jsx'
 
@@ -131,10 +131,27 @@ function HSectionBoxCard({ data }) {
   )
 }
 
+// A building is a band across the canvas holding its sections: a title over a
+// rule, with no box. Nothing is ever dragged into or out of one — a section's
+// building is a column in sp_section, not a placement — so there is no drop
+// edge to draw. See CanvasBandHeading.
+function HBuildingBoxCard({ data }) {
+  return (
+    <CanvasBandHeading colours={data.colours} name={data.name}>
+      {data.isEmpty && (
+        <div style={{ paddingTop: PADDING, fontSize: 12, color: '#8a8a8a' }}>
+          No sections in this building yet — add one in the Supabase table editor.
+        </div>
+      )}
+    </CanvasBandHeading>
+  )
+}
+
 export const nodeTypes = {
   tDepartment: HDepartmentCard,
   tGroupBox: HGroupBoxCard,
   tSectionBox: HSectionBoxCard,
+  tBuildingBox: HBuildingBoxCard,
 }
 
 // Carousel items use native HTML5 drag-and-drop, not React Flow's — they start
@@ -142,6 +159,10 @@ export const nodeTypes = {
 //
 // Coloured the same way the canvas colours them — solid for a group, inverted
 // for a department — so an item looks the same before and after it's placed.
+//
+// Every item looks and behaves identically however many times it has been
+// placed. There is deliberately no "already used" treatment of any kind — see
+// the carousel comment in TreeCanvas.jsx for why that matters.
 function CarouselItem({ label, kind, id, colours, onItemDragStart, onItemDragEnd }) {
   const tone = kind === 'department' ? colours.inverted : colours
   return (

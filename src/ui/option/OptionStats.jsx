@@ -8,21 +8,36 @@
 // summarize() must be given the IN-MEMORY departments (see data/optionData.js):
 // the wire format carries no areas and would total to zero.
 
-import { summarize } from '../../data/optionData.js'
+import { phaseRows, summarize } from '../../data/optionData.js'
 import { Stat, StatCard } from '../primitives/Stat.jsx'
 import { formatArea } from '../map/area.js'
 
-export default function OptionStats({ name, departments, sectionCount, siteSqft = null }) {
-  const { departmentCount, roomCount, objectCount, areaSqft } = summarize(departments ?? [])
+export default function OptionStats({
+  name,
+  departments,
+  sectionCount,
+  buildingCount,
+  phaseCount = 1,
+  siteSqft = null,
+}) {
+  const { departmentCount, roomCount, objectCount, areaSqft, perPhase } = summarize(departments ?? [])
   const coverage = siteSqft ? (areaSqft / siteSqft) * 100 : null
+  const phases = phaseRows(perPhase, phaseCount)
 
   return (
     <StatCard title={name || 'Open option'}>
+      {buildingCount != null && <Stat label="Buildings" value={buildingCount} />}
       {sectionCount != null && <Stat label="Sections" value={sectionCount} />}
-      <Stat label="Departments" value={departmentCount} />
+      {/* A department staged in three phases is three of these: each is
+          programmed separately, so each is a thing this option holds. The
+          per-phase rows below are what breaks the figure down. */}
+      <Stat label={phaseCount > 1 ? 'Departments (all phases)' : 'Departments'} value={departmentCount} />
       <Stat label="Rooms" value={roomCount} />
       <Stat label="Objects" value={objectCount} />
       <Stat label="Programmed area" value={formatArea(areaSqft)} unit="sqft" />
+      {phases.map(({ key, label, totals }) => (
+        <Stat key={key} label={label} value={formatArea(totals.areaSqft)} unit="sqft" />
+      ))}
       {coverage != null && <Stat label="Of site area" value={formatArea(coverage, 1)} unit="%" />}
     </StatCard>
   )

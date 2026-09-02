@@ -98,8 +98,6 @@ export function useTreeEditor() {
 
   const nameOfGroup = (defId) => catalogRef.current.groups.find((g) => g.id === defId)?.name
   const nameOfDept = (defId) => catalogRef.current.departments.find((d) => d.id === defId)?.name
-  const nameOfRoom = (defId) => catalogRef.current.rooms.find((r) => r.id === defId)?.name
-  const nameOfObject = (defId) => catalogRef.current.objects.find((o) => o.id === defId)?.name
 
   // --- Groups ---------------------------------------------------------------
 

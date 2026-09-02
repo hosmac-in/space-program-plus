@@ -42,11 +42,16 @@ export function PanelShell({ colours, children }) {
   )
 }
 
-// Where a department sits, as one line. An unresolvable half shows as a dash
-// rather than blanking, so the shape of the path is always legible.
-export function formatPath(sectionName, groupName) {
-  if (!sectionName && !groupName) return null
-  return `${sectionName ?? '—'} → ${groupName ?? '—'}`
+// Where a department sits, as one line — building → section → group, or any
+// leading part of that. An unresolvable step shows as a dash rather than
+// blanking, so the shape of the path is always legible.
+//
+// Variadic because the two panels know different amounts: the option panel can
+// name the building, while the Tree tab is already inside one and passes only
+// the section and group.
+export function formatPath(...names) {
+  if (names.every((n) => !n)) return null
+  return names.map((n) => n ?? '—').join(' → ')
 }
 
 // The department the panel is about: its name, and where it sits in the tree.
@@ -67,43 +72,72 @@ export function PanelHeading({ name, path, note, right }) {
   )
 }
 
-// One object in one room.
-//
-// Both panels list objects; only the Project tab counts them. The catalog says
-// what a room may contain, an option says how many — so `count` and `area` are
-// both optional here, and the Tree passes neither: its rows are a name and a
-// remove button.
+// How many of something. One field, used by an object row and by a room header —
+// one component rather than two, because the typing rules below are the whole
+// substance of it and two copies would drift on the first fix.
 //
 // A count reports every keystroke, so whatever depends on it — the Save Data
 // button, the totals — answers while you are still typing. It waited for blur
 // once, and the button stayed grey over a number you had already changed.
 //
 // Typing "120" is therefore three reports, but ONE undo step: the caller
-// coalesces consecutive edits to the same object (see `coalesce` in
+// coalesces consecutive edits to the same thing (see `coalesce` in
 // InstanceBuilder). The draft is still local so a half-typed or empty field
 // never reaches the option — only values that parse.
-export function ObjectRow({ name, type, count, area, canEdit = true, onCountChange, onRemove }) {
-  const [draft, setDraft] = useState(String(count ?? ''))
+export function CountField({ value, canEdit = true, onChange, title, colour = '#555' }) {
+  const [draft, setDraft] = useState(String(value ?? ''))
 
-  // An undo, a discard, or an edit made elsewhere changes the count under a row
-  // nobody is typing in.
-  useEffect(() => setDraft(String(count ?? '')), [count])
+  // An undo, a discard, or an edit made elsewhere changes the count under a
+  // field nobody is typing in.
+  useEffect(() => setDraft(String(value ?? '')), [value])
+
+  if (!canEdit) {
+    return (
+      <span style={{ width: COUNT_WIDTH, textAlign: 'right', flexShrink: 0, fontSize: 13, color: colour }}>
+        × {value}
+      </span>
+    )
+  }
 
   // While typing: report anything that parses to a real count, ignore the rest
   // (an empty field, a lone minus) rather than forcing a 1 under the caret.
   const typeCount = (text) => {
     setDraft(text)
     const n = Math.floor(Number(text))
-    if (Number.isFinite(n) && n >= 1 && n !== count) onCountChange(n)
+    if (Number.isFinite(n) && n >= 1 && n !== value) onChange(n)
   }
 
   // On the way out: settle whatever is in the field to a legal value.
   const commit = () => {
     const next = Math.max(1, Math.floor(Number(draft) || 0))
     setDraft(String(next))
-    if (next !== count) onCountChange(next)
+    if (next !== value) onChange(next)
   }
 
+  return (
+    <input
+      type="number"
+      min={1}
+      value={draft}
+      onChange={(e) => typeCount(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') setDraft(String(value))
+      }}
+      title={title}
+      style={{ width: COUNT_WIDTH, flexShrink: 0, padding: '2px 4px', boxSizing: 'border-box' }}
+    />
+  )
+}
+
+// One object in one room.
+//
+// Both panels list objects; only the Project tab counts them. The catalog says
+// what a room may contain, an option says how many — so `count` and `area` are
+// both optional here, and the Tree passes neither: its rows are a name and a
+// remove button.
+export function ObjectRow({ name, type, count, area, canEdit = true, onCountChange, onRemove }) {
   return (
     // No wrapping: the row is narrow, so the name takes whatever the fixed
     // controls on the right don't need and ellipsises rather than pushing them
@@ -113,24 +147,8 @@ export function ObjectRow({ name, type, count, area, canEdit = true, onCountChan
         {name} {type ? `(${type})` : ''}
       </span>
 
-      {count == null ? null : canEdit ? (
-        <input
-          type="number"
-          min={1}
-          value={draft}
-          onChange={(e) => typeCount(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur()
-            if (e.key === 'Escape') setDraft(String(count))
-          }}
-          title={`How many ${name}`}
-          style={{ width: COUNT_WIDTH, flexShrink: 0, padding: '2px 4px', boxSizing: 'border-box' }}
-        />
-      ) : (
-        <span style={{ width: COUNT_WIDTH, textAlign: 'right', flexShrink: 0, fontSize: 13, color: '#555' }}>
-          × {count}
-        </span>
+      {count != null && (
+        <CountField value={count} canEdit={canEdit} onChange={onCountChange} title={`How many ${name}`} />
       )}
 
       {area !== undefined && (
@@ -146,13 +164,19 @@ export function ObjectRow({ name, type, count, area, canEdit = true, onCountChan
   )
 }
 
-// One room: a coloured header carrying its name and its remove button, then a
-// body holding whatever the caller puts in it — object rows, and its own picker.
+// One room: a coloured header carrying its name, how many of it, and its remove
+// button, then a body holding whatever the caller puts in it — object rows, and
+// its own picker.
+//
+// `count` is optional for the same reason ObjectRow's is: the catalog says what
+// a department may contain, an option says how many, so the Tree tab passes none
+// and its header is a name and a ×. Unlike an object's, a room's count does not
+// scale its area — see the note in data/optionData.js.
 //
 // Deliberately not `overflow: hidden`: a picker's dropdown is absolutely
 // positioned below its input and has to escape the block's bottom edge. The
 // header rounds its own top corners instead.
-export function RoomBlock({ colours, name, type, canEdit = true, onRemove, children }) {
+export function RoomBlock({ colours, name, type, count, canEdit = true, onCountChange, onRemove, children }) {
   return (
     <div style={{ border: `1px solid ${colours.border}`, borderRadius: BLOCK_RADIUS, marginTop: 8, minWidth: 0 }}>
       <div
@@ -171,6 +195,17 @@ export function RoomBlock({ colours, name, type, canEdit = true, onRemove, child
         <span title={name} style={ellipsis}>
           {name} {type ? `(${type})` : ''}
         </span>
+        {count != null && (
+          <CountField
+            value={count}
+            canEdit={canEdit && !!onCountChange}
+            onChange={onCountChange}
+            title={`How many ${name}`}
+            // The header is painted with the room's function colour, so a
+            // read-only figure takes the ink that colour was paired with.
+            colour="inherit"
+          />
+        )}
         {canEdit && onRemove && <RemoveButton onRemove={onRemove} title={`Remove ${name}`} size={ROOM_CONTROL} />}
       </div>
 

@@ -74,4 +74,5 @@ The Department-->Room-->Object is pre-filled by the tree, but allows users to ad
 
 
 
-Section 2: Entering Areas & Counts to into the structure
+Section 2: Questionaire - Keydrivers, Facility Mix, Bed Distribution Matrix
+
