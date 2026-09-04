@@ -21,6 +21,7 @@ import { PanelNote } from './panel/panelParts.jsx'
 import OptionChooser from './option/OptionChooser.jsx'
 import InstanceBuilder from './option/InstanceBuilder.jsx'
 import RoomLinkPanel from './tree/RoomLinkPanel.jsx'
+import BuildingPanel from './tree/BuildingPanel.jsx'
 import { TreeEditorProvider } from './tree/useTreeEditor.jsx'
 import QuestionDetail from './questions/QuestionDetail.jsx'
 import { QuestionnaireEditorProvider } from './questions/useQuestionnaireEditor.jsx'
@@ -31,6 +32,7 @@ import { RULE } from './layout.js'
 import { APP_STYLE } from './appStyle.js'
 import { ADD_BUTTON_STYLE } from './primitives/AddButton.jsx'
 import { REMOVE_BUTTON_STYLE } from './primitives/RemoveButton.jsx'
+import { RESET_BUTTON_STYLE } from './primitives/ResetButton.jsx'
 import { RIBBON_STYLE } from './primitives/UndoRedoRibbon.jsx'
 
 export default function App() {
@@ -78,6 +80,13 @@ function SignedInApp({ session }) {
   // definition, since rooms hang off the placement. A selection carrying no
   // node (there's no one placement it refers to) clears this.
   const [selectedDeptInstanceId, setSelectedDeptInstanceId] = useState(null)
+  // Which building's band is selected on the TREE tab. Never set at the same
+  // time as a department: the two are the pane's two faces there, and holding
+  // both would leave it showing one while the canvas highlighted the other.
+  //
+  // Not the same thing as `selection`, which is the Project canvas's — that one
+  // has four kinds and drives a different panel entirely.
+  const [selectedTreeBuildingId, setSelectedTreeBuildingId] = useState(null)
   // ...and which of the option's phases. A placement holds one entry per phase
   // it is staged in, each with its own rooms, so the node id alone no longer
   // names one department to edit. Meaningless on the Tree tab, which has no
@@ -205,8 +214,16 @@ function SignedInApp({ session }) {
 
   const leaveOption = (next) => guard(() => navigate(next))
 
+  function handleSelectTreeBuilding(buildingId) {
+    setSelectedTreeBuildingId(buildingId)
+    // The pane shows one or the other. No guard: the Tree tab writes every edit
+    // as it is made, so there is never anything unsaved to ask about.
+    setSelectedDeptInstanceId(null)
+  }
+
   function handleSelectDepartment(defId, treeNodeId, phase = 1) {
     const select = () => {
+      setSelectedTreeBuildingId(null)
       setHighlightedDepartmentId(defId)
       setSelectedDeptInstanceId(treeNodeId ?? null)
       setSelectedPhase(phase)
@@ -266,7 +283,7 @@ function SignedInApp({ session }) {
     {/* The four regions — header, main, side, footer — and the three
         regulating lines between them. See CLAUDE.md. */}
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' }}>
-      <style>{APP_STYLE + REMOVE_BUTTON_STYLE + ADD_BUTTON_STYLE + RIBBON_STYLE}</style>
+      <style>{APP_STYLE + REMOVE_BUTTON_STYLE + RESET_BUTTON_STYLE + ADD_BUTTON_STYLE + RIBBON_STYLE}</style>
 
       <AppHeader
         onHome={() => leaveOption({ view: 'map', projectId: null, optionId: null })}
@@ -314,11 +331,13 @@ function SignedInApp({ session }) {
           onAddSection={builderState.addSection}
           onRemoveSection={builderState.removeSection}
           buildingIds={builderState.buildingIds}
+          buildingFactors={builderState.buildingFactors}
           phaseCount={builderState.phaseCount}
           selection={selection}
           onSelectContainer={(next) => guard(() => setSelection(next))}
-          onClearSelection={() => guard(() => setSelection(null))}
           onSelectDepartment={handleSelectDepartment}
+          onSelectTreeBuilding={handleSelectTreeBuilding}
+          selectedTreeBuildingId={selectedTreeBuildingId}
           highlightedDepartmentId={highlightedDepartmentId}
           selectedDeptInstanceId={selectedDeptInstanceId}
           selectedPhase={selectedPhase}
@@ -382,8 +401,10 @@ function SignedInApp({ session }) {
           }
         />
 
-        {/* Side is split 3:1. The top three quarters change with what you
-            clicked; the bottom quarter is the HUD, which never does. */}
+        {/* Side is split 7:1. Everything above changes with what you clicked;
+            the bottom eighth is the HUD, which never does — it was a quarter,
+            which was more than a row of figures needed and came out of the
+            panel doing the work. */}
         <div
           style={{
             flex: 1,
@@ -393,7 +414,7 @@ function SignedInApp({ session }) {
             background: '#fafafa',
           }}
         >
-        <div style={{ flex: 3, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+        <div style={{ flex: 7, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
           {/* Side reports on what main is showing: the site's numbers on UHDP,
               the open option on Project, the selected department's rooms on
               Tree. Selecting happens in main. */}
@@ -435,7 +456,11 @@ function SignedInApp({ session }) {
 
           {view === 'tree' && (
             <div style={{ padding: 16, minWidth: 0 }}>
-              <RoomLinkPanel selectedDeptInstanceId={selectedDeptInstanceId} canEdit={isAdmin} />
+              {selectedTreeBuildingId ? (
+                <BuildingPanel buildingId={selectedTreeBuildingId} canEdit={isAdmin} />
+              ) : (
+                <RoomLinkPanel selectedDeptInstanceId={selectedDeptInstanceId} canEdit={isAdmin} />
+              )}
             </div>
           )}
 
@@ -451,6 +476,7 @@ function SignedInApp({ session }) {
           siteGeojson={projects.find((p) => p.id === selectedProjectId)?.site_geojson}
           optionName={builderState.optionName}
           departments={builderState.departments}
+          buildingFactors={builderState.buildingFactors}
           phaseCount={builderState.phaseCount}
         />
         </div>

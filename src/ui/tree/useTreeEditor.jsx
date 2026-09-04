@@ -4,14 +4,11 @@
 // Each handler: mutate the tree (data/tree.js) -> write the section row ->
 // reload sections -> toast -> record an undo/redo pair.
 //
-// STALENESS
-//
-// These handlers are memoized with no dependencies so their identity is stable
-// across renders (undo/redo closures hold onto them for the life of the stack).
-// A plain closure over `sections` would therefore freeze on first-render state
-// and write edits against an empty tree. Instead they read catalogRef, which is
-// re-pointed at the latest catalog data every render. One ref, read at call
-// time, rather than mirroring each handler separately.
+// STALENESS: these handlers are memoized with NO dependencies so their identity
+// stays stable — undo/redo closures hold them for the life of the stack. A plain
+// closure over `sections` would freeze on first-render state and write edits
+// against an empty tree, so they read catalogRef instead, re-pointed every
+// render.
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
@@ -31,6 +28,7 @@ import {
   updateDeptNode,
   writeSectionTree,
 } from '../../data/tree.js'
+import { withFactor } from '../../data/factors.js'
 import { describeMove } from './treeLayout.js'
 import { UNDO_DEPTH } from '../undo.js'
 
@@ -59,18 +57,14 @@ export function useTreeEditor() {
     setUndoStack((s) => [...s.slice(-(UNDO_DEPTH - 1)), { undo: undoFn, redo: redoFn }])
   }, [])
 
-  // EVERY ACTION IN THIS FILE RUNS ALONE, one after another.
+  // EVERY ACTION IN THIS FILE RUNS ALONE — the whole action, not just its write,
+  // because each one reads the catalog, computes a new tree from it and writes
+  // that back. Two started together would read the same copy and the second
+  // would write a tree computed before the first existed. Dragging a department
+  // and immediately removing another was enough to lose the drag.
   //
-  // Not just the writes — the whole action, because each one READS the catalog
-  // (`catalogRef.current`), computes a new tree from it, and writes that tree
-  // back. Two actions started together would both read the same copy, and the
-  // second would write a tree computed before the first existed, silently
-  // undoing it. Dragging a department and then immediately removing another was
-  // enough to lose the drag.
-  //
-  // Serialising the action rather than the write is what makes the read safe:
-  // by the time the second runs, the first has written AND reloaded the
-  // catalog, so it reads the tree as it now is.
+  // Serialising the action is what makes the READ safe: by the time the next
+  // runs, the previous has written and reloaded.
   const queueRef = useRef(Promise.resolve())
 
   function serialise(fn) {
@@ -83,11 +77,24 @@ export function useTreeEditor() {
     }
   }
 
-  // Writes one section and refreshes everyone's copy of the catalog. Returns
-  // false (and surfaces the message) if the database refused the write, which
-  // for a non-admin is exactly what the RLS policy is supposed to do.
+  // Writes one section and refreshes everyone's copy of the catalog. False (and
+  // a message) if the database refused it, which for a non-admin is what the RLS
+  // policy is for. The version travels from the same catalogRef copy the tree
+  // was computed from.
+  //
+  // A CONFLICT is not an error: someone else wrote this section, so nothing was
+  // written and this copy is stale. Reload and say so — retrying would re-apply
+  // an edit computed against a tree that no longer exists, which is the
+  // destruction the check exists to prevent.
   const write = useCallback(async (sectionId, tree) => {
-    const message = await writeSectionTree(sectionId, tree)
+    const section = catalogRef.current.sections.find((s) => s.id === sectionId)
+    const { error: message, conflict } = await writeSectionTree(sectionId, tree, section?.version)
+
+    if (conflict) {
+      await catalogRef.current.reloadSections()
+      pushToast(`${section?.name ?? 'That section'} was changed by someone else — reloaded, please try again.`)
+      return false
+    }
     if (message) {
       setError(message)
       return false
@@ -286,32 +293,24 @@ export function useTreeEditor() {
 
   // --- Rooms and objects ----------------------------------------------------
   //
-  // These edit three and four levels down inside a section's tree, on one
-  // specific department placement. They record undo commands exactly like the
-  // group and department edits above, so everything the Tree tab can do
-  // shares one stack — the rooms panel and the canvas are one history.
-  //
-  // Removals restore the node at its original index, and a removed room comes
-  // back with its objects intact, since the whole node is held in the closure.
+  // These edit one specific department placement, three and four levels down,
+  // and record onto the same stack as the canvas edits above — the rooms panel
+  // and the canvas are one history.
 
-  // The department's whole room list, replaced in one write.
+  // The department's whole room list, replaced in one write. Every + and × in
+  // the rooms panel calls this with the list it wants, so each click is one
+  // write and one undo step; there is no draft and no Save button on this tab.
   //
-  // Every + and × in the rooms panel calls this with the list it wants, so each
-  // click is one write and one undo step. There is no draft and no Save button
-  // on this tab: the catalog is edited by acting on it, the way the canvas above
-  // it already is.
-  //
-  // The undo pair holds the room list before and after — snapshots, not inverse
-  // edits — because a room list is small and self-contained. Undo writes the
-  // whole jsonb back.
+  // The undo pair holds the list before and after — snapshots rather than
+  // inverse edits, because a room list is small and belongs to one department.
   const setDeptRooms = useCallback(serialise(async (deptInstanceId, rooms, opts = {}) => {
     const { record = true, message } = opts
     const { sections } = catalogRef.current
     const ctx = findDeptContext(sections, deptInstanceId)
     if (!ctx) return false
 
-    // Counts briefly lived in the tree and don't any more, so a room list on
-    // its way to the database is normalised: ids only, per data/tree.js.
+    // Normalised on the way to the database: the two ids and a usable count on
+    // every object, and nothing hung on the node in memory.
     const clean = rooms.map((r) => ({ ...r, objects: (r.objects || []).map(cleanObjectNode) }))
     const previous = ctx.deptNode.rooms || []
     const section = sections.find((s) => s.id === ctx.sectionId)
@@ -331,13 +330,38 @@ export function useTreeEditor() {
     return true
   }), [])
 
+  // The catalog's DEFAULT for one of a department's factors — the value an
+  // option inherits. A scalar, so the undo pair is the previous and next value.
+  // Clearing removes the key rather than writing 1, which is how "the catalog
+  // states nothing" stays different from "the catalog states 1".
+  const setDeptFactor = useCallback(serialise(async (deptInstanceId, factor, value, opts = {}) => {
+    const { record = true, message } = opts
+    const { sections } = catalogRef.current
+    const ctx = findDeptContext(sections, deptInstanceId)
+    if (!ctx) return false
+
+    const previous = ctx.deptNode[factor.treeKey] ?? null
+    const section = sections.find((s) => s.id === ctx.sectionId)
+    const { tree, found } = updateDeptNode(section.tree || EMPTY_TREE, deptInstanceId, (dept) =>
+      withFactor(dept, factor, value, { tree: true })
+    )
+    if (!found || !(await write(ctx.sectionId, tree))) return false
+
+    if (message) pushToast(message)
+    if (record) {
+      pushCommand(
+        () => setDeptFactor(deptInstanceId, factor, previous, { record: false }),
+        () => setDeptFactor(deptInstanceId, factor, value, { record: false })
+      )
+    }
+    return true
+  }), [])
+
   // --- Undo / redo ----------------------------------------------------------
   //
   // Structural commands are closure pairs, so an undo re-runs the inverse edit
-  // against whatever the tree looks like now instead of stamping a stale copy
-  // over the top — that matters for moves, where the world may have shifted.
-  // A room list is the exception: it is small and belongs to one department, so
-  // its pair carries the list itself and undo writes the whole jsonb back.
+  // against the tree as it now is rather than stamping a stale copy over it.
+  // Room lists are the exception, as above.
 
   const undo = useCallback(() => {
     const stack = undoStackRef.current
@@ -365,6 +389,7 @@ export function useTreeEditor() {
     removeDept,
     moveDept,
     setDeptRooms,
+    setDeptFactor,
     undo,
     redo,
     canUndo: undoStack.length > 0,
@@ -373,9 +398,8 @@ export function useTreeEditor() {
   }
 }
 
-// The Tree tab is split across two columns — the canvas on the left, the
-// rooms panel on the right — but they are one editing session with one undo
-// stack, so the editor is held above both rather than inside either.
+// The canvas and the rooms panel are two columns but one editing session with
+// one undo stack, so the editor is held above both rather than inside either.
 const TreeEditorContext = createContext(null)
 
 export function TreeEditorProvider({ children }) {

@@ -9,6 +9,7 @@
 // the wire format carries no areas and would total to zero.
 
 import { phaseRows, summarize } from '../../data/optionData.js'
+import { useCatalog } from '../../data/catalog.jsx'
 import { Stat, StatCard } from '../primitives/Stat.jsx'
 import { formatArea } from '../map/area.js'
 
@@ -19,8 +20,17 @@ export default function OptionStats({
   buildingCount,
   phaseCount = 1,
   siteSqft = null,
+  // See the note in Hud.jsx: no area figure is right without these.
+  buildingFactors,
 }) {
-  const { departmentCount, roomCount, objectCount, areaSqft, perPhase } = summarize(departments ?? [])
+  // Sections as well as departments: a grossing factor may be inherited from
+  // the catalog — see data/factors.js.
+  const { sections, buildings } = useCatalog()
+  const { departmentCount, roomCount, objectCount, areaSqft, perPhase } = summarize(departments ?? [], {
+    sections,
+    buildings,
+    buildingFactors,
+  })
   const coverage = siteSqft ? (areaSqft / siteSqft) * 100 : null
   const phases = phaseRows(perPhase, phaseCount)
 

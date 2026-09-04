@@ -35,22 +35,16 @@ function resolveFunction(functions = [], functionId) {
 //   tint(a)     the same colour at opacity `a`, for container bodies
 //   inverted    a pale wash of the same hue — see below
 //
-// `inverted` exists so a card can sit on a container filled with its own
-// function colour and still be legible: groups are drawn solid, and the
-// departments inside them are drawn inverted so they read as cut out of the
-// parent rather than dissolving into it.
+// `inverted` lets a card sit on a container filled with its own function colour
+// and stay legible: groups are drawn solid, departments inside them inverted, so
+// they read as cut out of the parent rather than dissolving into it.
 //
-// An inverted card is ALWAYS a very light tint of bg_colour, never text_colour
-// painted as a fill. text_colour is chosen to be legible *on* the background,
-// which says nothing about how it looks *as* one — using it directly turned
-// most cards near-black, and the few functions with a light text_colour into
-// white cards. Washing bg_colour towards white instead keeps every card in its
-// own hue family and uniformly light, with a darkened version of that same hue
-// for the text.
-//
-// The wash mixes towards white rather than using alpha, because these cards sit
-// on a solid-coloured parent — a translucent fill would let the group's colour
-// through and undo the inversion.
+//   >>> An inverted card is ALWAYS a light tint of bg_colour, never text_colour
+//   >>> painted as a fill. text_colour is chosen to be legible ON a background,
+//   >>> which says nothing about how it looks AS one — using it turned most
+//   >>> cards near-black. It mixes towards white rather than using alpha,
+//   >>> because a translucent fill would let the parent's colour through and
+//   >>> undo the inversion.
 export function functionColours(functions, functionId) {
   const fn = resolveFunction(functions, functionId)
   const bg = fn.bg_colour ?? FALLBACK.bg_colour
@@ -62,11 +56,9 @@ export function functionColours(functions, functionId) {
     color: `rgb(${text})`,
     border: shade(bg, 0.75),
     tint: (alpha) => `rgba(${bg},${alpha})`,
-    // Clearly not the resting colour, but unmistakably the same function —
-    // used when a card is a drop target. Which way it shifts depends on the
-    // colour's own lightness: darkening 'corridor' (near-white) or lightening
-    // 'staircase' (navy) would both be invisible, so each moves away from
-    // where it already is.
+    // For a card that is a drop target. Which way it shifts depends on its own
+    // lightness: darkening 'corridor' (near-white) or lightening 'staircase'
+    // (navy) would both be invisible, so each moves away from where it is.
     emphasis: isLight(bg) ? shade(bg, 0.86) : lighten(bg, 0.28),
     ring: `rgba(${bg},0.55)`,
     inverted: {

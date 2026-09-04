@@ -12,33 +12,25 @@
 // The Tree tab takes no parameter: it shows every building at once, stacked.
 //
 // The Questions tab takes `b`, because a questionnaire is authored one building
-// at a time — one row per building, see data/questionnaire.js — and a link to
-// one should open that one. Absent or unrecognised falls back to the first
-// building.
+// at a time and a link to one should open that one. Absent or unrecognised falls
+// back to the first building.
 //
-// The tab is a path segment, named by its visible label; the ids are query
+// The tab is a path segment named by its visible label; the ids are query
 // parameters, present only when something is selected. Anything unrecognised
 // falls back to #/uhdp.
 //
-// WHY A HASH
-//
-// The app is served from a GitHub Pages project site (see `base` in
-// vite.config.js). Pages serves static files and knows nothing about
-// client-side routes, so a real path like /canvas/abc would 404 on reload or on
-// a pasted link. Everything after the # is never sent to the server, so hash
-// URLs work in dev, preview and production without any server cooperation.
+// HASH-BASED because the app is served from a GitHub Pages project site, which
+// knows nothing about client-side routes — a real path would 404 on reload or a
+// pasted link. Everything after the # never reaches the server.
 //
 // The department selection is deliberately NOT in the URL: it would make links
-// long, and clicking through a department list would flood the Back button.
+// long and flood the Back button.
 
 import { useCallback, useEffect, useState } from 'react'
 
-// URL slug <-> the view value the app uses internally. They match, apart from
-// UHDP, whose internal name is older than its label.
-//
-// `canvas` and `hierarchy` — what these screens were called before — are not
-// read. A link using them falls through to #/uhdp like any other unrecognised
-// path, which is the point: there is one name per screen, not two.
+// URL slug <-> the view value the app uses internally. They match apart from
+// UHDP, whose internal name is older than its label. The former slugs `canvas`
+// and `hierarchy` are deliberately not read: one name per screen, not two.
 const VIEW_BY_SLUG = { uhdp: 'map', project: 'project', tree: 'tree', questions: 'questions' }
 const SLUG_BY_VIEW = { map: 'uhdp', project: 'project', tree: 'tree', questions: 'questions' }
 
@@ -102,7 +94,7 @@ export function useUrlState() {
         window.history.replaceState(null, '', hash)
       } else if (window.location.hash !== hash) {
         // Assigning location.hash pushes a history entry AND fires hashchange,
-        // which sets the same value again. Harmless, and it keeps Back/Forward
+        // setting the same value again — harmless, and it keeps Back/Forward
         // and in-app navigation on one code path.
         window.location.hash = hash
       }

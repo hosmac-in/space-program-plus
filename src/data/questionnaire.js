@@ -29,51 +29,38 @@
 //   number on a sub-question = { "label": "Beds", "target_node_id": "...",
 //                                "target_path": "…" }
 //
-// THE GRAMMAR, AND WHY IT STOPS WHERE IT DOES
+// THE GRAMMAR
 //
-// Every question is a yes/no. The two levels do different jobs:
+// Every question is a yes/no, and the two levels do different jobs:
 //
 //   top level    a GATE. Yes reveals its sub-questions and adds nothing itself.
 //                It may still carry a number — "Are there beds?" then "How many
-//                in total?" — but that number POINTS AT NOTHING: a gate adds no
-//                department, so there is nothing of its own to size. It is a
-//                headline figure for the brief.
-//   sub-question YES ADDS ONE DEPARTMENT, the placement named by
-//                department_node_id. Its number sets the COUNT OF ONE ROOM
-//                INSIDE THAT DEPARTMENT — never a room elsewhere in the catalog,
-//                never an object, never the department itself.
+//                in total?" — but that number POINTS AT NOTHING, because a gate
+//                adds no department. It is a headline figure for the brief.
+//   sub-question YES ADDS ONE DEPARTMENT, the placement at department_node_id.
+//                Its number sets the COUNT OF ONE ROOM INSIDE THAT DEPARTMENT —
+//                never a room elsewhere, never an object, never the department.
 //
-// Sub-questions do not nest. Two levels is the whole grammar, deliberately: a
-// tree of arbitrary depth is a tree to author, a tree to render, a tree to walk
-// when answering, and a facility brief has never needed one.
+// Sub-questions do not nest: two levels is the whole grammar, deliberately. A
+// tree of arbitrary depth is one to author, one to render and one to walk when
+// answering, and a facility brief has never needed one.
 //
-// WHY THE TARGET IS A ROOM, AND ONLY ONE INSIDE THIS DEPARTMENT
-//
-// The answer is the count, directly — twelve is twelve of that room. That is
-// what rooms carrying a `count` in sp_option.data is for (see optionData.js),
-// and it is why there is no multiplier: a rate would need a rule engine to
-// interpret, and this needs none.
-//
-// Scoping the target to the bound department is what keeps the two halves of a
-// sub-question one statement: "yes, add this department, and this is how many of
-// that room it has". A target elsewhere in the catalog would mean a question
-// that adds one thing and sizes another. So re-binding the department CLEARS the
-// number's target — it now names a room in a department this question no longer
-// adds.
-//
-// WHY A NAME IS STORED HERE, WHEN NOTHING ELSE STORES ONE
+// The answer IS the count — twelve is twelve of that room, which is what a
+// room's `count` in sp_option.data is for. There is no multiplier, so nothing
+// has to interpret a rate. Scoping the target to the bound department keeps a
+// sub-question one statement rather than a question that adds one thing and
+// sizes another, which is why re-binding the department CLEARS the number's
+// target.
 //
 // `department_node_id` and `target_node_id` point at instance_ids inside
-// sp_section.tree — a jsonb column, which no foreign key can reach into. It is
-// the identical situation sp_option.data.tree_node_id is in, so it gets the
-// identical treatment: a frozen *_path string beside each id, display-only,
-// never read back as data. Delete a placement from the catalog and the question
-// still reads "Hospital → Inpatient → Wards (no longer in the tree)" instead of
-// going blank with nothing to say which placement it lost.
+// sp_section.tree, which no foreign key can reach into — the same situation as
+// sp_option.data.tree_node_id, and it gets the same treatment: a frozen *_path
+// string beside each id, display-only, so a deleted placement still reads as
+// something instead of going blank. That is the one reason a name is stored in
+// this document.
 //
-// Everything below is a pure function over a plain JS object: it takes a
-// definition, returns a new definition, and touches nothing else. Writing is
-// writeQuestionnaire, at the bottom, and it is the only thing here that isn't.
+// Everything below is a pure function over a plain object except
+// writeQuestionnaire at the bottom.
 
 import { supabase } from './supabase.js'
 
@@ -81,9 +68,8 @@ export const EMPTY_DEFINITION = { groups: [] }
 
 // --- Making nodes -----------------------------------------------------------
 //
-// Identity is instance_id, minted here, exactly as in tree.js — and for a
-// weaker version of the same reason: two questions may legitimately carry the
-// same prompt, and a group's name is authored text that can be edited to match
+// Identity is instance_id, as in tree.js: two questions may carry the same
+// prompt, and a group's name is authored text that can be edited to match
 // another's at any moment. Nothing may be keyed by either.
 
 export function newGroup(name = 'New group') {
@@ -104,25 +90,17 @@ export function newSubQuestion(prompt = 'New question') {
   }
 }
 
-// A number input. On a sub-question it is bound to a room inside that
-// question's department; on a gate it points at nothing and the two target keys
-// stay null.
-//
-// There is no multiplier, deliberately: the answer IS the room's count. A rate
-// would need something to interpret it, and the whole point of pointing at a
-// room is that nothing has to.
+// On a sub-question this is bound to a room inside that question's department;
+// on a gate it points at nothing and both target keys stay null.
 export function newNumber(label = 'How many?') {
   return { label, target_node_id: null, target_path: null }
 }
 
 // --- Reading ----------------------------------------------------------------
 
-// One node and everything above it, found anywhere in the document.
-//
-// Returns { kind, node, group, question } — `question` is set only for a
-// sub-question, so a caller renders one selection without walking the document
-// itself, and knows which of the two levels it is looking at without comparing
-// ids.
+// One node and everything above it: { kind, node, group, question }, where
+// `question` is set only for a sub-question. A caller can then render one
+// selection without walking the document or comparing ids.
 export function findNode(definition, instanceId) {
   if (!instanceId) return null
   for (const group of definition?.groups || []) {
@@ -143,9 +121,9 @@ export function findNode(definition, instanceId) {
 
 // --- Editing ----------------------------------------------------------------
 //
-// One function per level per verb, rather than one generic walker taking a path:
+// One function per level per verb rather than a generic walker taking a path:
 // the document is three levels deep and will not get deeper, so the explicit
-// version is shorter than the machinery to avoid it and says what it does.
+// version is shorter than the machinery to avoid it.
 
 export function insertGroup(definition, group) {
   return { ...definition, groups: [...(definition?.groups || []), group] }
@@ -166,8 +144,8 @@ export function insertQuestion(definition, groupId, question) {
   return updateGroup(definition, groupId, (g) => ({ ...g, questions: [...(g.questions || []), question] }))
 }
 
-// The question's id alone is enough — an instance_id is unique across the whole
-// document, so nothing has to say which group to look in.
+// The id alone is enough: an instance_id is unique across the document, so
+// nothing has to say which group to look in.
 export function removeQuestion(definition, questionId) {
   return {
     ...definition,
@@ -218,9 +196,9 @@ export function updateSubQuestion(definition, subId, updater) {
   }
 }
 
-// A question or a sub-question, whichever holds this id. The detail panel edits
-// the two through one set of handlers because everything it changes — the
-// prompt, the number — exists at both levels.
+// A question or a sub-question, whichever holds this id — the detail panel edits
+// both through one set of handlers, since a prompt and a number exist at either
+// level.
 export function updateAnyQuestion(definition, id, updater) {
   const found = findNode(definition, id)
   if (!found) return definition
@@ -231,14 +209,9 @@ export function updateAnyQuestion(definition, id, updater) {
 
 // --- Writing ----------------------------------------------------------------
 
-// The whole document, written whole — there is no narrow write of a jsonb
-// column, exactly as in tree.js.
-//
-// CONDITIONAL ON THE VERSION IT WAS READ AT. If the row moved on since it was
-// loaded — another admin, another tab — zero rows match, nothing is written and
-// the caller is told. sp_section.tree has no such check and two admins silently
-// overwrite each other; this table was created with one for that reason (see
-// sql/questionnaire_setup.sql).
+// The whole document, written whole — jsonb has no narrow write — and
+// CONDITIONAL ON THE VERSION IT WAS READ AT, so a row that moved on since
+// matches nothing and the caller is told.
 //
 // Returns { error, version }: a message and null on refusal, null and the new
 // version on success.
@@ -266,19 +239,14 @@ export async function writeQuestionnaire(id, definition, atVersion) {
   return { error: null, version: data[0].version }
 }
 
-// NOTHING READS THIS DOCUMENT YET.
-//
-// It is authored in the Questions tab and stored, and that is all. The wizard
-// that asks these questions when an option is created, and the engine that
-// applies the answers to sp_option.data, are the next piece.
-//
-// What that engine has to do is now small enough to state in three lines, which
-// is the point of the restrictions above:
+// NOTHING READS THIS DOCUMENT YET. The Questions tab authors it; the wizard that
+// asks these questions and the engine that applies the answers to sp_option.data
+// are the next piece. The restrictions above are what keep that engine to three
+// lines:
 //
 //   sub-question yes   add the department at department_node_id, phase 1
 //   its number         set that room's `count` to the answer
 //   gate yes           ask the questions under it; record its number
 //
-// The one thing still open is what a gate's number is FOR. It is recorded and
-// nothing consumes it — a total to check the sub-questions against, most
-// likely, but that is a decision for when the wizard exists.
+// The one thing still open is what a gate's number is FOR — it is recorded and
+// nothing consumes it.

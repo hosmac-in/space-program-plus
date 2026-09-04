@@ -70,9 +70,12 @@ export default function MapPanel({
   phaseCount,
   selection,
   onSelectContainer,
-  onClearSelection,
   onSelectDepartment,
   selectedDeptInstanceId,
+  // Tree tab only: a building's band is selectable there, because a building
+  // has attributes of its own to edit — see tree/BuildingPanel.jsx.
+  onSelectTreeBuilding,
+  selectedTreeBuildingId,
   selectedPhase,
   // The Questions tab: which building is being authored, and which node in it
   // side is reporting on.
@@ -136,7 +139,6 @@ export default function MapPanel({
                 phaseCount={phaseCount}
                 selection={selection}
                 onSelectContainer={onSelectContainer}
-                onClearSelection={onClearSelection}
                 onSelectDepartment={onSelectDepartment}
                 selectedDeptInstanceId={selectedDeptInstanceId}
                 selectedPhase={selectedPhase}
@@ -149,6 +151,8 @@ export default function MapPanel({
               <TreeCanvas
                 onSelectDepartment={onSelectDepartment}
                 selectedDeptInstanceId={selectedDeptInstanceId}
+                onSelectBuilding={onSelectTreeBuilding}
+                selectedBuildingId={selectedTreeBuildingId}
                 canEdit={isAdmin}
               />
             </div>

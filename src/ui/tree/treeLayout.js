@@ -46,7 +46,11 @@ export function buildTreeLayout(
   selectedDeptInstanceId,
   cb,
   stableSectionWidths,
-  stableBuildingHeights
+  stableBuildingHeights,
+  // Which building's band is selected, if any. Departments and buildings are
+  // selected on this canvas but never both — see App. Last, so the existing
+  // positional arguments keep their places.
+  selectedBuildingId
 ) {
   const groupById = new Map(groups.map((g) => [g.id, g]))
   const deptById = new Map(departments.map((d) => [d.id, d]))
@@ -126,6 +130,11 @@ export function buildTreeLayout(
         name: building.name,
         isEmpty: own.length === 0,
         canEdit,
+        // A building band is selectable on this tab, unlike on the Project
+        // canvas: it is the only way to reach its grossing factors, which live
+        // on sp_building and are part of the catalog like everything else here.
+        isSelected: selectedBuildingId === building.id,
+        onSelect: () => cb.onSelectBuilding?.(building.id),
         colours: functionColours(functions, building.function_id),
       },
     })

@@ -2,183 +2,187 @@
 // ==========================
 //
 // A project has several options: competing versions of the program, each
-// selecting a subset of the catalog tree and sizing it. An option is one
-// row in `sp_option` whose `data` column holds a flat list of departments:
+// selecting a subset of the catalog tree (tree.js) and sizing it.
 //
 //   {
-//     "phase_count": 1,                 <- how many phases this option has
-//     "buildings": ["...", "..."],      <- sp_building ids this option includes
-//     "sections": ["...", "..."],       <- sp_section ids this option includes
+//     "phase_count": 1,
+//     "buildings": ["<sp_building id>"],
+//     "sections": ["<sp_section id>"],
+//     "building_factors": { "<sp_building id>": { "built_area_grossing_factor": 1.2 } },
 //     "departments": [{
 //       "instance_id": "...",
 //       "department_def_id": "...",
-//       "tree_node_id": "...",     <- WHICH placement in sp_section.tree
-//       "phase": 1 | 2 | …,        <- which phase THIS entry programs
-//       "fallback_section_name": "...", <- display-only, see below
+//       "tree_node_id": "...",          <- which placement in sp_section.tree
+//       "phase": 1,                     <- which phase THIS entry programs
+//       "occupancy_multiplier": 1,      <- override, absent = inherit
+//       "grossing_factor": 1,           <- override, absent = inherit
+//       "fallback_section_name": "...", <- display-only, for a deleted placement
 //       "fallback_group_name": "...",
 //       "rooms": [{
-//         "instance_id": "...",
-//         "room_def_id": "...",
-//         "tree_room_node_id": "...",
-//         "count": 1,                 <- how many of this room, see below
+//         "instance_id": "...", "room_def_id": "...", "tree_room_node_id": "...",
+//         "count": 1,                   <- how many of this room
+//         "area_sqft": 0,               <- area of ONE of it, typed
+//         "notes": "...",               <- optional, this option's own note
+//         "schedules": { "occupancy": "..." },  <- overrides, absent = inherit
+//         "loads": { "people": 6 },     <- overrides, absent = inherit
+//         "hvac": { "conditioned": true },      <- overrides, absent = inherit
 //         "objects": [{ "instance_id": "...", "object_def_id": "...", "count": 1 }]
 //       }]
 //     }]
 //   }
 //
-// WHY tree_node_id MATTERS
+// Ids and counts only; names and areas resolve from the definition tables on
+// load. The list is FLAT — section and group resolve live from tree_node_id, so
+// reorganising the Tree tab keeps every option in sync. The frozen
+// fallback_*_name strings cover the one case that cannot resolve: the placement
+// was deleted from the catalog.
 //
-// It anchors the entry to one specific placement in the catalog tree (see
-// tree.js). That is what makes "which rooms may I add here?" a direct lookup of
-// that one node's rooms instead of a union across every placement of the same
-// department — the same duplicable-entity bug as in the tree, one layer up.
+// KEYS
 //
-// It also means the same department definition may legitimately appear twice in
-// one option, under two different placements. Deduplication on add is therefore
-// "do we already have this NODE in this PHASE", never "do we already have this
-// definition" — see the phase note below for the second half of that key.
+// `tree_node_id` anchors an entry to one placement, so "which rooms may I add
+// here?" is one node's rooms rather than a union across every placement of the
+// same department. Dedup on add is (tree_node_id, phase), never the definition
+// id — the same duplicable-entity trap as in the tree, one layer up.
 //
-// WHY SECTIONS ARE STORED
+// Sections and buildings are stored because they are ADDED deliberately: an
+// option may hold an empty one of either. Groups are not — a group appears
+// exactly when a department inside it does. Neither needs a placement anchor,
+// since each appears at most once per option.
 //
-// A section is in the option because someone added it, not because something
-// inside it happens to be added. That is what lets an option hold a section
-// with nothing in it yet — the empty shell you fill in as you go — and a
-// section that has been emptied again without it vanishing under you. Groups
-// are NOT stored: a group appears exactly when a department inside it does.
+// A department's building is DERIVED (tree_node_id -> section -> building_id),
+// never stored, so moving a section between buildings rewrites no options. The
+// price: two buildings of the same type cannot coexist in one option, since
+// tree_node_id would stop identifying one place in it. Fixing that needs a
+// building-instance level and an explicit anchor on every department — a
+// deliberate second pass, and per-department phasing covers the staging case
+// that would otherwise want it.
 //
-// A section is one row in sp_section, never duplicated, so its own id is the
-// identity here — there is no placement to disambiguate as there is one level
-// down. (See tree.js on why departments cannot be keyed this way.)
+// PHASES
 //
-// WHY BUILDINGS ARE STORED THE SAME WAY, AND WHY THEY AREN'T ANCHORED
+// `phase_count` is declared by the option; the phases are 1..N and exist
+// whether or not anything is in them. A phase is a bare ordinal — no name, no
+// attributes — so there is no phase table and should not be.
 //
-// Same argument, one level up again: a building is in the option because
-// someone added it, so an option can hold a building with no sections filled in
-// yet. A building appears at most once per option, so its own id is the
-// identity — there is nothing to disambiguate.
+// A department is programmed SEPARATELY IN EACH PHASE: one entry per
+// (tree_node_id, phase), each with its own instance_id, rooms and objects.
+// Nothing carries over; adding a phase entry seeds it with a COPY of the
+// closest lower phase, purely as a base to edit. Any subset of the phases is
+// normal. There is no unphased state — a legacy `phase: null` loads as 1.
 //
-// Nothing else stores a building. A department's building resolves live through
-// `tree_node_id -> section -> section.building_id`, which is what keeps this
-// change small: no department entry needed a new anchor, and moving a section
-// between buildings moves everything in it without rewriting a single option.
+// AREA
 //
-// The price is that two buildings of the SAME type can't coexist in one option
-// — a campus with two separate hospitals. That would make tree_node_id
-// ambiguous within an option, so every department would need an explicit
-// building_instance_id alongside it, exactly as the tree needs instance_id.
-// It is a deliberate second pass, not an oversight. Per-department phasing
-// covers the staging case that would otherwise want it.
+// `area_sqft` is the area of ONE of a room, typed by hand. Its objects do NOT
+// sum to it — a room is mostly the space between them. That difference is
+// CIRCULATION, derived and never stored:
 //
-// WHY PHASE IS A NUMBER, AND WHY THERE IS NO PHASE TABLE
+//     circulation = area_sqft − Σ object.count × object.area_sqft
 //
-// Phasing is a design decision, and options exist to hold competing design
-// decisions: the same department is phase 1 in one option and phase 2 in
-// another. So it belongs to the option, not the catalog.
+// It goes negative when the objects do not fit, which is a real state worth
+// seeing rather than clamping. An object's own area decides nothing else.
 //
-// And it is a plain natural number — 1, 2, 3 — not a pointer to a row. A phase
-// has no name of its own, no colour, no attributes, and no existence apart from
-// an option that declares it. A table would add a uuid, a join, a seeding step
-// and a foreign key that jsonb cannot enforce anyway, all to store an ordinal
-// that already carries its own meaning.
+//   >>> THE COUNT MULTIPLIES THE AREA. Twelve 200 sqft rooms are 2,400 sqft.
+//   >>> This REVERSED an earlier decision taken when area was summed from
+//   >>> objects. If areas ever look wrong by an exact factor, look here first —
+//   >>> it is the one rule that was inverted rather than added.
 //
-// AN OPTION DECLARES ITS PHASES, AND A DEPARTMENT HAS ONE ENTRY PER PHASE
+// The chain, each step multiplying the one above it:
 //
-// `phase_count` is chosen when the option is created — 1 by default — and
-// changed afterwards in the dialog off the option chip. The option's phases are
-// 1..phase_count, and they exist whether or not anything is in them: an empty
-// phase 3 is the one you have not staged yet, not a phase that has stopped
-// existing.
+//   net    Σ (room.area_sqft × room.count)            the rooms as entered
+//   built  net × the BUILDING's built-area factor     what those rooms occupy
+//   dept   built × the DEPARTMENT's grossing factor   its own footprint
+//   floor  Σ dept × the BUILDING's floor-area factor  <- BUILDING level only
 //
-// A department is programmed SEPARATELY IN EACH PHASE it appears in, because
-// that is what staging a building means: phase 1 is twenty beds, phase 3 is
-// another forty in a different mix. So the departments list holds one entry per
-// (tree_node_id, phase), each with its own rooms and objects and its own
-// instance_id. Nothing carries over between them; adding a phase entry seeds it
-// with a COPY of the closest lower phase purely as a starting point to edit.
+// FACTORS AND SCHEDULES ARE OVERRIDES
 //
-// A department may be in any subset of the phases — phase 3 and not 1 or 2 is
-// normal, and is exactly what a facility built out of an existing shell looks
-// like.
+// `grossing_factor`, `occupancy_multiplier` and a room's `schedules` all follow
+// one rule: the catalog states the default, this document stores only a
+// departure, and clearing one DELETES the key rather than writing a null. So
+// resolution is `option ?? catalog ?? fallback`, with no third state.
 //
-// There is no unphased state. It existed when a department carried a single
-// phase and had to start somewhere; now the phase is which of the option's
-// declared phases this entry programs, and there is nothing for null to mean.
-// An entry loaded without one is phase 1 — see loadInstanceData.
+//   >>> KNOWN LIMIT, deliberate: an option cannot say "explicitly none" against
+//   >>> a catalog default that has one. Supporting it means making key PRESENCE
+//   >>> significant (Object.hasOwn) and every reader agreeing — a trap worth
+//   >>> not laying until something needs it.
 //
-// A ROOM'S COUNT IS A BARE FIGURE
+// Occupancy densities are calibrated for a PRIVATE facility, so 1 is the
+// baseline and a public one raises it. Every multiplier is then >= 1 and a
+// lower one is a visible data error. A department needing a permanently
+// different density is a DIFFERENT DEPARTMENT — see CLAUDE.md. Nothing consumes
+// it yet; the questionnaire's gates are what will set it.
 //
-// A room carries how many of it this department has — twelve single-bed rooms,
-// one nurse station. It is the figure the questionnaire's numbers will write
-// into, and the reason it exists.
+// `building_factors` is keyed by building id — safe because a building appears
+// at most once — and kept beside `buildings` so that list stays a plain id
+// array everything can `includes()`.
 //
-// It deliberately does NOT multiply anything. Area is still the sum of
-// `object.count × area_sqft` across the room's objects, exactly as before, and a
-// room's count does not scale it. So twelve single-bed rooms holding one bed
-// between them is a legitimate — if incomplete — state, and the objects say how
-// much is actually programmed.
-//
-// That is a decision, not an oversight, and it is the one to revisit first if
-// the figures ever look wrong: making the count multiply would silently
-// re-price every option that already has one.
-//
-// It DOES count towards `roomCount`. Twelve of a room is twelve rooms; saying
-// "1" there while the panel says 12 would be the panel and the totals
-// disagreeing about the same number.
-//
-// WHY THE LIST IS FLAT
-//
-// Section and group are not stored structurally. They're resolved live from
-// tree_node_id at render time, so reorganising the Tree tab keeps
-// every option in sync automatically. The frozen fallback_*_name strings are a
-// display courtesy for the one case that can't be resolved: the placement was
-// deleted from the catalog after this option referenced it.
-//
-// Like the tree, this stores only ids and counts. Names and areas resolve from
-// the definition tables on load.
+// data/factors.js and data/schedules.js own the resolution for all three.
 
-// 6: a room carries a `count`. A row without one loads with 1 per room, which
-// is exactly what every version before this displayed and totalled.
+// SCHEMA VERSIONS. Every older row still loads, and absence always means the
+// behaviour that version had, so none of these needs a migration.
 //
-// 5: the option declares `phase_count`, and a department has one entry per
-// phase it is in rather than one entry carrying a phase. Nothing to migrate: a
-// version 4 row has no phase_count and opens with as many phases as its highest
-// phase used (1 if none), and each of its departments is a single entry in the
-// phase it already named — which is exactly what it displayed. `phase: null`
-// becomes phase 1, since with phases declared there is no unphased state left
-// for it to mean.
-//
-// 4: buildings became explicit, and departments gained a phase. Older rows have
-// neither key. They load with the buildings their *sections* imply — not their
-// departments, so an option holding an empty section still shows the building
-// it sits in — and every department unphased, which is exactly what those
-// versions displayed.
-//
-// A short-lived version of 4 wrote `phase_id`, a uuid into a phase table that
-// no longer exists. Nothing is read from it: it was only ever null, because the
-// table was never created, so those rows load unphased like any other. It needs
-// no migration — the next write of an option simply drops the key.
-//
-// 3: sections became explicit (see above). Older rows have no `sections` key;
-// they load with the sections their departments imply, which is exactly what
-// those versions displayed.
-//
-// 2: the anchor keys were `hierarchy_node_id` / `hierarchy_room_node_id` in 1,
-// renamed when the Tree tab was. Nothing reads version 1 — an entry without an
-// anchor under the current names is dropped on load, so a v1 row would load as
-// an empty option rather than a wrong one.
-// How many of an object a room starts with when you add one. The catalog has
-// no opinion — it says what may be in a room, not how many.
+// 13  a room may carry `loads` and `hvac` — overrides only, exactly as
+//     `schedules` are. Absent: everything inherited. Note that 0 is a VALUE in
+//     both, as is `false` for a boolean, unlike a department factor where only
+//     > 0 means anything; there, only absence means "nobody has said". See
+//     data/roomEnergy.js.
+// 12  a room may carry `notes`. This is the option's OWN note, not an override
+//     of the catalog's — both are shown, one above the other. Absent: no note,
+//     which is what every version before this had.
+// 11  `building_factors`. Absent: every building inherits what sp_building says.
+// 10  `grossing_factor` / `occupancy_multiplier` became OVERRIDES — absent now
+//     means "inherit" where in 9 it meant 1. 9 only wrote them when they were
+//     not 1, so every stored value was already a departure and stays one; an
+//     option that relied on the implied 1 now takes the catalog's default,
+//     which is the point.
+// 9   `area_sqft` per room, typed rather than summed from objects, and the
+//     count now MULTIPLIES it; `grossing_factor` per department. An older row
+//     opens with no areas rather than wrong ones — its figures were sums of
+//     object areas and nothing could turn those into room areas.
+// 8   `occupancy_multiplier`. Absent: 1, the baseline.
+// 7   a room's `schedules`, overrides only. Absent: everything inherited.
+// 6   a room's `count`. Absent: 1.
+// 5   `phase_count`, and one department entry per phase rather than one entry
+//     carrying a phase. A v4 row opens with as many phases as its highest in
+//     use; `phase: null` becomes 1.
+// 4   buildings explicit, departments phased. Older rows take the buildings
+//     their SECTIONS imply, so an option holding an empty section still shows
+//     its building. A short-lived v4 wrote `phase_id` into a phase table that
+//     was never created — always null, and simply dropped on the next write.
+// 3   sections explicit. Older rows derive them from their departments.
+// 2   the anchor keys were renamed from `hierarchy_*`. Nothing reads v1: an
+//     entry with no anchor is dropped on load, so a v1 row opens empty rather
+//     than wrong.
+
+// The catalog says what may be in a room, not how many.
 export const DEFAULT_OBJECT_COUNT = 1
 
-export const SCHEMA_VERSION = 6
+import {
+  BUILT_AREA,
+  buildingFactorValue,
+  DEPARTMENT_FACTORS,
+  factorValue,
+  FLOOR_AREA,
+  GROSSING,
+} from './factors.js'
+import { deptNodeIndex } from './tree.js'
 
-// How many of a room a department starts with when you add one.
+export const SCHEMA_VERSION = 13
+
+// Re-exported because this is where every other option figure is imported from.
+export {
+  DEFAULT_GROSSING_FACTOR,
+  DEFAULT_OCCUPANCY_MULTIPLIER,
+  DEPARTMENT_FACTORS,
+  resolveFactors,
+} from './factors.js'
+
+// Zero, not null: it totals honestly and reads as "no area entered" without
+// every caller handling an absence.
+export const DEFAULT_ROOM_AREA_SQFT = 0
+
 export const DEFAULT_ROOM_COUNT = 1
 
-// Every option has at least one phase, and an option that has never been staged
-// is an option with exactly one — which is why 1 is both the default and the
-// floor. The cap keeps the phase strips on a department card readable: the card
-// is a fixed width and they divide it.
+// The cap keeps the phase strips on a department card readable — the card is a
+// fixed width and they divide it.
 export const DEFAULT_PHASE_COUNT = 1
 export const MAX_PHASE_COUNT = 6
 
@@ -190,13 +194,26 @@ export function clampPhaseCount(n) {
 }
 
 // In-memory (camelCase, names/areas resolved) -> wire format (ids only).
-export function buildInstanceData(departments, sectionIds = [], buildingIds = [], phaseCount = DEFAULT_PHASE_COUNT) {
+export function buildInstanceData(
+  departments,
+  sectionIds = [],
+  buildingIds = [],
+  phaseCount = DEFAULT_PHASE_COUNT,
+  buildingFactors = {}
+) {
   return {
     // Written as given, not clamped: the builder already holds a valid count,
     // and a legacy option using more phases than the input offers must keep them.
     phase_count: Number.isInteger(phaseCount) && phaseCount > 0 ? phaseCount : DEFAULT_PHASE_COUNT,
     buildings: [...buildingIds],
     sections: [...sectionIds],
+    // Only buildings still in the option, so a removed one leaves no orphaned
+    // factors to reappear if it is added again.
+    building_factors: Object.fromEntries(
+      Object.entries(buildingFactors ?? {}).filter(
+        ([id, blob]) => buildingIds.includes(id) && blob && Object.keys(blob).length > 0
+      )
+    ),
     departments: departments.map((d) => ({
       instance_id: d.instanceId,
       department_def_id: d.defId,
@@ -204,11 +221,29 @@ export function buildInstanceData(departments, sectionIds = [], buildingIds = []
       phase: d.phase ?? DEFAULT_PHASE_COUNT,
       fallback_section_name: d.fallbackSectionName ?? null,
       fallback_group_name: d.fallbackGroupName ?? null,
+      // Overrides only: a department nobody has departed from writes neither
+      // key, and 1 is never written — "explicitly 1" and "inherits" must stay
+      // different things.
+      ...DEPARTMENT_FACTORS.reduce(
+        (out, f) => (Number.isFinite(d[f.key]) && d[f.key] > 0 ? { ...out, [f.treeKey]: d[f.key] } : out),
+        {}
+      ),
       rooms: d.rooms.map((r) => ({
         instance_id: r.instanceId,
         room_def_id: r.defId,
         tree_room_node_id: r.treeRoomNodeId ?? null,
         count: r.count ?? DEFAULT_ROOM_COUNT,
+        // Always written, including 0, so the row's shape stays stable.
+        area_sqft: Number.isFinite(r.areaSqft) ? r.areaSqft : DEFAULT_ROOM_AREA_SQFT,
+        // Only when there is one, and trimmed — an emptied note leaves no key
+        // behind, so a room nobody has annotated writes what it always did.
+        ...(r.notes?.trim() ? { notes: r.notes.trim() } : {}),
+        // Only when there are any, so an option that never touches a schedule,
+        // a load or its air writes exactly the payload it wrote before these
+        // existed.
+        ...(r.schedules && Object.keys(r.schedules).length > 0 ? { schedules: r.schedules } : {}),
+        ...(r.loads && Object.keys(r.loads).length > 0 ? { loads: r.loads } : {}),
+        ...(r.hvac && Object.keys(r.hvac).length > 0 ? { hvac: r.hvac } : {}),
         objects: r.objects.map((o) => ({
           instance_id: o.instanceId,
           object_def_id: o.defId,
@@ -221,36 +256,24 @@ export function buildInstanceData(departments, sectionIds = [], buildingIds = []
 
 // Wire format -> in-memory, resolving every id against the definition tables.
 //
-// An entry with no tree_node_id can't be shown as a placement, room-filtered,
-// or matched to a card — it would sit in the data invisibly. Those are dropped
-// here; the caller compares lengths and tells the user how many, so it isn't
-// silent.
+// An entry with no tree_node_id can't be placed, room-filtered or matched to a
+// card, so it would sit in the data invisibly. Those are dropped here; the
+// caller compares lengths and says how many, so it isn't silent.
 //
-// Returns the departments, the option's section and building ids, and how many
-// phases it has. `sectionIds` and `buildingIds` are null, not [], for a row
-// saved before those keys existed: the caller can then tell "no key" (derive it)
-// from "the user removed every one" (an option with none, which is legitimate).
-//
-// `phaseCount` needs no such distinction — a row without the key opens with as
-// many phases as its departments already use, and one is a perfectly good
-// answer.
+// `sectionIds` and `buildingIds` come back null, not [], for a row saved before
+// those keys existed — the caller can then tell "no key" (derive it) from "the
+// user removed every one", which is legitimate.
 export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs) {
   const rows = (data?.departments ?? []).filter((d) => d.tree_node_id)
 
-  // An entry with no usable phase is phase 1: unphased no longer exists, and 0
-  // and the stale uuid an early v4 row may carry in phase_id are not phases
-  // either. Number.isInteger, not a truthiness check, is what rejects all three
-  // without a special case.
+  // Number.isInteger, not truthiness, so 0 and the stale uuid an early v4 row
+  // may carry in phase_id are all rejected without a special case.
   const phaseOf = (d) => (Number.isInteger(d.phase) && d.phase > 0 ? d.phase : 1)
 
-  // A declared count smaller than what the departments actually use would hide
-  // entries with no strip to reach them on, so the highest phase in use is the
-  // floor. That is also how a row saved before the key existed gets its count.
-  //
-  // NOT clamped to MAX_PHASE_COUNT: that cap belongs to the input that sets the
-  // number, not to reading a row back. Capping here would fold every phase above
-  // it onto one strip and merge two entries of the same department into it —
-  // loading must never lose an entry.
+  // The highest phase in use is the floor: a smaller declared count would hide
+  // entries with no strip to reach them on. NOT clamped to MAX_PHASE_COUNT —
+  // that cap belongs to the input, and capping here would fold every phase
+  // above it onto one strip and merge two entries of the same department.
   const phaseCount = Math.max(
     Number.isInteger(data?.phase_count) ? data.phase_count : DEFAULT_PHASE_COUNT,
     ...rows.map(phaseOf),
@@ -269,6 +292,15 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs) {
         phase: phaseOf(d),
         fallbackSectionName: d.fallback_section_name ?? null,
         fallbackGroupName: d.fallback_group_name ?? null,
+        // Null, not 1: baking the fallback in here would make every department
+        // look overridden and stop the catalog's default ever reaching it.
+        ...DEPARTMENT_FACTORS.reduce(
+          (out, f) => ({
+            ...out,
+            [f.key]: Number.isFinite(d[f.treeKey]) && d[f.treeKey] > 0 ? d[f.treeKey] : null,
+          }),
+          {}
+        ),
         rooms: (d.rooms ?? []).map((r) => {
           const roomDef = roomDefs.find((x) => x.id === r.room_def_id)
           return {
@@ -277,9 +309,19 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs) {
             name: roomDef?.name,
             type: roomDef?.type,
             treeRoomNodeId: r.tree_room_node_id ?? null,
-            // A row saved before rooms had counts has one of each, which is
-            // what it displayed.
             count: Number.isInteger(r.count) && r.count > 0 ? r.count : DEFAULT_ROOM_COUNT,
+            // Negative is not an area.
+            areaSqft:
+              Number.isFinite(r.area_sqft) && r.area_sqft >= 0 ? r.area_sqft : DEFAULT_ROOM_AREA_SQFT,
+            // '' rather than null, so the field bound to it is always
+            // controlled and the dirty check compares like with like.
+            notes: typeof r.notes === 'string' ? r.notes : '',
+            // Carried ONLY when the row has some: absent here must mean the
+            // same as absent on the wire, or the panel's dirty check would see
+            // a change ({} against nothing) the moment an option loaded.
+            ...(r.schedules ? { schedules: r.schedules } : {}),
+            ...(r.loads ? { loads: r.loads } : {}),
+            ...(r.hvac ? { hvac: r.hvac } : {}),
             objects: (r.objects ?? []).map((o) => {
               const objectDef = objectDefs.find((x) => x.id === o.object_def_id)
               return {
@@ -300,31 +342,96 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs) {
     departments,
     sectionIds: data?.sections ?? null,
     buildingIds: data?.buildings ?? null,
+    // {} rather than null: unlike sections and buildings there is nothing to
+    // derive from an absent key, and "no overrides" reads both the same.
+    buildingFactors: data?.building_factors ?? {},
     phaseCount,
   }
 }
 
+// Circulation is a real row in sp_object, matched by name because that is the
+// only stable handle — an id would have to be configured somewhere, and there
+// is nowhere to configure it yet.
+export const CIRCULATION_OBJECT_NAME = 'circulation'
+
+export function findCirculationDef(objectDefs = []) {
+  return objectDefs.find((o) => o.name?.trim().toLowerCase() === CIRCULATION_OBJECT_NAME) ?? null
+}
+
+// What a room's objects leave over, per ONE of the room. Negative when they do
+// not fit, which is reported rather than clamped.
+//
+// `circulationDefId` is excluded from the sum: an explicitly placed circulation
+// object would be counted against itself, and the figure would fall by its own
+// value every time it was recomputed.
+export function circulationSqft(room, circulationDefId = null) {
+  const objects = (room?.objects ?? [])
+    .filter((o) => !circulationDefId || o.defId !== circulationDefId)
+    .reduce((sum, o) => sum + o.count * (o.areaSqft ?? 0), 0)
+  return (room?.areaSqft ?? DEFAULT_ROOM_AREA_SQFT) - objects
+}
+
+// What one department comes to — the `dept` step of the chain at the top of
+// this file, and the ONE definition of it. summarize() calls it and so does the
+// panel, so a card's figure cannot drift from the HUD's.
+//
+// `treeDeptNode` is the catalog node this entry is anchored to, since the
+// grossing factor may be inherited from it. Null means "nothing to inherit".
+// The BUILDING is needed too, for its built-area factor. Its floor-area factor
+// deliberately is not applied here — that one lands once, on the sum of a
+// building's departments.
+export function departmentAreaSqft(dept, treeDeptNode = null, buildingRow = null, buildingOverrides = null) {
+  return departmentBuiltAreaSqft(dept, buildingRow, buildingOverrides) * factorValue(GROSSING, treeDeptNode, dept)
+}
+
+// The rooms grossed to what they occupy in this building, before the
+// department's own grossing.
+export function departmentBuiltAreaSqft(dept, buildingRow = null, buildingOverrides = null) {
+  return departmentNetAreaSqft(dept) * buildingFactorValue(BUILT_AREA, buildingRow, buildingOverrides)
+}
+
+// A building's total: its departments, then its floor-area factor once.
+export function buildingAreaSqft(departmentTotal, buildingRow = null, buildingOverrides = null) {
+  return departmentTotal * buildingFactorValue(FLOOR_AREA, buildingRow, buildingOverrides)
+}
+
+// The rooms alone: Σ (area × count), before any grossing — the figure an
+// architect checks their room list against. Separate from departmentAreaSqft
+// rather than inlined so the panel can show both without writing the sum twice.
+export function departmentNetAreaSqft(dept) {
+  return (dept?.rooms ?? []).reduce(
+    (sum, r) => sum + (r.count ?? DEFAULT_ROOM_COUNT) * (r.areaSqft ?? DEFAULT_ROOM_AREA_SQFT),
+    0
+  )
+}
+
 // Room/object/area totals for an option, per department and overall.
 //
-// Takes the IN-MEMORY departments array, not the wire format. That's deliberate
-// and load-bearing: area can only be summed here because loadInstanceData has
-// already resolved areaSqft from sp_object. The wire format stores no areas, so
-// summarising it would silently return zeros.
+// Takes the IN-MEMORY departments array, not the wire format — load-bearing:
+// the wire format resolves no object areas, so summarising it returns zeros.
 //
-// Phase is totalled here because the department carries its own phase — the
-// figure is honest without consulting anything else. Building deliberately is
-// NOT: a department knows only its treeNodeId, and freezing a resolved building
-// onto it would go stale the moment a section moved. Per-building totals belong
-// wherever the tree is already being walked (see departmentGraphLayout.js).
-export function summarize(departments = []) {
+// Per-BUILDING totals are deliberately not returned: a department knows only
+// its treeNodeId, and they belong wherever the tree is already being walked
+// (see departmentGraphLayout.js).
+export function summarize(departments = [], { sections, buildings, buildingFactors } = {}) {
+  // Indexed once, not once per department — the HUD asks for every one of these
+  // on every render. Without `sections` nothing is inherited and the figures
+  // fall back to each option's own values, which is what a caller with no
+  // catalog to hand can honestly report.
+  const catalogNodes = sections ? deptNodeIndex(sections) : null
+  const buildingById = new Map((buildings ?? []).map((b) => [b.id, b]))
+  const overridesFor = (buildingId) => buildingFactors?.[buildingId] ?? null
+
+  // Summed per building so the FLOOR-area factor lands once on each sum rather
+  // than on every department in it. Per phase too, for the same reason.
+  const perBuilding = new Map()
+  const perBuildingPhase = new Map()
   let roomCount = 0
   let objectCount = 0
   let areaSqft = 0
 
-  // Keyed by phase number. A Map, not an object, so the keys stay numbers
-  // instead of becoming strings. Only phases something is IN appear here;
-  // phaseRows fills in the declared-but-empty ones, which is the only place
-  // that knows how many were declared.
+  // A Map, not an object, so the keys stay numbers. Only phases something is IN
+  // appear here; phaseRows fills in the declared-but-empty ones.
   const perPhase = new Map()
 
   const perDepartment = departments.map((d) => {
@@ -334,25 +441,37 @@ export function summarize(departments = []) {
     let dArea = 0
 
     rooms.forEach((r) => {
-      // Twelve of a room is twelve rooms. The count does NOT reach the area or
-      // the objects, though — see the note at the top of this file.
+      // Twelve of a room is twelve rooms. The count does not reach the objects:
+      // theirs are per room, and say what is inside one of them.
       dRoomCount += r.count ?? DEFAULT_ROOM_COUNT
       ;(r.objects ?? []).forEach((o) => {
         dObjectCount += o.count
-        dArea += o.count * (o.areaSqft ?? 0)
       })
+    })
+
+    // Net, the building's built-area grossing and the department's own. NOT
+    // the floor-area factor — that is applied once per building, below.
+    const placed = catalogNodes?.get(d.treeNodeId) ?? null
+    const buildingId = placed?.buildingId ?? null
+    const buildingRow = buildingId ? (buildingById.get(buildingId) ?? null) : null
+    dArea = departmentAreaSqft(d, placed?.node ?? null, buildingRow, overridesFor(buildingId))
+
+    perBuilding.set(buildingId, (perBuilding.get(buildingId) ?? 0) + dArea)
+    const bpKey = `${buildingId}::${d.phase ?? 1}`
+    perBuildingPhase.set(bpKey, {
+      buildingId,
+      phase: d.phase ?? 1,
+      area: (perBuildingPhase.get(bpKey)?.area ?? 0) + dArea,
     })
 
     roomCount += dRoomCount
     objectCount += dObjectCount
-    areaSqft += dArea
 
     const phaseKey = d.phase ?? 1
     const bucket = perPhase.get(phaseKey) ?? { departmentCount: 0, roomCount: 0, objectCount: 0, areaSqft: 0 }
     bucket.departmentCount += 1
     bucket.roomCount += dRoomCount
     bucket.objectCount += dObjectCount
-    bucket.areaSqft += dArea
     perPhase.set(phaseKey, bucket)
 
     return {
@@ -367,20 +486,23 @@ export function summarize(departments = []) {
     }
   })
 
+  // The floor-area factor, once per building, on the sum of its departments.
+  perBuilding.forEach((total, buildingId) => {
+    areaSqft += buildingAreaSqft(total, buildingById.get(buildingId) ?? null, overridesFor(buildingId))
+  })
+  perBuildingPhase.forEach(({ buildingId, phase, area }) => {
+    const bucket = perPhase.get(phase)
+    if (!bucket) return
+    bucket.areaSqft += buildingAreaSqft(area, buildingById.get(buildingId) ?? null, overridesFor(buildingId))
+  })
+
   return { departmentCount: departments.length, roomCount, objectCount, areaSqft, perDepartment, perPhase }
 }
 
-// The phase rows worth showing: one per phase the option DECLARES, 1..N, in
-// order — including the ones nothing is in yet, which read as zero. A declared
-// empty phase is a real state and worth seeing; it is the one you have not
-// staged.
-//
-// Empty for a one-phase option, which is every option nobody has staged. Those
-// read exactly as they did before phases existed, which is what keeps the figure
-// from being noise on an option that will never use it.
-//
-// Shared because the HUD and OptionStats ask the same question and answered it
-// with the same fifteen lines twice.
+// One row per phase the option DECLARES, 1..N — including the ones nothing is
+// in yet, which read as zero: a declared empty phase is the one you have not
+// staged. Empty for a one-phase option, so those read as they did before phases
+// existed. Shared, because the HUD and OptionStats ask the same question.
 const EMPTY_PHASE = { departmentCount: 0, roomCount: 0, objectCount: 0, areaSqft: 0 }
 
 export function phaseRows(perPhase, phaseCount = DEFAULT_PHASE_COUNT) {

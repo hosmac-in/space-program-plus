@@ -13,12 +13,16 @@
 // replace or clear, not a list you append to, so the + disappears once one is
 // set. Anything already chosen shows its FROZEN path when the placement has
 // since left the catalog, which is what the stored *_path is for.
+//
+// That replace-or-clear behaviour is ValuePicker's, shared with the schedule
+// strip. What stays here is the half that is actually about the tree: reading
+// the catalog, flattening it to placements, and telling a live binding from one
+// whose placement has been deleted.
 
 import { useMemo } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
 import { findFlatNode, flattenTreeNodes } from '../../data/tree.js'
-import RemoveButton from './RemoveButton.jsx'
-import { SearchAddPicker } from './SearchAddPicker.jsx'
+import ValuePicker from './ValuePicker.jsx'
 
 const KIND_LABEL = { department: 'Department', room: 'Room', object: 'Object' }
 
@@ -54,42 +58,33 @@ export default function TreeNodePicker({
   const lost = instanceId && !live
 
   return (
-    <div style={{ marginTop: 10, minWidth: 0 }}>
-      <div style={{ fontSize: 11, color: '#777', marginBottom: 2 }}>{label}</div>
-
-      {instanceId ? (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, minWidth: 0 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, overflowWrap: 'anywhere' }}>
-              {live?.name ?? 'Not in the tree'}
-              {live && kinds?.length !== 1 && (
-                <span style={{ marginLeft: 6, fontWeight: 400, fontSize: 11, color: '#888' }}>
-                  {KIND_LABEL[live.kind]}
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 11, color: lost ? '#c17' : '#999', overflowWrap: 'anywhere' }}>
-              {live?.path ?? path ?? '—'}
-              {lost && <span style={{ marginLeft: 6 }}>(no longer in the tree)</span>}
-            </div>
-          </div>
-          {canEdit && <RemoveButton onRemove={onClear} title={`Clear ${label}`} size={16} />}
-        </div>
-      ) : canEdit && flat.length > 0 ? (
-        <SearchAddPicker
-          options={flat}
-          placeholder={withinDepartment ? 'Search this department...' : 'Search the catalog...'}
-          title={`Choose ${label}`}
-          label="Choose"
-          size={16}
-          width={320}
-          onAdd={(node) => onPick(node)}
-        />
-      ) : canEdit ? (
-        <div style={{ fontSize: 12, color: '#999' }}>{emptyNote ?? 'Nothing to choose from'}</div>
-      ) : (
-        <div style={{ fontSize: 12, color: '#bbb' }}>Not set</div>
-      )}
-    </div>
+    <ValuePicker
+      label={label}
+      set={!!instanceId}
+      name={live?.name ?? 'Not in the tree'}
+      // The kind is worth saying only when the picker accepts more than one, so
+      // a room target — which can be nothing else — doesn't repeat itself.
+      suffix={
+        live &&
+        kinds?.length !== 1 && (
+          <span style={{ marginLeft: 6, fontWeight: 400, fontSize: 11, color: '#888' }}>
+            {KIND_LABEL[live.kind]}
+          </span>
+        )
+      }
+      detail={
+        <>
+          {live?.path ?? path ?? '—'}
+          {lost && <span style={{ marginLeft: 6 }}>(no longer in the tree)</span>}
+        </>
+      }
+      detailTone={lost ? 'warn' : 'muted'}
+      options={flat}
+      placeholder={withinDepartment ? 'Search this department...' : 'Search the catalog...'}
+      emptyNote={emptyNote ?? 'Nothing to choose from'}
+      canEdit={canEdit}
+      onPick={onPick}
+      onClear={onClear}
+    />
   )
 }

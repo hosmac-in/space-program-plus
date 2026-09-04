@@ -420,26 +420,24 @@ function ContainerNode({ data, fill, radius, borderWidth, fontSize, fontWeight }
 // changed in a dialog off the option chip (see OptionList); this canvas draws
 // the ones it has and never offers to change the set. So the heading's only
 // controls are the area figure and selecting it.
+//
+// The NAME is the click target, not the band: a band is the full width of the
+// canvas and almost entirely empty space, so making all of it selectable would
+// swallow every click meant for the space around a card. CanvasBandHeading puts
+// the handler on the name and paints the selected wash there.
 function BuildingNode({ data }) {
   return (
-    <div
-      style={{ width: '100%', height: '100%', cursor: 'pointer' }}
-      onClick={(e) => {
-        e.stopPropagation()
-        data.onSelect?.()
-      }}
-    >
-      <CanvasBandHeading
-        colours={data.colours}
-        name={data.name}
-        isSelected={data.isSelected}
-        right={
-          <span style={{ fontWeight: 400, fontSize: 13, whiteSpace: 'nowrap', opacity: 0.75, flexShrink: 0 }}>
-            {formatArea(data.totalAreaSqft)} sqft
-          </span>
-        }
-      />
-    </div>
+    <CanvasBandHeading
+      colours={data.colours}
+      name={data.name}
+      isSelected={data.isSelected}
+      onSelect={data.onSelect}
+      right={
+        <span style={{ fontWeight: 400, fontSize: 13, whiteSpace: 'nowrap', opacity: 0.75, flexShrink: 0 }}>
+          {formatArea(data.totalAreaSqft)} sqft
+        </span>
+      }
+    />
   )
 }
 
@@ -512,14 +510,16 @@ export default function DepartmentGraph({
   onAddSection,
   onRemoveSection,
   buildingIds,
+  // This option's per-building factor overrides — every area on this canvas is
+  // grossed by them. See data/factors.js.
+  buildingFactors,
   phaseCount = 1,
   onSelectDepartment,
   // What side is showing: { kind: 'department' | 'group' | 'section' |
-  // 'building', id }, or null for nothing — which is what a click on empty
-  // canvas produces.
+  // 'building', id }, or null for nothing — which is the state an option opens
+  // in, before anything on the canvas has been clicked.
   selection,
   onSelectContainer,
-  onClearSelection,
   selectedDeptInstanceId,
   selectedPhase,
 }) {
@@ -530,9 +530,15 @@ export default function DepartmentGraph({
   // department + goes through it; none adds on the click itself.
   const [addTarget, setAddTarget] = useState(null)
 
+  // Sections too: a department's grossing factor may be stated on its catalog
+  // node rather than on the option, and the areas on these cards have to be the
+  // same ones the HUD reports — see data/factors.js.
   const summary = useMemo(
-    () => (departments.length > 0 ? summarize(departments) : { perDepartment: [] }),
-    [departments]
+    () =>
+      departments.length > 0
+        ? summarize(departments, { sections, buildings, buildingFactors })
+        : { perDepartment: [] },
+    [departments, sections, buildings, buildingFactors]
   )
 
   // Both add paths carry the specific tree node the clicked card was drawn
@@ -575,6 +581,7 @@ export default function DepartmentGraph({
         sectionIds,
         buildings,
         buildingIds,
+        buildingFactors,
         functions,
         phaseCount,
         selectedDeptInstanceId,
@@ -602,6 +609,9 @@ export default function DepartmentGraph({
       optionName,
       departmentDefs,
       departments,
+      // The band totals are grossed by these; without it a factor change leaves
+      // the canvas showing the previous figure until something else re-renders.
+      buildingFactors,
       summary,
       groups,
       sections,
@@ -629,9 +639,11 @@ export default function DepartmentGraph({
           nodeTypes={nodeTypes}
           fitView
           proOptions={{ hideAttribution: true }}
-          // Clicking past every box clears the selection, which is what returns
-          // side to the option's own totals.
-          onPaneClick={onClearSelection}
+          // NO onPaneClick. Clicking past the boxes used to clear the selection
+          // and swing side back to the option's totals, which meant every miss
+          // — panning, or aiming at a card and catching the gap — threw away
+          // what you were reading. Selection changes only when you hit
+          // something: a card, a container header, or a building's name.
         >
           <Background />
         </ReactFlow>

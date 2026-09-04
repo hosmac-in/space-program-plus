@@ -26,7 +26,13 @@ function byName(a, b) {
   return a.name.localeCompare(b.name)
 }
 
-function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }) {
+function TreeCanvasInner({
+  onSelectDepartment,
+  selectedDeptInstanceId,
+  onSelectBuilding,
+  selectedBuildingId,
+  canEdit,
+}) {
   const { departments, groups, sections, functions, buildings } = useCatalog()
   const editor = useTreeEditorContext()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
@@ -55,9 +61,15 @@ function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }
       buildTreeLayout(
         { sections, groups, departments, buildings, functions, canEdit },
         selectedDeptInstanceId,
-        { onSelectDepartment, onRemoveDepartment: onCardRemoveDept, onRemoveGroup: onCardRemoveGroup },
+        {
+          onSelectDepartment,
+          onSelectBuilding,
+          onRemoveDepartment: onCardRemoveDept,
+          onRemoveGroup: onCardRemoveGroup,
+        },
         stableSectionWidthsRef.current,
-        stableBuildingHeightsRef.current
+        stableBuildingHeightsRef.current,
+        selectedBuildingId
       ),
     [
       sections,
@@ -67,7 +79,9 @@ function TreeCanvasInner({ onSelectDepartment, selectedDeptInstanceId, canEdit }
       functions,
       canEdit,
       selectedDeptInstanceId,
+      selectedBuildingId,
       onSelectDepartment,
+      onSelectBuilding,
       onCardRemoveDept,
       onCardRemoveGroup,
     ]

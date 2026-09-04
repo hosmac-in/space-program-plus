@@ -137,7 +137,15 @@ function HSectionBoxCard({ data }) {
 // edge to draw. See CanvasBandHeading.
 function HBuildingBoxCard({ data }) {
   return (
-    <CanvasBandHeading colours={data.colours} name={data.name}>
+    <CanvasBandHeading
+      colours={data.colours}
+      name={data.name}
+      isSelected={data.isSelected}
+      // The band is the full width of the canvas and mostly empty space, so
+      // only the heading itself takes the click — see CanvasBandHeading, which
+      // wires onSelect to the title rather than to the band.
+      onSelect={data.onSelect}
+    >
       {data.isEmpty && (
         <div style={{ paddingTop: PADDING, fontSize: 12, color: '#8a8a8a' }}>
           No sections in this building yet — add one in the Supabase table editor.

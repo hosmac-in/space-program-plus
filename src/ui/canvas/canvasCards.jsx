@@ -1,21 +1,17 @@
 // Card chrome shared by BOTH canvases.
 //
-// The Tree tab and the option Canvas tab draw the same three things — a
-// section box, a group box, and a department card — and differ only in what
-// goes inside them: Tree has drag handles and remove buttons, the option
-// canvas has ghosts, areas and "+ All". Everything visual (fill, border,
-// radius, header inset, drop-target and selection states) lives here so the
-// two tabs cannot drift apart again.
+// The Tree tab and the Project canvas draw the same section box, group box and
+// department card, differing only in what goes inside — drag handles and remove
+// buttons there, ghosts and areas here. Everything visual lives here so the two
+// cannot drift apart again.
 //
-// Colours always arrive as a resolved palette from data/functions.js — this
-// file never reads bg_colour itself.
+// Colours always arrive as a resolved palette from data/functions.js; this file
+// never reads bg_colour itself.
 
 import { BUILDING_LABEL_HEIGHT, LABEL_HEIGHT, PADDING } from './canvasLayout.js'
 
-// A ghost's dashes get finer the deeper you go — section, then group, then
-// department — so the nesting reads from the strokes alone, the same way the
-// solid borders already do. It ran the other way round: the innermost card had
-// the heaviest dash, which made a department look like it contained its group.
+// Finer the deeper you go, so nesting reads from the strokes alone. It ran the
+// other way once, which made a department look like it contained its group.
 const GHOST_DASH = { section: 2, group: 1.5, card: 1 }
 
 // A container: section or group. Both are a solid header strip over a body,
@@ -41,8 +37,8 @@ export function CanvasContainer({
   ghostText = '#999',
   pulse = false,
   headerClassName,
-  // Before the name and after it. A ghost section's single + lives on the
-  // left, where it reads as "add this" against the name it would add.
+  // A ghost section's single + goes on the left, where it reads as "add this"
+  // against the name it would add.
   headerLeft,
   headerRight,
   children,
@@ -76,11 +72,15 @@ export function CanvasContainer({
       }}
     >
       <div
-        className={headerClassName}
+        // Both classes go on the HEADER, not the container. :hover matches every
+        // ancestor, so tinting the box would light up a section, its group and
+        // its card together whenever the pointer was over any one of them; and a
+        // section holds cards with × buttons of their own, which marking the box
+        // would reveal all at once.
+        className={`spp-hover-tint spp-hover-reveal${headerClassName ? ` ${headerClassName}` : ''}`}
         style={{
           height: LABEL_HEIGHT,
-          // Same inset as the cards below, so the header text and the left edge
-          // of its contents line up.
+          // Same inset as the cards below, so the two left edges line up.
           padding: `0 ${PADDING}px`,
           boxSizing: 'border-box',
           display: 'flex',
@@ -89,7 +89,7 @@ export function CanvasContainer({
           fontSize,
           fontWeight,
           // A solid body already carries the colour; painting the header again
-          // would just draw a seam across it.
+          // only draws a seam across it.
           background: isGhost || fill === 'solid' ? 'transparent' : colours.background,
           color: isGhost ? ghostText : fill === 'solid' ? colours.color : colours.color,
           borderRadius: fill === 'solid' ? undefined : `${radius - 1}px ${radius - 1}px 0 0`,
@@ -111,29 +111,32 @@ export function CanvasContainer({
   )
 }
 
-// A building. Deliberately NOT a card: no box, no fill, no border — a large
-// name over a rule, with its sections sitting beneath it.
-//
-// A building isn't a container in the way a section or a group is. Those are
-// places you drop things into, and their box is what tells you where the edge
-// of the drop is. A building is never a drop target — a section's building is a
-// column in sp_section, not a placement — so a box around it would draw an edge
-// that means nothing and add a fourth nested border to look past.
-//
-// It reads as a title because that is what it is: the buildings are stacked
-// down the canvas, and this is the heading you scroll between.
+// A building. Deliberately NOT a card: a large name over a rule, with its
+// sections beneath it. A section or a group is a box because it is a place you
+// drop things into, and the box says where the edge of the drop is. A building
+// is never a drop target — its sections carry a column, not a placement — so a
+// box would draw an edge that means nothing. It is the heading you scroll
+// between.
 export function CanvasBandHeading({
   colours,
   name,
   isGhost = false,
   isSelected = false,
   ghostText = '#999',
+  // On the NAME, not the band: a band is the full canvas width and almost all
+  // empty space, so making it clickable would swallow every click meant for the
+  // space around a card. Both canvases pass it — the Tree tab to edit a
+  // building's factors, the Project tab to report what is in it.
+  onSelect,
   right,
   children,
 }) {
-  // Selection is the rule and the name going blue. There is no box to put a
-  // ring around, and blue is what selection means everywhere else on the canvas.
-  const ink = isSelected ? '#1a73e8' : isGhost ? ghostText : colours.border
+  // Selection does NOT recolour this. It turned the rule and name blue once,
+  // which threw away the one thing the heading says — a building is drawn in its
+  // function's colour, and the selected one was the only heading not telling you
+  // what it is. A pale wash of its OWN colour plus a heavier rule reads as "this
+  // one" without spending the hue to say it.
+  const ink = isGhost ? ghostText : colours.border
 
   return (
     <div style={{ width: '100%', height: '100%', boxSizing: 'border-box', pointerEvents: 'auto' }}>
@@ -144,17 +147,31 @@ export function CanvasBandHeading({
           display: 'flex',
           alignItems: 'center',
           gap: 12,
-          // The rule runs the full width of the band, under the name — the
-          // thing that says how far this building reaches, now that no border
-          // does.
+          // The rule runs the full width of the band: with no border, it is what
+          // says how far this building reaches.
           borderBottom: `${isSelected ? 3 : 2}px solid ${ink}`,
           color: ink,
         }}
       >
         <span
           title={name}
+          onClick={
+            onSelect
+              ? (e) => {
+                  e.stopPropagation()
+                  onSelect()
+                }
+              : undefined
+          }
+          // React Flow claims pointer events on the canvas; without these a
+          // click on the title pans instead of selecting.
+          className={onSelect ? 'nodrag nopan' : undefined}
+          onPointerDownCapture={onSelect ? (e) => e.stopPropagation() : undefined}
           style={{
-            flex: 1,
+            cursor: onSelect ? 'pointer' : undefined,
+            // Shrink-to-fit, not flex: 1 — the wash has to hug the name rather
+            // than run the band's width, which would read as a second rule.
+            flex: '0 1 auto',
             minWidth: 0,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -164,10 +181,19 @@ export function CanvasBandHeading({
             letterSpacing: '-0.01em',
             textTransform: 'uppercase',
             opacity: isGhost ? 0.65 : 1,
+            // Padding and the negative margin cancelling it are constant, so the
+            // name sits at the same x selected or not; only the fill appears.
+            padding: '2px 10px',
+            marginLeft: -10,
+            borderRadius: 4,
+            background: isSelected && !isGhost ? colours.inverted.background : undefined,
           }}
         >
           {name}
         </span>
+        {/* Holds `right` against the far edge now that the name no longer
+            stretches to fill the band. */}
+        <span style={{ flex: 1, minWidth: 0 }} />
         {right}
       </div>
       {children}
@@ -183,20 +209,18 @@ export function CanvasCard({
   height,
   padding = PADDING,
   isGhost = false,
-  // A ghost is drawn on top of its group's fill, so the caller passes the one
-  // colour known to read against that fill — the group's text colour. The greys
-  // are only a fallback: they were once hard-coded here, which made a ghost
-  // invisible on a dark group and loud on a pale one.
+  // A ghost sits on its group's fill, so the caller passes the one colour known
+  // to read against it — the group's text colour. These greys are a fallback;
+  // hard-coding them made a ghost invisible on a dark group.
   ghostBorder = '#bbb',
   ghostText = '#888',
   isHighlighted = false,
   pulse = false,
   cursor = 'pointer',
-  // React Flow's `nodrag` blocks a drag from ever starting on this element.
-  // The option canvas wants that — its cards are click-only. The Tree
-  // does not: dragging a department card into another group is how the catalog
-  // is built, so that tab passes isDraggable. `nopan` stays either way, so a
-  // press on a card never drags the canvas out from under it.
+  // `nodrag` blocks a drag from starting here, which the Project canvas wants —
+  // its cards are click-only. The Tree passes isDraggable, since dragging a card
+  // into another group is how the catalog is built. `nopan` stays either way, so
+  // a press never drags the canvas out from under the card.
   isDraggable = false,
   onClick,
   title,
@@ -205,7 +229,9 @@ export function CanvasCard({
 }) {
   return (
     <div
-      className={`${isDraggable ? '' : 'nodrag '}nopan${pulse ? ' tree-drop-pulse' : ''}`}
+      // Safe on the whole card, unlike a container — nothing nested inside a
+      // department card carries a × or a tint of its own to be triggered with it.
+      className={`spp-hover-tint spp-hover-reveal ${isDraggable ? '' : 'nodrag '}nopan${pulse ? ' tree-drop-pulse' : ''}`}
       onClick={onClick}
       title={title}
       style={{
@@ -217,15 +243,15 @@ export function CanvasCard({
         padding,
         background: isGhost ? 'rgba(0,0,0,0.02)' : colours.inverted.background,
         color: isGhost ? ghostText : colours.inverted.color,
-        // Selection stays blue everywhere: the fill now carries function
-        // meaning, so it can't also signal which card you're editing.
+        // Selection stays blue: the fill carries function meaning, so it cannot
+        // also signal which card you are editing.
         boxShadow: isGhost
           ? 'none'
           : isHighlighted
             ? '0 0 0 2px #1a73e8, 0 1px 3px rgba(0,0,0,0.15)'
             : '0 1px 3px rgba(0,0,0,0.15)',
-        // High enough that the ghost's ink keeps its colour; the dashed edge and
-        // flat fill are what mark it as not-yet-added, not fading it out.
+        // High enough that a ghost's ink keeps its colour: the dashed edge and
+        // flat fill are what mark it as not-yet-added, not fading.
         opacity: isGhost ? 0.9 : 1,
         fontSize: 12,
         fontWeight: 600,

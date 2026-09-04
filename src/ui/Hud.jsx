@@ -1,4 +1,4 @@
-// The HUD: the bottom quarter of side, on every tab.
+// The HUD: the bottom eighth of side, on every tab.
 //
 // Everything above it changes with what you clicked — a department, a group, a
 // project, the catalog. This doesn't. It answers the one question you keep
@@ -7,8 +7,15 @@
 //
 // For now that is areas alone. It's a fixed slot, so anything added later has
 // to earn its place against what's already here rather than being appended.
+//
+// It was a QUARTER of side and is now half that. A row of figures did not need
+// the height, and every pixel of it came out of the panel above, which is where
+// the work happens — a department with many rooms was scrolling in a letterbox.
+// The type below is sized for the slot: shrinking the region without shrinking
+// the figures would just have hidden two of them behind a scrollbar.
 
 import { phaseRows, summarize } from '../data/optionData.js'
+import { useCatalog } from '../data/catalog.jsx'
 import { siteAreas, formatArea } from './map/area.js'
 import { RULE } from './layout.js'
 
@@ -26,18 +33,36 @@ function Figure({ label, value, unit, muted = false }) {
       >
         {label}
       </div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: muted ? '#bbb' : '#222', whiteSpace: 'nowrap' }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: muted ? '#bbb' : '#222', whiteSpace: 'nowrap' }}>
         {value}
-        {unit && <span style={{ fontSize: 11, fontWeight: 400, color: '#8a8a8a', marginLeft: 4 }}>{unit}</span>}
+        {unit && <span style={{ fontSize: 10, fontWeight: 400, color: '#8a8a8a', marginLeft: 3 }}>{unit}</span>}
       </div>
     </div>
   )
 }
 
-export default function Hud({ projectName, siteGeojson, optionName, departments, phaseCount = 1 }) {
+export default function Hud({
+  projectName,
+  siteGeojson,
+  optionName,
+  departments,
+  // This option's per-building factor overrides — the built-area factor grosses
+  // every department and the floor-area one grosses each building's total, so
+  // no area figure is right without them. See data/factors.js.
+  buildingFactors,
+  phaseCount = 1,
+}) {
   // The in-memory departments, as summarize() requires — the wire format has no
   // areas in it (see data/optionData.js).
-  const { areaSqft, roomCount, objectCount, perPhase } = summarize(departments ?? [])
+  // The catalog too, not just the option: a department's grossing factor may be
+  // the one stated on its tree node rather than one set here, and a total that
+  // skipped that would disagree with every panel — see data/factors.js.
+  const { sections, buildings } = useCatalog()
+  const { areaSqft, roomCount, objectCount, perPhase } = summarize(departments ?? [], {
+    sections,
+    buildings,
+    buildingFactors,
+  })
   const site = siteAreas(siteGeojson)
   const coverage = site ? (areaSqft / site.sqft) * 100 : null
 
@@ -50,13 +75,13 @@ export default function Hud({ projectName, siteGeojson, optionName, departments,
   return (
     <div
       style={{
-        // Fills its quarter of side rather than sizing to its content, so the
-        // 3:1 split holds whatever the figures happen to say.
+        // Fills its eighth of side rather than sizing to its content, so the
+        // 7:1 split holds whatever the figures happen to say.
         flex: 1,
         minHeight: 0,
         borderTop: RULE,
         background: '#fff',
-        padding: '12px 16px',
+        padding: '8px 16px',
         overflowY: 'auto',
         minWidth: 0,
       }}
@@ -65,7 +90,7 @@ export default function Hud({ projectName, siteGeojson, optionName, departments,
         style={{
           fontSize: 11,
           color: '#8a8a8a',
-          marginBottom: 10,
+          marginBottom: 6,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -77,7 +102,7 @@ export default function Hud({ projectName, siteGeojson, optionName, departments,
 
       {/* Wraps rather than scrolls sideways: side is narrow, and a figure half
           off the edge is worse than one on a second row. */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 24px', minWidth: 0 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', minWidth: 0 }}>
         <Figure label="Programmed" value={formatArea(areaSqft)} unit="sqft" muted={areaSqft === 0} />
         <Figure
           label="Site"

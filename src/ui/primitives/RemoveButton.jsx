@@ -22,7 +22,7 @@ export default function RemoveButton({
   return (
     <button
       type="button"
-      className="spp-remove-btn nodrag nopan"
+      className="spp-remove-btn spp-reveal nodrag nopan"
       title={title}
       aria-label={title}
       onPointerDownCapture={stopPointerDown ? (e) => e.stopPropagation() : undefined}
@@ -60,8 +60,25 @@ export default function RemoveButton({
 }
 
 // Injected once by App so the hover state doesn't need per-instance state.
+//
+// `spp-hover-reveal` on an ancestor makes any button marked `spp-reveal` inside
+// it appear only while that thing is hovered — this one and ResetButton.
+//
+// A red circle on every room, object and card is the loudest mark on a surface
+// whose job is to be read, and removal is the rarest thing done there — so it
+// waits until you are actually on the thing.
+//
+// It stays reachable by keyboard: focus-within keeps it visible while tabbing,
+// and it is only ever hidden, never removed from the document.
+//
+// Mark the SMALLEST element that wraps the button — a room's header, an object's
+// row — not a whole card. The selector is a descendant one, so marking a room
+// block would reveal every object's × inside it at the same time.
 export const REMOVE_BUTTON_STYLE = `
-  .spp-remove-btn { transition: background-color 120ms ease, transform 120ms ease, box-shadow 120ms ease; }
+  .spp-remove-btn { transition: background-color 120ms ease, transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease; }
   .spp-remove-btn:hover { background: ${RED_HOVER} !important; transform: scale(1.12); }
   .spp-remove-btn:active { transform: scale(0.94); }
+  .spp-hover-reveal .spp-reveal { opacity: 0; }
+  .spp-hover-reveal:hover .spp-reveal,
+  .spp-hover-reveal:focus-within .spp-reveal { opacity: 1; }
 `

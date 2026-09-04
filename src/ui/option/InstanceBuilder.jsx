@@ -8,11 +8,19 @@ import { useToast } from '../primitives/Toast.jsx'
 import { UNDO_DEPTH } from '../undo.js'
 import { supabase } from '../../data/supabase.js'
 import { useCatalog } from '../../data/catalog.jsx'
-import { catalogRoomsForNode, resolveNodePlacement } from '../../data/tree.js'
+import {
+  catalogObjectCount,
+  catalogRoomAreaSqft,
+  catalogRoomsForNode,
+  resolveNodePlacement,
+} from '../../data/tree.js'
+import { withBuildingFactor } from '../../data/factors.js'
 import {
   buildInstanceData,
+  DEPARTMENT_FACTORS,
   DEFAULT_PHASE_COUNT,
   DEFAULT_ROOM_COUNT,
+  findCirculationDef,
   loadInstanceData,
   SCHEMA_VERSION,
 } from '../../data/optionData.js'
@@ -20,6 +28,8 @@ import DepartmentBlock from './DepartmentBlock.jsx'
 import OptionOutline from './OptionOutline.jsx'
 import OptionStats from './OptionStats.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
+import { SUBTLE_RULE } from '../panel/panelLayout.js'
+import { Z } from '../primitives/zIndex.js'
 import SaveDataButton from './SaveDataButton.jsx'
 
 // A new or unloaded option: no departments, and no sections or buildings
@@ -29,6 +39,8 @@ const EMPTY_OPTION = {
   departments: [],
   sectionIds: [],
   buildingIds: [],
+  // Per-building factor overrides, keyed by building id — see data/factors.js.
+  buildingFactors: {},
   phaseCount: DEFAULT_PHASE_COUNT,
 }
 
@@ -58,28 +70,23 @@ export default function InstanceBuilder({
     groups: groupDefs,
     sections,
     functions,
+    schedules,
     buildings: buildingDefs,
     loaded: catalogLoaded,
     error: catalogError,
   } = useCatalog()
 
-  // One atomic history value rather than three cooperating pieces of state.
+  // ONE atomic history value, not three cooperating states. It was
+  // departments/past/future, with the past pushed from INSIDE the setDepartments
+  // updater — and React may call an updater twice (StrictMode always does), so
+  // every edit pushed two identical entries and the first undo did nothing.
   //
-  // This used to be separate `departments`/`past`/`future` states, with the
-  // past pushed from INSIDE the setDepartments updater. React may call an
-  // updater more than once (StrictMode always does in development), so every
-  // edit pushed two identical entries and the first undo appeared to do
-  // nothing — most visibly when editing rooms and objects, which is where the
-  // edits are. Keeping all three in one object makes each edit exactly one
-  // transition and the updater pure.
-  //
-  // `present` holds the whole option — its departments AND which sections and
-  // buildings it includes — so adding or removing either is one undo step like
-  // any other edit. Neither can be derived from the departments any more: an
-  // option may hold a section with nothing in it, and a building with no
+  // `present` holds the whole option, sections and buildings included, so adding
+  // or removing either is one undo step. Neither can be derived from the
+  // departments: an option may hold an empty section, and a building with no
   // sections.
   const [history, setHistory] = useState({ past: [], present: EMPTY_OPTION, future: [] })
-  const { departments, sectionIds, buildingIds, phaseCount } = history.present
+  const { departments, sectionIds, buildingIds, buildingFactors, phaseCount } = history.present
   const [optionName, setOptionName] = useState('')
   const [loadError, setLoadError] = useState(null)
   const onToast = useToast()
@@ -91,18 +98,17 @@ export default function InstanceBuilder({
   const historyRef = useRef(history)
   const presentRef = useRef(history.present)
   const optionNameRef = useRef(optionName)
-  // Which option is actually in memory. Until it matches loadOptionId, what is
-  // in memory is an EMPTY option, and writing that would erase the real row —
-  // so nothing may be saved until they agree (see writeOnce). A ref, not state:
-  // nothing renders from it, and a write has to read it at call time.
+  // Which option is actually in memory. Until it matches loadOptionId, memory
+  // holds an EMPTY option and writing it would erase the real row — so nothing
+  // may be saved until they agree. A ref: nothing renders from it, and a write
+  // reads it at call time.
   const loadedIdRef = useRef(null)
   const loadOptionIdRef = useRef(loadOptionId)
   loadOptionIdRef.current = loadOptionId
   const lastSavedNameRef = useRef('')
-  // The focused department, and its rooms as they were when it came into focus
-  // or was last saved. State, not a ref: the Save Data button is derived from
-  // it, so a render has to see it change.
-  const [focus, setFocus] = useState({ id: null, rooms: '[]' })
+  // The focused department, and its editable state as of coming into focus or
+  // last being saved. State, not a ref: Save Data is derived from it.
+  const [focus, setFocus] = useState({ id: null, draft: 'null' })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   // The row version this option was loaded at. Null means no option is loaded,
@@ -113,39 +119,39 @@ export default function InstanceBuilder({
   presentRef.current = history.present
   optionNameRef.current = optionName
 
-  // What Save Data tracks: the rooms and objects of the ONE department on the
-  // panel, watched in memory against how they looked when it came into focus.
+  // What Save Data tracks: everything editable on the ONE department on the
+  // panel, against how it looked when it came into focus. Not against the
+  // database and not across the option — you cannot leave a department with
+  // unsaved edits, so "changed since I opened this" is the whole question, and
+  // answering it locally keeps the button still while structural writes land.
   //
-  // Not against the database, and not across the whole option. You cannot leave
-  // a department with unsaved edits — the guard in App asks first — so "changed
-  // since I opened this department" is the whole question, and answering it
-  // locally keeps the button still while structural writes come and go.
-  function roomsOf(dept) {
-    return JSON.stringify(dept?.rooms ?? [])
+  //   >>> ANY new in-memory field on a department must be added here, or its
+  //   >>> edits leave Save Data grey and are lost on navigate.
+  function draftOf(dept) {
+    return JSON.stringify({
+      rooms: dept?.rooms ?? [],
+      // Every factor override, normalised to null when absent so "inherits"
+      // compares equal to itself however it got there.
+      factors: DEPARTMENT_FACTORS.map((f) => dept?.[f.key] ?? null),
+    })
   }
 
-  // Every edit to the option — department, section, room, object or count —
-  // goes through here, which is what puts all of them on the undo stack.
+  // Every edit to the option goes through here, which is what puts all of them
+  // on the undo stack.
   //
-  // `persist` says whether the edit writes itself. Structural edits do: adding
-  // a section or a department is a deliberate act with a button behind it, and
-  // it is done when you let go. Room and object edits do not: they are the
-  // fiddly ones, and they wait for Save Data.
+  // `persist` says whether the edit writes itself. Structural edits do — adding
+  // a section or a department is a deliberate act, done when you let go. Room
+  // and object edits are the fiddly ones and wait for Save Data. A write sends
+  // the WHOLE row, so a structural edit carries any pending room edits with it
+  // and Save Data goes grey: deliberate, since jsonb has no partial write.
   //
-  // A write sends the WHOLE row, so a structural edit necessarily carries any
-  // unsaved room edits with it. That is why they are saved too, and why the
-  // Save Data button goes grey afterwards — deliberate, not a leak: there is no
-  // partial write of a jsonb column.
-  //
-  // The next value is computed here rather than inside the setState updater:
-  // the updater must stay pure (React can call it twice), and persisting needs
-  // the value now, not on the next render. `presentRef` is advanced at the same
-  // time so two actions in one tick still compose.
   // `coalesce` folds a run of edits into one undo step. A count reports every
-  // keystroke — so the Save Data button answers while you type — and "120"
-  // would otherwise be three steps. Consecutive edits carrying the same key
-  // replace the present instead of pushing a new past entry; anything else,
-  // including the same field returned to later, starts a fresh step.
+  // keystroke, so "120" would otherwise be three steps; consecutive edits with
+  // the same key replace the present instead of pushing a past entry.
+  //
+  // The next value is computed HERE, not inside the setState updater: the
+  // updater must stay pure, and persisting needs the value now rather than next
+  // render. `presentRef` advances with it so two actions in one tick compose.
   function mutateOption(updater, { persist = false, coalesce = null } = {}) {
     const next = updater(presentRef.current)
     presentRef.current = next
@@ -171,17 +177,13 @@ export default function InstanceBuilder({
     setHistory({ past: [], present: next, future: [] })
   }
 
-  // Undo and redo ALWAYS write.
+  // Undo and redo ALWAYS write: the state you land on is the state that should
+  // be stored, or the database holds a version nobody chose — not the edit you
+  // just undid, and not what is on screen. On success the focused department's
+  // baseline is re-taken, which leaves Save Data grey.
   //
-  // The state you land on is the state that should be stored — rooms and
-  // objects included. Anything else leaves the database holding a version of
-  // the option that nobody chose: not the edit (you just undid it) and not the
-  // state on screen. So a step writes, and on success re-takes the focused
-  // department's baseline, which is what leaves Save Data grey afterwards.
-  //
-  // A refused write (a version conflict, or the network) does not re-take it,
-  // so the button lights up and the state on screen is offered for saving —
-  // which is exactly what it is: unsaved.
+  // A refused write does not re-take it, so the button lights up and offers the
+  // state on screen for saving — which is exactly what it is: unsaved.
   const step = useCallback((pick) => {
     const h = historyRef.current
     const next = pick(h)
@@ -193,7 +195,7 @@ export default function InstanceBuilder({
     const focusedId = shownDeptRef.current?.instanceId ?? null
     const landedOn = next.present.departments.find((d) => d.instanceId === focusedId) ?? null
     persistOption(next.present, optionNameRef.current).then((ok) => {
-      if (ok) setFocus({ id: landedOn?.instanceId ?? null, rooms: roomsOf(landedOn) })
+      if (ok) setFocus({ id: landedOn?.instanceId ?? null, draft: draftOf(landedOn) })
     })
   }, [])
 
@@ -221,14 +223,12 @@ export default function InstanceBuilder({
     )
   }, [step])
 
-  // THE ONLY WRITE TO sp_option.
+  // THE ONLY WRITE TO sp_option, called by a structural edit or by Save Data,
+  // each handing it the exact state to write. NEVER by a timer: this overwrites
+  // the whole row, and every automatic trigger the old autosave had turned out
+  // to be a way of writing the wrong state over the right one.
   //
-  // Called by a structural edit (which writes itself) and by the Save Data
-  // button, each handing it the exact state to write. Never by a timer: this
-  // write overwrites the whole row, and every automatic trigger the autosave
-  // had turned out to be a way of writing the wrong state over the right one.
-  //
-  // Two guards survive from that: it refuses any option that isn't the one in
+  // Two guards survive from that: it refuses any option that is not the one in
   // memory, and the update is conditional on the version it was loaded at.
   const writeOnce = useCallback(async (present, name) => {
     const loadedId = loadedIdRef.current
@@ -248,7 +248,8 @@ export default function InstanceBuilder({
           present.departments,
           present.sectionIds,
           present.buildingIds,
-          present.phaseCount
+          present.phaseCount,
+          present.buildingFactors
         ),
         version: at + 1,
       })
@@ -277,17 +278,10 @@ export default function InstanceBuilder({
     return true
   }, [])
 
-  // Writes run one at a time.
-  //
-  // Every write is conditional on the version it was loaded at, and each
-  // successful one bumps that version. Two writes started together therefore
-  // carry the SAME version, and the second is refused as a conflict — which is
-  // what rapid undo/redo did: a step per click, all in flight at once, and the
-  // second onwards failing with "changed somewhere else".
-  //
-  // Chaining them fixes it at the source: each waits for the previous to land,
-  // then reads `versionRef` fresh. They stay in order, and the last click wins
-  // because it writes last.
+  // Writes run one at a time. Each is conditional on a version that each
+  // success bumps, so two started together carry the SAME version and the second
+  // is refused — which is what rapid undo/redo did. Chaining them means each
+  // waits for the previous to land and then reads `versionRef` fresh.
   const chainRef = useRef(Promise.resolve(true))
 
   const persistOption = useCallback((present, name) => {
@@ -300,33 +294,25 @@ export default function InstanceBuilder({
     return next
   }, [writeOnce])
 
-  // What the Save Data button calls: write the whole option — a row is written
-  // whole — and, on success, take the focused department's rooms as the new
-  // baseline, so the button goes quiet again.
+  // What Save Data calls: write the whole option and, on success, take the
+  // focused department as the new baseline so the button goes quiet.
   const saveData = useCallback(async () => {
     const dept = shownDeptRef.current
-    const sent = roomsOf(dept)
+    const sent = draftOf(dept)
     const ok = await persistOption(presentRef.current, optionNameRef.current)
-    if (ok && dept) setFocus({ id: dept.instanceId, rooms: sent })
+    if (ok && dept) setFocus({ id: dept.instanceId, draft: sent })
     return ok
   }, [persistOption])
 
-  // Prefer the exact placement that's selected; fall back to matching by
-  // definition for selections that arrived without node context.
+  // Matched on the placement AND the phase, since one placement holds an entry
+  // per phase and they are different departments to edit. The fallbacks widen a
+  // step at a time — this placement in this phase, this placement at all, then
+  // the definition — so a selection that arrived without a phase still lands
+  // somewhere rather than emptying the panel.
   //
-  // Gated on the selection KIND, not merely on there being a highlighted
-  // department. Clicking empty canvas clears the selection but deliberately
-  // leaves the highlight alone — the auto-focus effect above reads it, and
-  // clearing it would make that effect immediately re-select the first
-  // department, which is the opposite of what the click asked for. So the
-  // department face has to be asked for by name, or it shows through.
-  //
-  // Matched on the phase as well as the placement: one placement now holds up
-  // to one entry per phase, and they are different departments to edit. The
-  // fallbacks widen one step at a time — this placement in this phase, then this
-  // placement at all, then the definition — so a selection that arrived without
-  // a phase (or one whose phase has since been dropped) still lands somewhere
-  // rather than emptying the panel.
+  // Gated on the selection KIND, not on there merely being a highlight, which
+  // outlives the selection: the department face has to be asked for by name or
+  // it shows through on the container and totals faces.
   const shownDept =
     selection?.kind === 'department'
       ? departments.find(
@@ -342,27 +328,21 @@ export default function InstanceBuilder({
   // changed since you opened this department.
   useEffect(() => {
     const id = shownDept?.instanceId ?? null
-    setFocus((f) => (f.id === id ? f : { id, rooms: roomsOf(shownDept) }))
+    setFocus((f) => (f.id === id ? f : { id, draft: draftOf(shownDept) }))
   }, [shownDept?.instanceId])
 
   // False while the two disagree about which department is in focus — that's
   // the render on which focus is being re-taken, and nothing is unsaved yet.
-  const dirty = !!shownDept && focus.id === shownDept.instanceId && roomsOf(shownDept) !== focus.rooms
+  const dirty = !!shownDept && focus.id === shownDept.instanceId && draftOf(shownDept) !== focus.draft
 
-  // Waits for the catalog, and depends on NOTHING else that can change while
-  // you work.
-  //
-  // It used to list the definition tables (and, briefly, `sections`) as
-  // dependencies, because it needs them to resolve names and areas. That made
-  // any catalog reload re-run the load — which calls resetOption, throwing away
-  // every edit made since the option was opened, autosaved or not. `loaded`
-  // flips false→true exactly once, so this now runs once per option, with the
-  // definitions already in hand.
+  // Waits for the catalog and depends on NOTHING else that can change while you
+  // work. Listing the definition tables here — it needs them to resolve names —
+  // made any catalog reload re-run the load, which calls resetOption and throws
+  // away every edit since the option was opened. `loaded` flips false→true once,
+  // so this runs once per option with the definitions already in hand.
   useEffect(() => {
     if (!loadOptionId || !catalogLoaded) return undefined
-    // Switch options quickly and the first response can arrive after the
-    // second. Without this the panel would show the option you left while the
-    // rest of the app says otherwise.
+    // Switch options quickly and the first response can arrive after the second.
     let cancelled = false
     setLoadError(null)
     // Nothing in memory belongs to this option yet, so nothing may be written
@@ -394,16 +374,16 @@ export default function InstanceBuilder({
             'error'
           )
         }
-        // An option saved before sections were stored has none listed; the
-        // sections its departments sit in are what it displayed, so those are
-        // what it opens with. Buildings derive the same way one level up — but
-        // from the SECTIONS, not the departments, so an option holding an empty
-        // section still opens showing the building that section sits in.
+        // An option saved before sections were stored opens with the ones its
+        // departments sit in, which is what it displayed. Buildings derive from
+        // the SECTIONS, not the departments, so an option holding an empty
+        // section still shows the building it sits in.
         const openSectionIds = loaded.sectionIds ?? sectionIdsOf(loaded.departments)
         const present = {
           departments: loaded.departments,
           sectionIds: openSectionIds,
           buildingIds: loaded.buildingIds ?? buildingIdsOf(openSectionIds),
+          buildingFactors: loaded.buildingFactors ?? {},
           phaseCount: loaded.phaseCount,
         }
         resetOption(present)
@@ -420,15 +400,15 @@ export default function InstanceBuilder({
   }, [loadOptionId, catalogLoaded])
 
   // A phase entry starts as a COPY of the closest lower phase of the same
-  // placement, so there is a base to edit rather than an empty department to
-  // rebuild by hand. Nothing is shared: every room and object gets a fresh
-  // instanceId, or the two phases would edit each other through the ids they
-  // had in common. Nothing to copy — phase 1, or the first phase this
-  // department appears in — starts empty.
+  // placement, as a base to edit. Nothing is shared: every room and object gets
+  // a fresh instanceId, or the two phases would edit each other through the ids
+  // they had in common. With nothing to copy it starts empty.
+  function seedSourceFor(depts, treeNodeId, phase) {
+    return depts.filter((d) => d.treeNodeId === treeNodeId && d.phase < phase).sort((a, b) => b.phase - a.phase)[0]
+  }
+
   function seedRoomsFrom(depts, treeNodeId, phase) {
-    const source = depts
-      .filter((d) => d.treeNodeId === treeNodeId && d.phase < phase)
-      .sort((a, b) => b.phase - a.phase)[0]
+    const source = seedSourceFor(depts, treeNodeId, phase)
     if (!source) return []
     return source.rooms.map((r) => ({
       ...r,
@@ -437,11 +417,10 @@ export default function InstanceBuilder({
     }))
   }
 
-  // Entries arrive already anchored to one tree node AND one phase — the strip
-  // that was clicked IS a specific placement in a specific phase, so there is
-  // nothing to disambiguate. The same department definition twice is fine as
-  // long as the placements differ, and the same placement twice is fine as long
-  // as the phases do; the same placement in the same phase is not.
+  // Entries arrive anchored to one tree node AND one phase, so there is nothing
+  // to disambiguate. The same definition twice is fine if the placements differ,
+  // and the same placement twice if the phases do; the same placement in the
+  // same phase is not.
   function addDepartments(entries) {
     mutateOption((o) => {
       const prev = o.departments
@@ -459,16 +438,10 @@ export default function InstanceBuilder({
       const placements = fresh.map(({ treeNodeId }) =>
         resolveNodePlacement(sections, treeNodeId, groupDefs, buildingDefs)
       )
-      // A department can't be in the option without its section being in it,
-      // and a section can't be without its building, so adding one department
-      // brings the whole chain above it.
-      //
-      // This is now a guard rather than a path: the canvas only offers a + on a
-      // department whose section is already in, and only draws buildings the
-      // option holds. It stays because the invariant is what the rest of the
-      // file assumes — resolveNodePlacement is the only thing that knows where
-      // a department sits, and a department under an absent section would
-      // simply not be drawn.
+      // Adding a department brings the whole chain above it. A guard rather than
+      // a path — the canvas only offers a + where the section is already in —
+      // but the invariant is what the rest of the file assumes: a department
+      // under an absent section would simply not be drawn.
       const addedSections = placements.map((p) => p?.sectionId).filter(Boolean)
       const addedBuildings = placements.map((p) => p?.buildingId).filter(Boolean)
       const departments = [
@@ -481,14 +454,20 @@ export default function InstanceBuilder({
             name: def.name,
             type: def.type,
             treeNodeId,
-            // Which phase this entry programs. A one-phase option only ever
-            // sends 1, which is what makes it read as it always did.
             phase: phase ?? DEFAULT_PHASE_COUNT,
             fallbackSectionName: placement?.sectionName ?? null,
             fallbackGroupName: placement?.groupName ?? null,
             // Seeded from `prev`, not from the array being built: two strips
             // added in one call are siblings, not sources for each other.
             rooms: seedRoomsFrom(prev, treeNodeId, phase ?? DEFAULT_PHASE_COUNT),
+            // The factor OVERRIDES, from the same source the rooms are: a phase
+            // seeded from an earlier one starts where that one stood. Null,
+            // never 1 — an entry that inherits must keep inheriting, and seeding
+            // a 1 would pin every new phase away from what the catalog says.
+            ...DEPARTMENT_FACTORS.reduce((out, f) => {
+              const from = seedSourceFor(prev, treeNodeId, phase ?? DEFAULT_PHASE_COUNT)?.[f.key]
+              return { ...out, [f.key]: Number.isFinite(from) && from > 0 ? from : null }
+            }, {}),
           }
         }),
       ]
@@ -566,20 +545,14 @@ export default function InstanceBuilder({
   // What this option is made of, at the two levels that aren't chosen on the
   // canvas: which buildings it contains, and how many phases it is built in.
   //
-  // Not addBuilding/removeBuilding, and not a separate phase setter: both are
-  // set together, in one dialog with one Save (see OptionList), so the edit that
-  // happens is "this is the option now". Applying it as ONE mutation makes it
-  // one undo step and one write, rather than two of each with a half-applied
-  // state in between — and one action for App's guard to hold, which only holds
-  // one.
+  // Both are set together in one dialog with one Save, so this applies them as
+  // ONE mutation: one undo step, one write, no half-applied state in between —
+  // and one action for App's guard, which holds only one.
   //
-  // Both cascade downwards, for the same reason: nothing below a level that has
-  // gone has anywhere left to be shown.
-  //
-  //   a dropped building   its sections, and every department in any of them
-  //   a dropped phase      every department entry staged in it
-  //
-  // The dialog confirms before either.
+  // Both cascade downwards, since nothing below a level that has gone has
+  // anywhere left to be shown: a dropped building takes its sections and their
+  // departments, a dropped phase takes every entry staged in it. The dialog
+  // confirms first.
   function setOptionSettings({ buildingIds: nextBuildingIds, phaseCount: nextPhaseCount }) {
     const kept = new Set(nextBuildingIds)
     const doomedSectionIds = new Set(sections.filter((s) => !kept.has(s.building_id)).map((s) => s.id))
@@ -598,16 +571,42 @@ export default function InstanceBuilder({
     )
   }
 
+  // The catalog room's objects, with their counts, as an option's own. Copied
+  // rather than referenced: fresh instanceIds, and from here the list belongs to
+  // this option — adding an object to the catalog afterwards does not appear in
+  // an option that already has this room.
+  //
+  // A def that has since been deleted is dropped rather than carried as a
+  // nameless row. Circulation is never seeded: it is derived from the others,
+  // and one placed explicitly would be counted against itself.
+  function seedObjectsFrom(catalogRoom) {
+    const circulationDef = findCirculationDef(objectDefs)
+    return (catalogRoom?.objects ?? []).flatMap((node) => {
+      const def = objectDefs.find((o) => o.id === node.object_def_id)
+      if (!def || def.id === circulationDef?.id) return []
+      return [
+        {
+          instanceId: crypto.randomUUID(),
+          defId: def.id,
+          name: def.name,
+          type: def.type,
+          areaSqft: def.area_sqft ?? null,
+          count: catalogObjectCount(node),
+        },
+      ]
+    })
+  }
+
   function addRoom(deptInstanceId, def) {
     mutateDepartments((prev) =>
       prev.map((d) => {
         if (d.instanceId !== deptInstanceId) return d
         if (d.rooms.some((r) => r.defId === def.id)) return d
 
-        // Anchor the room to the catalog room node it came from, so its object
-        // list stays isolated from other rooms sharing the definition. The room
-        // picker lists definitions, not per-instance cards, so in the rare
-        // ambiguous case take the first and say so rather than blocking.
+        // Anchor the room to the catalog node it came from, so its object list
+        // stays isolated from other rooms sharing the definition. The picker
+        // lists definitions, so an ambiguous case takes the first and says so
+        // rather than blocking.
         const matches = (catalogRoomsForNode(sections, d.treeNodeId) ?? []).filter((r) => r.room_def_id === def.id)
         if (matches.length > 1) {
           onToast?.(`${def.name} appears more than once in this department's catalog — using the first one.`)
@@ -623,8 +622,17 @@ export default function InstanceBuilder({
               name: def.name,
               type: def.type,
               treeRoomNodeId: matches[0]?.instance_id ?? null,
+              // NOT seeded: how many of a room there are is the size of this
+              // program, and the catalog states none. See tree.js.
               count: DEFAULT_ROOM_COUNT,
-              objects: [],
+              // Seeded from the catalog placement, and 0 when it states none.
+              // COPIED, not inherited: from here the figure belongs to this
+              // option, and editing the catalog never moves it. See tree.js.
+              areaSqft: catalogRoomAreaSqft(matches[0]),
+              // This option's own note, separate from the catalog's. Empty, not
+              // seeded: the catalog's note is shown beside it, not copied.
+              notes: '',
+              objects: seedObjectsFrom(matches[0]),
             },
           ],
         }
@@ -644,6 +652,29 @@ export default function InstanceBuilder({
     )
   }
 
+  // A building's factor override belongs to the OPTION, not a department, so
+  // Save Data — which watches only the focused department — would never notice
+  // it. It persists on commit instead: mutateOption while typing so the totals
+  // answer, and a second call with PERSIST when the field is left.
+  function setBuildingFactor(buildingId, factor, value, { persist = false } = {}) {
+    mutateOption(
+      (o) => ({
+        ...o,
+        buildingFactors: {
+          ...o.buildingFactors,
+          [buildingId]: withBuildingFactor(o.buildingFactors?.[buildingId], factor, value),
+        },
+      }),
+      { persist, coalesce: persist ? null : `${factor.key}:${buildingId}` }
+    )
+  }
+
+  // The department entry itself rather than one of its rooms. No `persist`: a
+  // figure like a count, not a structural act, so it waits for Save Data.
+  function updateDepartment(deptInstanceId, updater, opts) {
+    mutateDepartments((prev) => prev.map((d) => (d.instanceId === deptInstanceId ? updater(d) : d)), opts)
+  }
+
   // Lets the Project tab add and remove buildings, sections and departments
   // without App having to own this component's state.
   useEffect(() => {
@@ -651,6 +682,7 @@ export default function InstanceBuilder({
       departments,
       sectionIds,
       buildingIds,
+      buildingFactors,
       phaseCount,
       departmentDefs,
       optionName,
@@ -675,6 +707,7 @@ export default function InstanceBuilder({
     departments,
     sectionIds,
     buildingIds,
+    buildingFactors,
     phaseCount,
     departmentDefs,
     optionName,
@@ -689,19 +722,67 @@ export default function InstanceBuilder({
   const isContainer =
     selection?.kind === 'group' || selection?.kind === 'section' || selection?.kind === 'building'
 
+  // Resolved live from the tree, with the option's frozen name as the fallback
+  // for a placement the catalog no longer has.
+  const shownSectionName = shownDept
+    ? resolveNodePlacement(sections, shownDept.treeNodeId, groupDefs, buildingDefs)?.sectionName ??
+      shownDept.fallbackSectionName
+    : null
+
   const error = catalogError || loadError
 
   return (
-    // No top margin: the panel starts at the top edge of side rather than
-    // below a gap.
+    // No top margin: the panel starts at the top edge of side.
     <div>
-      {/* One row: the option's name, and — when a department is open — Save
-          Data at the right, on the same line and directly above the card's
-          top-right corner. Save Data belongs to the department only; everything
-          else on this option is changed by an action that writes for itself. */}
+      {/* Where you are, and — when a department is open — Save Data at the right
+          of the same line, directly above the card's top-right corner. Save Data
+          belongs to the department only; everything else writes for itself.
+
+          The line names the SECTION, not the option: the option is already named
+          on the canvas and in the chip you opened it from, while the section is
+          what moves as you click around. Deliberately smaller than the
+          department name beneath it — this is where you are, that is what you
+          are editing. Falls back to the option's name on the container faces,
+          which have no one section. */}
       {(isContainer || shownDept) && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, marginBottom: 12 }}>
-          <h2 style={{ margin: 0, flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{optionName}</h2>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            minWidth: 0,
+            // STICKY, so Save Data is reachable from anywhere in a long
+            // department. It used to scroll away with the heading, and a
+            // department of twenty rooms put the only way to save what you were
+            // typing off the top of the panel.
+            position: 'sticky',
+            top: 0,
+            zIndex: Z.header,
+            // The negative margin pulls this out of the 16px inset App's
+            // wrapper puts on the panel, and the padding puts it back inside —
+            // so the background covers the full width and rooms scroll UNDER
+            // it rather than beside it. Same trick as the energy band.
+            margin: '-16px -16px 12px',
+            padding: '16px 16px 8px',
+            // Matches `side`, so what passes underneath is hidden rather than
+            // showing through a transparent strip.
+            background: '#fafafa',
+            borderBottom: `1px solid ${SUBTLE_RULE}`,
+          }}
+        >
+          <h2
+            style={{
+              margin: 0,
+              flex: 1,
+              minWidth: 0,
+              overflowWrap: 'anywhere',
+              fontSize: 13,
+              fontWeight: 600,
+              color: '#777',
+            }}
+          >
+            {shownSectionName ?? optionName}
+          </h2>
           {shownDept && (
             <SaveDataButton dirty={dirty} saving={saving} error={saveError} onSave={saveData} />
           )}
@@ -721,6 +802,11 @@ export default function InstanceBuilder({
           buildingDefs={buildingDefs}
           sectionIds={sectionIds}
           functions={functions}
+          // For the function colour each department and room is drawn in.
+          departmentDefs={departmentDefs}
+          roomDefs={roomDefs}
+          buildingFactors={buildingFactors}
+          onBuildingFactorChange={setBuildingFactor}
           phaseCount={phaseCount}
         />
       ) : shownDept ? (
@@ -732,9 +818,10 @@ export default function InstanceBuilder({
           groupDefs={groupDefs}
           objectDefs={objectDefs}
           functions={functions}
+          schedules={schedules}
+          buildingFactors={buildingFactors}
           departmentFunctionId={departmentDefs.find((d) => d.id === shownDept.defId)?.function_id}
           buildingDefs={buildingDefs}
-          // Which of the option's phases this entry is, and how many there are.
           // Read-only: the phase is which strip you clicked, not a field on the
           // department.
           phaseCount={phaseCount}
@@ -742,6 +829,7 @@ export default function InstanceBuilder({
           onRoomChange={(roomInstanceId, updater, opts) =>
             updateRoom(shownDept.instanceId, roomInstanceId, updater, opts)
           }
+          onDeptChange={(deptInstanceId, updater, opts) => updateDepartment(deptInstanceId, updater, opts)}
           onSelectDepartment={onSelectDepartment}
         />
       ) : (
@@ -749,6 +837,7 @@ export default function InstanceBuilder({
           <OptionStats
             name={optionName}
             departments={departments}
+            buildingFactors={buildingFactors}
             sectionCount={sectionIds.length}
             buildingCount={buildingIds.length}
             phaseCount={phaseCount}

@@ -11,3 +11,135 @@ body {
 .leaflet-container {
   background: #fff !important;
 }
+
+/* CountField (ui/panel/panelParts.jsx).
+ *
+ * The native number spinner is removed outright — in both engines, which is why
+ * there are three declarations — and replaced by our own − / + in the
+ * component. Styling the native one was not reliable: Chrome and Firefox expose
+ * it differently, only Chrome has a pseudo-element for it, and neither lets it
+ * be made borderless enough to sit inside a room's title.
+ *
+ * The count has to read as part of the room name — "Consultation Room ×10" —
+ * not as a form control parked next to it. A white input box on a coloured
+ * header was the loudest thing in the panel, louder than the names you are
+ * actually scanning.
+ *
+ * The steppers are invisible until the count is hovered, and their space is
+ * reserved in both states so nothing shifts under the pointer. */
+.count-field::-webkit-outer-spin-button,
+.count-field::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+.count-field {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.count-steps {
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.count-wrap:hover .count-steps,
+.count-wrap:focus-within .count-steps {
+  opacity: 1;
+}
+
+/* A row in a side panel that highlights under the pointer: an object in a room,
+ * a field in the energy band. Both are dense lists of label-then-value read
+ * across a gap, and the highlight is what ties the two ends of one row together
+ * — the same job a table's zebra striping does, but only where you are looking.
+ *
+ * The tint is black at low alpha rather than a colour, so it works on the white
+ * body of a room block AND on the function-coloured band above it without
+ * either needing to know what it is sitting on.
+ *
+ * The inset is padding plus an equal negative margin, so the highlight bleeds
+ * past the text on both sides without moving a single pixel of content.
+ *
+ *   >>> A ROW MUST SET paddingBlock, NOT the `padding` shorthand. The shorthand
+ *   >>> resets padding-inline to 0 while the negative margin survives, which
+ *   >>> shifts the whole row 4px left of everything it is meant to line up
+ *   >>> with. That is exactly how it broke the first time. */
+.spp-row {
+  margin-inline: -4px;
+  padding-inline: 4px;
+  border-radius: 3px;
+  transition: background-color 100ms ease;
+}
+
+.spp-row:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* The same idea on the canvases: a department card, and a section or group's
+ * header strip, tint under the pointer. Defined once in ui/canvas/canvasCards.jsx
+ * and therefore true on BOTH canvases — the Project tab and the Tree tab.
+ *
+ * A background-IMAGE, not a background-colour, because the colour is an inline
+ * style carrying the node's function hue and this must not replace it — a wash
+ * layers over the colour and under the text, so nothing is recoloured and no
+ * label is dimmed. `!important` beats the inline `background` shorthand, which
+ * resets background-image to none; it is the same trick RemoveButton's hover
+ * uses, and it is why this cannot live in a style object.
+ *
+ * A box-shadow would have been simpler and is not available: a card's shadow is
+ * inline and carries the blue selection ring, so a hover rule would drop it.
+ *
+ * ON A CONTAINER THIS GOES ON THE HEADER, never the box — the same rule
+ * spp-hover-reveal follows, and for a sharper reason: :hover matches every
+ * ancestor, so a box would light up whenever anything nested inside it did, and
+ * hovering one department would tint its group, its section and itself at once. */
+.spp-hover-tint:hover {
+  background-image: linear-gradient(rgba(0, 0, 0, 0.07), rgba(0, 0, 0, 0.07)) !important;
+}
+
+/* The energy grid (ui/panel/RoomEnergyStrip.jsx): Loads and HVAC side by side,
+ * stacking to one column when the panel is too narrow to hold both.
+ *
+ * A CONTAINER query, not a media query: what decides this is the width of the
+ * side panel, which the user can be looking at on any size of screen, and a
+ * viewport breakpoint would guess wrong every time the layout around it changed.
+ *
+ * The divider has to move with the layout — a rule between two columns is a
+ * rule ABOVE the second one when they stack — and that is the whole reason this
+ * lives in a stylesheet instead of in the component's inline styles, which
+ * cannot know which way it went. */
+/* The container is the WRAPPER, not the grid: an element cannot query its own
+ * width, so the thing being measured has to be an ancestor of the thing being
+ * restyled. */
+.spp-energy {
+  container-type: inline-size;
+}
+
+.spp-energy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+}
+
+.spp-energy-grid > * + * {
+  padding-left: 16px;
+  border-left: 1px solid #eee;
+}
+
+/* Narrower than two columns can honestly hold: the labels start ellipsising
+ * before the values do, and a truncated "Illuminance" beside a full "0 lux" is
+ * worse than a taller box. */
+@container (max-width: 320px) {
+  .spp-energy-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 10px;
+  }
+
+  .spp-energy-grid > * + * {
+    padding-left: 0;
+    padding-top: 10px;
+    border-left: none;
+    border-top: 1px solid #eee;
+  }
+}

@@ -6,6 +6,7 @@
 // the two tabs inset their cards differently for weeks; keep it shared.
 
 import { functionColours } from '../../data/functions.js'
+import { buildingAreaSqft } from '../../data/optionData.js'
 import {
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
@@ -78,6 +79,11 @@ export function buildLayout({
   // The same argument one level up, and the same for buildings.
   buildings = [],
   buildingIds = [],
+  // This option's per-building factor overrides. Only the FLOOR-area factor is
+  // used here, on a building band's own total — the built-area one is already
+  // inside every department figure that reaches this file (see
+  // data/optionData.js).
+  buildingFactors = {},
   functions,
   selectedDeptInstanceId,
   // Which phase strip of that placement is open in side. Together they
@@ -271,7 +277,14 @@ export function buildLayout({
         isSelected: selection?.kind === 'building' && selection.id === bItem.building.id,
         onSelect: () =>
           onSelectContainer({ kind: 'building', id: bItem.building.id, name: bItem.building.name }),
-        totalAreaSqft: realAreaOf(bItem.entries),
+        // The building's departments, then its floor-area factor once. Section
+        // and group bands do not get it: it is a fact about a whole building,
+        // and applying it to a part of one reports a figure nothing adds up to.
+        totalAreaSqft: buildingAreaSqft(
+          realAreaOf(bItem.entries),
+          bItem.building,
+          buildingFactors[bItem.building.id]
+        ),
       },
     })
     bItem.buildingLayout.placed.forEach((sb, sIdx) => {
