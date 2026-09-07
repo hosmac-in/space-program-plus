@@ -2,12 +2,20 @@
 // =======================================================================
 //
 // The numeric half of what a room is, beside the schedules that say WHEN it
-// runs (data/schedules.js). Two groups, drawn as two sections of one band:
+// runs (data/schedules.js). Two groups:
 //
-//   loads   what the room holds and draws — people, lighting, illuminance,
-//           hot water, infiltration
-//   hvac    how it is served — setpoint, air changes, pressure, and whether it
+//   loads   what the room holds and draws — people, activity, lighting,
+//           equipment, illuminance, hot water, infiltration
+//   hvac    how it is served — setpoints, air changes, pressure, and whether it
 //           is conditioned at all
+//
+// The SPLIT IS STORAGE ONLY. The panel draws one list called Room Parameters:
+// the two headings were removed once every field beneath them read as a property
+// of the room rather than as a member of a category, and "Loads" over a column
+// that begins with a schedule was never quite true. Two maps remain because they
+// are two jsonb keys with two subjects — a room can be fully specified for its
+// loads and say nothing about its air — and merging them would be a migration
+// for a caption.
 //
 // Both are stored and resolved exactly as schedules are: the catalog placement
 // in sp_section.tree states the DEFAULT, and an option stores OVERRIDES ONLY.
@@ -21,9 +29,9 @@
 //
 //     option[group]?.[key] ?? treeRoom[group]?.[key] ?? null
 //
-// TWO MAPS, NOT ONE, because they are two sections in the UI and two subjects —
-// a room can be fully specified for loads and say nothing about its air. Adding
-// a field to either is one line below; neither jsonb shape changes.
+// Adding a field to either group is one line below; neither jsonb shape
+// changes, and which group it goes in decides only which key it is stored
+// under.
 //
 //   >>> WHAT COUNTS AS "SET" DEPENDS ON THE TYPE, and getting this wrong loses
 //   >>> data silently:
@@ -75,6 +83,21 @@ export const ROOM_LOADS = [
     describe: (room) => `How many people ${room} holds`,
   },
   {
+    key: 'activity_level_w_per_person',
+    label: 'Activity level',
+    short: 'Met',
+    type: 'number',
+    // EnergyPlus's People Activity Level: the metabolic heat one occupant gives
+    // off. Per PERSON, and directly under the people count for the same reason
+    // hot water is — the two multiply, and reading them apart invites entering
+    // one as a room total.
+    unit: 'W/person',
+    fallback: 0,
+    decimals: 0,
+    step: 10,
+    describe: (room) => `Metabolic heat per occupant of ${room}, in watts`,
+  },
+  {
     key: 'lighting_w_per_sqft',
     label: 'Lighting',
     short: 'LPD',
@@ -84,6 +107,20 @@ export const ROOM_LOADS = [
     decimals: 2,
     step: 0.05,
     describe: (room) => `Lighting power density in ${room}, in watts per square foot`,
+  },
+  {
+    key: 'equipment_w_per_sqft',
+    label: 'Equipment',
+    short: 'EPD',
+    type: 'number',
+    // Beside lighting and in the same unit: the two are the room's plug and
+    // fixture loads and are almost always entered together. A ward's is a bed
+    // and a monitor; an imaging room's is the scanner.
+    unit: 'W/sqft',
+    fallback: 0,
+    decimals: 2,
+    step: 0.05,
+    describe: (room) => `Electric equipment power density in ${room}, in watts per square foot`,
   },
   {
     key: 'illuminance_lux',
@@ -97,18 +134,30 @@ export const ROOM_LOADS = [
     describe: (room) => `The illuminance ${room} is designed to, in lux`,
   },
   {
-    key: 'hot_water_l_per_person_day',
     label: 'Hot water',
-    short: 'DHW',
-    type: 'number',
-    // Per PERSON rather than per area, because the people count is stated right
-    // beside it and the two compose: demand follows occupants, not floor.
-    // Abbreviated because it shares a narrow column with "0.00 W/sqft".
-    unit: 'L/p/day',
-    fallback: 0,
-    decimals: 0,
-    step: 5,
-    describe: (room) => `Hot water ${room} uses, in litres per person per day`,
+    type: 'pair',
+    // The two halves do NOT share a unit, so each prints its own and both are
+    // shortened to fit — see PAIR_WIDTH in ui/panel/panelLayout.js.
+    parts: [
+      {
+        key: 'hot_water_l_per_person_day',
+        // Per PERSON rather than per area: the people count is stated a few rows
+        // above and the two compose — demand follows occupants, not floor.
+        unit: 'L/p/d',
+        fallback: 0,
+        decimals: 0,
+        step: 5,
+        describe: (room) => `Hot water ${room} uses, in litres per person per day`,
+      },
+      {
+        key: 'hot_water_temp_c',
+        unit: '°C',
+        fallback: 0,
+        decimals: 0,
+        step: 5,
+        describe: (room) => `The temperature ${room}'s hot water is delivered at, in °C`,
+      },
+    ],
   },
   {
     key: 'infiltration_ach',
@@ -127,16 +176,77 @@ export const ROOM_LOADS = [
 ]
 
 export const ROOM_HVAC = [
+  // FIRST, and the reason is not tidiness: it GOVERNS everything under it. An
+  // unconditioned room has no setpoints, no delivered air and no pressure
+  // regime, so the panel greys the rest of this list out when this is off (see
+  // RoomEnergyStrip). A governing switch below the things it governs would have
+  // people typing into rows that were about to go dead.
+  //
+  // The values themselves are kept, not cleared — turning conditioning back on
+  // must restore what was there rather than silently wiping a room's air spec.
   {
-    key: 'setpoint_c',
+    key: 'conditioned',
+    label: 'Conditioned',
+    short: 'Cond',
+    type: 'boolean',
+    fallback: false,
+    describe: (room) => `Whether ${room} is served by HVAC at all`,
+  },
+  // >>> `setpoint_c` WAS ONE FIELD and is now these two. Nothing migrates: a
+  // >>> room that already carries `setpoint_c` keeps the key, unread, and reads
+  // >>> as though neither setpoint were stated. Nothing consumed it, so nothing
+  // >>> is wrong — but if a catalog was populated before this, those numbers are
+  // >>> still in the jsonb and have to be re-entered against the right one of
+  // >>> the two, or rewritten in a one-off pass.
+  // A BAND, not a number, and drawn as one row of two fields: heating up to the
+  // first and cooling down to the second, with the dead band between them the
+  // thing an engineer actually reads. Two rows called "Heating setpoint" and
+  // "Cooling setpoint" said the same thing in twice the height and made the
+  // gap between them something to work out rather than to see.
+  {
     label: 'Setpoint',
-    short: 'Set',
-    type: 'number',
+    type: 'pair',
     unit: '°C',
-    fallback: 0,
-    decimals: 1,
-    step: 0.5,
-    describe: (room) => `The temperature ${room} is held at, in °C`,
+    parts: [
+      {
+        key: 'heating_setpoint_c',
+        fallback: 0,
+        decimals: 1,
+        step: 0.5,
+        describe: (room) => `The temperature ${room} is heated up to, in °C`,
+      },
+      {
+        key: 'cooling_setpoint_c',
+        fallback: 0,
+        decimals: 1,
+        step: 0.5,
+        describe: (room) => `The temperature ${room} is cooled down to, in °C`,
+      },
+    ],
+  },
+  // The same band in relative humidity: humidify up to the first, dehumidify
+  // down to the second. 0 means "nobody has said" here as everywhere else — an
+  // operating theatre at 55% and a store at nothing are both real answers.
+  {
+    label: 'Humidity',
+    type: 'pair',
+    unit: '% RH',
+    parts: [
+      {
+        key: 'humidity_setpoint_rh',
+        fallback: 0,
+        decimals: 0,
+        step: 5,
+        describe: (room) => `The relative humidity ${room} is humidified up to`,
+      },
+      {
+        key: 'dehumidity_setpoint_rh',
+        fallback: 0,
+        decimals: 0,
+        step: 5,
+        describe: (room) => `The relative humidity ${room} is dehumidified down to`,
+      },
+    ],
   },
   {
     key: 'air_changes_ach',
@@ -165,15 +275,11 @@ export const ROOM_HVAC = [
     fallback: 'unpressured',
     describe: (room) => `Whether ${room} is held above or below the pressure around it`,
   },
-  {
-    key: 'conditioned',
-    label: 'Conditioned',
-    short: 'Cond',
-    type: 'boolean',
-    fallback: false,
-    describe: (room) => `Whether ${room} is served by HVAC at all`,
-  },
 ]
+
+// Which field governs the rest of its group, and what it has to be for them to
+// apply. Named here rather than in the panel: it is a fact about the fields.
+export const CONDITIONED_KEY = 'conditioned'
 
 // Which jsonb key each group is stored under, on both the catalog room node and
 // the option's room.
@@ -204,7 +310,7 @@ export function resolveRoomFields(fields, group, treeRoomNode, optionRoom) {
   const inheritedMap = treeRoomNode?.[group] ?? {}
   const overrides = optionRoom?.[group] ?? {}
 
-  return fields.map((field) => {
+  const one = (field) => {
     const inheritedValue = isSet(field, inheritedMap[field.key])
       ? normalise(field, inheritedMap[field.key])
       : null
@@ -219,7 +325,24 @@ export function resolveRoomFields(fields, group, treeRoomNode, optionRoom) {
     // Nobody has said. The row still shows a value — see the note above — but
     // `source: null` is what keeps it from being drawn as anyone's answer.
     return { ...field, value: field.fallback, source: null, inherited: null }
-  })
+  }
+
+  return fields.map((field) => (field.type === 'pair' ? resolvePair(field, one) : one(field)))
+}
+
+// A PAIR is two independent fields sharing one row and one label — each half
+// inherits, overrides and reverts on its own, exactly as if it were its own row,
+// because that is what it is in storage. Only the drawing is joined.
+//
+// The row's `source` is the LOUDEST of its halves: overridden if either was
+// typed here, otherwise inherited if either came from the catalog. That is what
+// decides whether the row shows a revert at all — reverting then clears whichever
+// halves were overridden and leaves the others alone.
+function resolvePair(field, resolveOne) {
+  const parts = field.parts.map((p) => resolveOne({ ...p, type: 'number', label: field.label }))
+  // 'here' is the Tree tab's word for the same thing — see catalogRoomFields.
+  const loudest = ['option', 'here', 'inherited'].find((s) => parts.some((p) => p.source === s))
+  return { ...field, parts, source: loudest ?? null }
 }
 
 // The same rows AS THE CATALOG SEES THEM, with no option in the picture. The
@@ -228,7 +351,7 @@ export function resolveRoomFields(fields, group, treeRoomNode, optionRoom) {
 // back to.
 export function catalogRoomFields(fields, group, treeRoomNode) {
   const stated = treeRoomNode?.[group] ?? {}
-  return fields.map((field) => {
+  const one = (field) => {
     const set = isSet(field, stated[field.key])
     return {
       ...field,
@@ -236,7 +359,8 @@ export function catalogRoomFields(fields, group, treeRoomNode) {
       source: set ? 'here' : null,
       inherited: null,
     }
-  })
+  }
+  return fields.map((field) => (field.type === 'pair' ? resolvePair(field, one) : one(field)))
 }
 
 // How a field reads once it has a value. Null is the caller's own kind of empty,

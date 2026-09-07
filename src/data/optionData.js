@@ -124,6 +124,14 @@
 //     both, as is `false` for a boolean, unlike a department factor where only
 //     > 0 means anything; there, only absence means "nobody has said". See
 //     data/roomEnergy.js.
+//
+//     Fields have been ADDED to both maps since, with no version bump: a new
+//     key inside an existing map changes how nothing loads, because absence
+//     already meant inherit. The one exception is a RENAME — `hvac.setpoint_c`
+//     became `heating_setpoint_c` + `cooling_setpoint_c`, so a room written
+//     early in v13 keeps the old key, unread, and reads as stating neither.
+//     Nothing consumed it, so nothing computes wrongly; the value has to be
+//     re-entered against whichever of the two it meant.
 // 12  a room may carry `notes`. This is the option's OWN note, not an override
 //     of the catalog's — both are shown, one above the other. Absent: no note,
 //     which is what every version before this had.

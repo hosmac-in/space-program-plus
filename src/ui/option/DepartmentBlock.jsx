@@ -45,10 +45,10 @@ import {
   roomWithField,
 } from '../../data/roomEnergy.js'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
+import StripBand from '../panel/StripBand.jsx'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
 import {
   CountField,
-  formatPath,
   ObjectRow,
   PanelHeading,
   PanelNote,
@@ -103,8 +103,6 @@ export default function DepartmentBlock({
   // building's own total, once, see data/optionData.js.
   const buildingRow = buildingDefs.find((b) => b.id === placement?.buildingId) ?? null
   const buildingOverrides = placement?.buildingId ? (buildingFactors[placement.buildingId] ?? null) : null
-  const sectionName = placement?.sectionName ?? dept.fallbackSectionName
-  const groupName = placement?.groupName ?? dept.fallbackGroupName
 
   // Counts live only here: the catalog says an object may be in this room, this
   // option says how many.
@@ -136,18 +134,19 @@ export default function DepartmentBlock({
       >
         <PanelHeading
           name={`${dept.name}${dept.type ? ` (${dept.type})` : ''}`}
-          // No building: the line above this panel already names the section,
-          // and the building is the one step of the path that never changes
-          // while you work inside one.
-          path={formatPath(sectionName, groupName)}
+          // NO PATH. The sticky heading above this panel carries it in full and
+          // is on screen at every scroll position, so repeating it here cost the
+          // card a line to say something already said two lines up. The note
+          // stays: a placement the catalog has lost is about this department,
+          // not about where you are.
           note={!placement ? '(no longer in the tree)' : null}
           // What the whole department comes to: every room's area times how
           // many of it, grossed up. The same figure the HUD and the canvas card
           // show, from the same function — see departmentAreaSqft.
-          // Two figures, stacked and right-aligned: what the department comes
-          // to, and — quieter, beneath it — what its rooms came to before
-          // grossing. Together they read as one number and its origin rather
-          // than as two totals somewhere apart from each other.
+          // Three figures, stacked and right-aligned: what the department comes
+          // to, and — quieter, beneath it — the two stages it was grossed up
+          // from. Together they read as one number and its origin rather than as
+          // totals somewhere apart from each other.
           right={
             <div style={{ flexShrink: 0, textAlign: 'right', whiteSpace: 'nowrap' }}>
               {/* The chain, largest first: what the department comes to, what
@@ -155,25 +154,60 @@ export default function DepartmentBlock({
                   applied, and the rooms as entered. Each line is the one below
                   it times a factor shown underneath — see data/optionData.js.
 
-                  Only the top one is unlabelled: it is the department's area,
-                  full stop. Two bare figures under it would leave the reader
-                  guessing which was which. */}
+                  All three are ONE SIZE and all three are labelled. The top line
+                  used to be larger and bare, which said "these two are footnotes
+                  to it" twice over — but they are the same figure at three
+                  stages, and a reader comparing them was comparing type sizes.
+                  Colour alone now carries which one is the answer, plus a gap
+                  under it so the two stages read as its derivation rather than
+                  as three equal lines. */}
               <div
                 title="Built area × the department's grossing factor"
-                style={{ fontSize: 15, fontStyle: 'italic', color: '#555' }}
+                style={{ fontSize: 13, fontStyle: 'italic', color: '#555', marginBottom: 4 }}
               >
+                <span style={{ fontStyle: 'normal' }}>department area </span>
                 {formatArea(departmentAreaSqft(dept, catalogDeptNode, buildingRow, buildingOverrides))} sqft
               </div>
               <div
                 title="Net area × the building's built-area grossing factor"
-                style={{ fontSize: 11, fontStyle: 'italic', color: '#999' }}
+                style={{ fontSize: 13, fontStyle: 'italic', color: '#999' }}
               >
                 <span style={{ fontStyle: 'normal' }}>built area </span>
                 {formatArea(departmentBuiltAreaSqft(dept, buildingRow, buildingOverrides))} sqft
               </div>
-              <div title="The rooms alone, before any grossing" style={{ fontSize: 11, fontStyle: 'italic', color: '#999' }}>
+              <div title="The rooms alone, before any grossing" style={{ fontSize: 13, fontStyle: 'italic', color: '#999' }}>
                 <span style={{ fontStyle: 'normal' }}>net area </span>
                 {formatArea(departmentNetAreaSqft(dept))} sqft
+              </div>
+            </div>
+          }
+          // Left-aligned under the name, running alongside the right-aligned
+          // area chain — the two read across from each other as one band of
+          // small print rather than stacking into two separate paragraphs.
+          under={
+            /* PLACEHOLDERS. Both figures are hard-coded zeros: the occupancy and
+            the energy model are authored on the rooms and nothing reads either
+            yet (see CLAUDE.md, "Open questions"). This is the slot they will
+            land in, under the name and opposite the area chain, so the shape of
+            the heading is settled before the numbers arrive.
+
+            PAX splits fixed from floating because a department's population is
+            two different things — staff and beds are established by the room
+            list, visitors and outpatients by the occupancy multiplier — and a
+            single total would hide which one an answer came from.
+
+            >>> The energy unit is NOT SETTLED. kWh/m²·yr is ECBC's EPI and what
+            >>> an Indian brief is read against, but every area in this app is in
+            >>> sqft, so the figure and the areas beside it are in different
+            >>> systems. Decide it when the EnergyPlus export lands. */
+            <div style={{ marginTop: 4, fontSize: 13, color: '#999', fontStyle: 'italic' }}>
+              <div>
+                <span style={{ fontStyle: 'normal' }}>PAX </span>
+                00 fixed + 00 floating
+              </div>
+              <div>
+                <span style={{ fontStyle: 'normal' }}>Energy </span>
+                00 kWh/m²·yr
               </div>
             </div>
           }
@@ -195,73 +229,80 @@ export default function DepartmentBlock({
         </div>
       )}
 
-      {/* The two factors this department is scaled by, each resolved
-          catalog-default-then-option-override exactly as a room's schedules are
-          — see data/factors.js.
+      {/* The factors this department is scaled by, each resolved
+          catalog-default-then-option-override exactly as a room's loads are —
+          see data/factors.js. What varies is WHERE a value came from, which is
+          what the muted/underlined treatment reports.
 
-          Always shown, unlike a schedule: a factor is never unset, there is
-          always a number in force, and a plain 1.00 at a glance is how you know
-          nobody has said anything special. What varies is WHERE it came from,
-          which is what the muted/underlined treatment reports. */}
-      {resolveFactors(catalogDeptNode, dept).map((f) => {
-        const inherited = f.source === 'inherited'
-        return (
-          <div
-            key={f.key}
-            // spp-hover-reveal: the reset appears only while the row is
-            // hovered — see ResetButton.
-            className="spp-hover-reveal"
-            style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '10px 0', minWidth: 0, fontSize: 13 }}
-            // The heading above navigates on click; these are controls inside
-            // it and must not also select the department.
-            onClick={(e) => e.stopPropagation()}
-          >
-            <span style={{ color: '#555', minWidth: 0 }}>{f.label}</span>
-            <span
-              // Dashed and muted while it is the catalog's answer rather than
-              // one given here. Typing overrides it; there is no separate
-              // "override" action, because changing the number IS the override.
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                opacity: inherited ? 0.6 : 1,
-                borderBottom: inherited ? '1px dashed #bbb' : '1px solid transparent',
-              }}
+          COLLAPSED, in the same band a room's energy fields use, for the same
+          reason and with the same component: they are two rows today and there
+          will be more, and a department that opens as a wall of multipliers
+          buries the rooms the panel is actually for. `plain` because the shell
+          is already painted in this department's wash — see StripBand. */}
+      <StripBand title="Department Parameters" colours={colours} pad={16} top={12} plain>
+        {resolveFactors(catalogDeptNode, dept).map((f) => {
+          const inherited = f.source === 'inherited'
+          return (
+            <div
+              key={f.key}
+              // spp-hover-reveal: the reset appears only while the row is
+              // hovered — see ResetButton.
+              className="spp-hover-reveal"
+              // 12px: below the area chain and the stats at 13, above a room's
+              // parameter rows at 11. A department's settings sit between what
+              // the department is and what its rooms are.
+              style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0', minWidth: 0, fontSize: 12 }}
+              // The heading above navigates on click; these are controls inside
+              // it and must not also select the department.
+              onClick={(e) => e.stopPropagation()}
             >
-              <CountField
-                value={f.value}
-                colour="#555"
-                min={f.min}
-                step={0.05}
-                decimals={2}
-                prefix="×"
-                title={f.describe(dept.name)}
-                onChange={(value) =>
-                  onDeptChange?.(dept.instanceId, (d) => withFactor(d, f, value), {
-                    coalesce: `${f.key}:${dept.instanceId}`,
-                  })
-                }
-              />
-            </span>
-
-            {/* Reverts to the catalog's default, not to 1 — clearing an
-                override removes it rather than writing a value. The only mark
-                an overridden factor carries: the number itself is the thing
-                being read, and a label saying it was typed here says nothing a
-                person who typed it does not know. */}
-            {f.source === 'option' && (
-              <ResetButton
-                onReset={() => onDeptChange?.(dept.instanceId, (d) => withFactor(d, f, null))}
-                title={
-                  f.inherited != null
-                    ? `Back to the catalog's ${f.inherited}`
-                    : 'Back to the catalog, which states none'
-                }
-              />
-            )}
-          </div>
-        )
-      })}
+              <span style={{ color: '#555', minWidth: 0 }}>{f.label}</span>
+              <span
+                // Dashed and muted while it is the catalog's answer rather than
+                // one given here. Typing overrides it; there is no separate
+                // "override" action, because changing the number IS the override.
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  opacity: inherited ? 0.6 : 1,
+                  borderBottom: inherited ? '1px dashed #bbb' : '1px solid transparent',
+                }}
+              >
+                <CountField
+                  value={f.value}
+                  colour="#555"
+                  min={f.min}
+                  step={0.05}
+                  decimals={2}
+                  prefix="×"
+                  title={f.describe(dept.name)}
+                  onChange={(value) =>
+                    onDeptChange?.(dept.instanceId, (d) => withFactor(d, f, value), {
+                      coalesce: `${f.key}:${dept.instanceId}`,
+                    })
+                  }
+                />
+              </span>
+  
+              {/* Reverts to the catalog's default, not to 1 — clearing an
+                  override removes it rather than writing a value. The only mark
+                  an overridden factor carries: the number itself is the thing
+                  being read, and a label saying it was typed here says nothing a
+                  person who typed it does not know. */}
+              {f.source === 'option' && (
+                <ResetButton
+                  onReset={() => onDeptChange?.(dept.instanceId, (d) => withFactor(d, f, null))}
+                  title={
+                    f.inherited != null
+                      ? `Back to the catalog's ${f.inherited}`
+                      : 'Back to the catalog, which states none'
+                  }
+                />
+              )}
+            </div>
+          )
+        })}
+      </StripBand>
 
       {dept.rooms.length === 0 && <PanelNote>No rooms yet</PanelNote>}
 

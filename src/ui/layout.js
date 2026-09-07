@@ -26,3 +26,13 @@ export const FOOTER_HEIGHT = 44
 // Clears the footer, for the fixed-position toasts that would otherwise sit on
 // top of it.
 export const ABOVE_FOOTER = FOOTER_HEIGHT + 12
+
+// Side is a FIXED WIDTH, and main takes whatever is left.
+//
+// It was 25% / 75%, which reads as one design and behaves as several: side is a
+// column of label/value rows whose content does not grow with the screen, so a
+// percentage made it a cramped 320px on a laptop and a half-empty 640px on a
+// wide monitor — the energy grid stacking to one column on the former and the
+// value column stranded on the latter. 480px is that quarter on a regular
+// 1920px monitor, taken as the width the panel actually wants.
+export const SIDE_WIDTH = 480

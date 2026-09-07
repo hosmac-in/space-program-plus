@@ -19,7 +19,8 @@
 // department inside it does.
 
 import { useMemo, useRef, useState } from 'react'
-import ReactFlow, { Background } from 'reactflow'
+import ReactFlow, { Background, ReactFlowProvider } from 'reactflow'
+import CanvasFrame, { useCanvasInput } from '../canvas/CanvasFrame.jsx'
 import 'reactflow/dist/style.css'
 import { useCatalog } from '../../data/catalog.jsx'
 import { summarize } from '../../data/optionData.js'
@@ -524,6 +525,7 @@ export default function DepartmentGraph({
   selectedPhase,
 }) {
   const { groups, sections, functions, buildings } = useCatalog()
+  const canvasInput = useCanvasInput()
   const [confirmRemove, setConfirmRemove] = useState(null)
   const [confirmRemoveSection, setConfirmRemoveSection] = useState(null)
   // Which department the add dialog is open for — see AddDepartmentModal. Every
@@ -632,21 +634,29 @@ export default function DepartmentGraph({
   // AppFooter.jsx.
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* An explicit provider: CanvasFrame's gutters sit OUTSIDE <ReactFlow>,
+          so they cannot use the one it makes for its own children. */}
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={NO_EDGES}
-          nodeTypes={nodeTypes}
-          fitView
-          proOptions={{ hideAttribution: true }}
-          // NO onPaneClick. Clicking past the boxes used to clear the selection
-          // and swing side back to the option's totals, which meant every miss
-          // — panning, or aiming at a card and catching the gap — threw away
-          // what you were reading. Selection changes only when you hit
-          // something: a card, a container header, or a building's name.
-        >
-          <Background />
-        </ReactFlow>
+        <ReactFlowProvider>
+          <CanvasFrame>
+            <ReactFlow
+              nodes={nodes}
+              edges={NO_EDGES}
+              nodeTypes={nodeTypes}
+              fitView
+              proOptions={{ hideAttribution: true }}
+              {...canvasInput}
+              // NO onPaneClick. Clicking past the boxes used to clear the
+              // selection and swing side back to the option's totals, which
+              // meant every miss — panning, or aiming at a card and catching
+              // the gap — threw away what you were reading. Selection changes
+              // only when you hit something: a card, a container header, or a
+              // building's name.
+            >
+              <Background />
+            </ReactFlow>
+          </CanvasFrame>
+        </ReactFlowProvider>
       </div>
 
       {addTarget && (

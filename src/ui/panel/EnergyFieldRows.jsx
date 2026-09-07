@@ -30,7 +30,7 @@ import { formatField } from '../../data/roomEnergy.js'
 import { CountField } from './panelParts.jsx'
 import ResetButton from '../primitives/ResetButton.jsx'
 import Toggle from '../primitives/Toggle.jsx'
-import { CONTROL_SLOT, VALUE_WIDTH } from './panelLayout.js'
+import { CONTROL_SLOT, PAIR_WIDTH, VALUE_WIDTH } from './panelLayout.js'
 
 export default function EnergyFieldRows({
   rows,
@@ -58,6 +58,15 @@ export default function EnergyFieldRows({
     const inherited = row.source === 'inherited'
     const overridden = row.source === 'option'
 
+    // A row governed by another that is currently off — an air change figure in
+    // an unconditioned room. It is drawn faint and cannot be edited, but it is
+    // still DRAWN, with its value: the row is not irrelevant, it is not in
+    // force, and hiding it would make the column jump every time the switch
+    // moved. Its reset goes too, since reverting a field you cannot edit is a
+    // change you cannot see.
+    const dead = !!row.disabled
+    const editable = canEdit && !dead
+
     return (
       <div
         key={row.key}
@@ -68,13 +77,28 @@ export default function EnergyFieldRows({
         // paddingBlock, NOT the `padding` shorthand: the shorthand resets the
         // padding-inline that .spp-row uses to cancel its own negative margin,
         // which left every row sitting 4px left of the heading above it.
-        style={{ display: 'flex', alignItems: 'center', gap: 6, paddingBlock: 3, minWidth: 0, fontSize: 11 }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          paddingBlock: 3,
+          minWidth: 0,
+          fontSize: 11,
+          // The whole row fades, label included — it is the row that does not
+          // apply, not just its value.
+          opacity: dead ? 0.4 : 1,
+        }}
       >
-        <span style={{ flex: 1, minWidth: 0, opacity: 0.8 }}>{row.label}</span>
+        <span
+          style={{ flex: 1, minWidth: 0, opacity: 0.8 }}
+          title={dead ? `Not in force: ${roomName} is not conditioned` : undefined}
+        >
+          {row.label}
+        </span>
 
         <span
           style={{
-            width: VALUE_WIDTH,
+            width: row.type === 'pair' ? PAIR_WIDTH : VALUE_WIDTH,
             flexShrink: 0,
             display: 'inline-flex',
             alignItems: 'center',
@@ -86,10 +110,39 @@ export default function EnergyFieldRows({
             borderBottom: inherited ? '1px dashed currentColor' : '1px solid transparent',
           }}
         >
+          {/* TWO FIELDS, ONE ROW. Each half writes its own jsonb key and is a
+              plain number field; only the label, the slot and — when both
+              halves are in the same unit — the unit are shared. The separator
+              is a slash rather than an en dash: this is two values, not a range
+              between them, and 21 – 24 reads as a subtraction. */}
+          {row.type === 'pair' &&
+            row.parts.map((part, i) => (
+              <span key={part.key} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                {i > 0 && <span style={{ opacity: 0.45, padding: '0 3px' }}>/</span>}
+                <CountField
+                  value={part.value}
+                  canEdit={editable}
+                  min={0}
+                  step={part.step}
+                  decimals={part.decimals}
+                  prefix=""
+                  // The shared unit prints ONCE, after the last half. Two copies
+                  // of "°C" is what makes a pair too wide to fit.
+                  suffix={part.unit || (i === row.parts.length - 1 ? row.unit : null) || null}
+                  steppers={false}
+                  size="1em"
+                  colour="inherit"
+                  title={part.describe(roomName)}
+                  onChange={(value) => onChange?.(part, value)}
+                  onCommit={onCommit ? (value) => onCommit(part, value) : undefined}
+                />
+              </span>
+            ))}
+
           {row.type === 'number' && (
             <CountField
               value={row.value}
-              canEdit={canEdit}
+              canEdit={editable}
               // Nought people is a real answer, so these floor at zero rather
               // than at one.
               min={0}
@@ -115,7 +168,7 @@ export default function EnergyFieldRows({
             // searching, and the answer stays visible without opening anything.
             <select
               value={row.value ?? ''}
-              disabled={!canEdit}
+              disabled={!editable}
               title={row.describe(roomName)}
               onChange={(e) => settle(row, e.target.value)}
               style={{
@@ -124,7 +177,7 @@ export default function EnergyFieldRows({
                 color: 'inherit',
                 background: 'transparent',
                 border: 'none',
-                cursor: canEdit ? 'pointer' : 'default',
+                cursor: editable ? 'pointer' : 'default',
                 padding: 0,
                 maxWidth: '100%',
                 textAlign: 'right',
@@ -144,7 +197,7 @@ export default function EnergyFieldRows({
           {row.type === 'boolean' && (
             <Toggle
               checked={!!row.value}
-              disabled={!canEdit}
+              disabled={!editable}
               tint={colours?.inverted.color}
               title={row.describe(roomName)}
               onChange={(next) => settle(row, next)}
@@ -158,13 +211,23 @@ export default function EnergyFieldRows({
         <span
           style={{ width: CONTROL_SLOT, flexShrink: 0, display: 'inline-flex', justifyContent: 'center' }}
         >
-          {overridden && onReset && (
+          {overridden && !dead && onReset && (
             <ResetButton
-              onReset={() => onReset(row)}
+              // A pair reverts only the halves that were actually overridden —
+              // one ↺ for the row, but never touching a half that was already
+              // the catalog's. Each is a separate call because each is a
+              // separate key.
+              onReset={() =>
+                row.type === 'pair'
+                  ? row.parts.filter((p) => p.source === 'option').forEach((p) => onReset(p))
+                  : onReset(row)
+              }
               title={
-                row.inherited != null
-                  ? `Back to the catalog's ${formatField(row, row.inherited)}`
-                  : `Back to the catalog, which states none — ${formatField(row, row.fallback)}`
+                row.type === 'pair'
+                  ? 'Back to the catalog'
+                  : row.inherited != null
+                    ? `Back to the catalog's ${formatField(row, row.inherited)}`
+                    : `Back to the catalog, which states none — ${formatField(row, row.fallback)}`
               }
             />
           )}

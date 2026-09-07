@@ -108,9 +108,11 @@ export default function MapPanel({
   return (
     <div
       style={{
-        width: '75%',
+        // Whatever side's fixed width leaves — main is the region that gains
+        // from a bigger screen, since a map and a canvas both use the room.
+        flex: 1,
+        minWidth: 0,
         height: '100%',
-        flexShrink: 0,
         borderRight: RULE,
         display: 'flex',
         flexDirection: 'column',

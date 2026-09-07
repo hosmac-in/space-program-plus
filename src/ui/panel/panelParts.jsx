@@ -60,23 +60,36 @@ export function formatPath(...names) {
 // The department the panel is about: its name, and where it sits in the tree.
 // The name is the LARGEST thing here by a clear margin — it is what you are
 // editing and everything below is part of it. The ladder, largest first:
-// department 22, room 14 (bold), object 13, path 12.
-export function PanelHeading({ name, path, note, right }) {
+//
+//   22  department name
+//   14  room name (bold)
+//   13  object row, the area chain, the department's stats, the path
+//   12  a department's parameter rows; a collapsing band's title, which is
+//       BOLD rather than restyled — one family, one case, throughout a panel
+//       (see StripBand)
+//   11  a room's parameter rows
+// `under` sits below the name INSIDE the name's column, so it runs alongside the
+// stacked figures in `right` rather than below the whole row — two columns of
+// small print reading across from each other, one left-aligned and one right.
+export function PanelHeading({ name, path, note, right, under }) {
   return (
     <div style={{ minWidth: 0 }}>
       {/* Above the name: context is read on the way in, and below the name it
           collided with the figures beside it. */}
-      {path && (
+      {/* Either may stand alone: the option panel now carries the path on its
+          sticky heading and passes only a note, while the Tree tab passes only a
+          path. Nesting the note inside the path swallowed it in the first
+          case. */}
+      {(path || note) && (
         <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 1, overflowWrap: 'anywhere' }}>
           {path}
-          {note && <span style={{ marginLeft: 6, color: '#c17' }}>{note}</span>}
+          {note && <span style={{ marginLeft: path ? 6 : 0, color: '#c17' }}>{note}</span>}
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, minWidth: 0 }}>
-        <div
-          style={{ flex: 1, minWidth: 0, fontSize: 22, fontWeight: 700, lineHeight: 1.2, overflowWrap: 'anywhere' }}
-        >
-          {name}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2, overflowWrap: 'anywhere' }}>{name}</div>
+          {under}
         </div>
         {right}
       </div>

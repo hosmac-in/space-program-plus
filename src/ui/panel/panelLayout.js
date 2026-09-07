@@ -48,6 +48,18 @@ export const SUBTLE_GAP = 10
 // reads L/p/day.)
 export const VALUE_WIDTH = 84
 
+// A row holding TWO inputs — a heating and a cooling setpoint, litres and the
+// temperature they are at. It grows LEFTWARDS: the right edge is the column
+// every other value is aligned to and must not move, so the extra width comes
+// out of the label instead.
+//
+// That is affordable only because pairing shrinks the label: "Heating setpoint"
+// and "Cooling setpoint" become one "Setpoint", which is where the space comes
+// from. A pair whose two halves share a unit prints it once at the end —
+// "21.0 / 24.0 °C" — and one whose halves do not gets shorter units, never a
+// wider column.
+export const PAIR_WIDTH = 108
+
 // The energy grid's own numbers — its gap, its divider and the width it stacks
 // at — are NOT here. They live in `.spp-energy-grid` in index.css, because all
 // three change when the two columns wrap to one and only a container query knows

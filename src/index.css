@@ -98,6 +98,32 @@ body {
   background-image: linear-gradient(rgba(0, 0, 0, 0.07), rgba(0, 0, 0, 0.07)) !important;
 }
 
+/* The slide a collapsing band opens and closes with (ui/panel/StripBand.jsx).
+ *
+ * A grid whose single row goes 0fr -> 1fr, which animates to the content's REAL
+ * height — a height this component can never know, since it depends on the
+ * fields, the panel's width and the text in them. A max-height transition is the
+ * usual trick and is worse: too small clips, too large spends most of the
+ * duration easing through space the content does not occupy, which reads as a
+ * delay before anything moves.
+ *
+ * The row is here rather than inline because the reduced-motion rule below has
+ * to be able to switch it off, and a media query cannot reach an inline style. */
+.spp-slide {
+  display: grid;
+  transition: grid-template-rows 180ms ease;
+}
+
+/* Someone who has asked their system for less motion gets the same band, opening
+ * instantly. The layout is identical either way — only the tween goes. */
+@media (prefers-reduced-motion: reduce) {
+  .spp-slide,
+  .spp-band,
+  .spp-band * {
+    transition: none !important;
+  }
+}
+
 /* The energy grid (ui/panel/RoomEnergyStrip.jsx): Loads and HVAC side by side,
  * stacking to one column when the panel is too narrow to hold both.
  *
@@ -127,19 +153,25 @@ body {
   border-left: 1px solid #eee;
 }
 
-/* Narrower than two columns can honestly hold: the labels start ellipsising
+/* COMMENTED OUT, not deleted. Side is a fixed 480px now (ui/layout.js), so it
+ * is never narrow enough to trip this — the stack was only ever reachable when
+ * side was a percentage of a small screen. Restore it, don't rewrite it, if
+ * side ever becomes resizable or the panel gains a third column.
+ *
+ * Narrower than two columns can honestly hold: the labels start ellipsising
  * before the values do, and a truncated "Illuminance" beside a full "0 lux" is
- * worse than a taller box. */
-@container (max-width: 320px) {
-  .spp-energy-grid {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 10px;
-  }
-
-  .spp-energy-grid > * + * {
-    padding-left: 0;
-    padding-top: 10px;
-    border-left: none;
-    border-top: 1px solid #eee;
-  }
-}
+ * worse than a taller box.
+ *
+ * @container (max-width: 320px) {
+ *   .spp-energy-grid {
+ *     grid-template-columns: minmax(0, 1fr);
+ *     row-gap: 10px;
+ *   }
+ *
+ *   .spp-energy-grid > * + * {
+ *     padding-left: 0;
+ *     padding-top: 10px;
+ *     border-left: none;
+ *     border-top: 1px solid #eee;
+ *   }
+ * } */

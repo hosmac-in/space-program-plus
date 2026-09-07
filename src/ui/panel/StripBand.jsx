@@ -22,15 +22,39 @@ import { useState } from 'react'
 import { BLOCK_PADDING } from './panelLayout.js'
 
 export default function StripBand({
-  // What the band is called — "Energy".
+  // What the band is called — "Room Parameters", "Department Parameters".
   title,
   // The ROOM's function colours, from functionColours(). Never reach for
   // bg_colour directly: a null function_id is normal and functionColours is what
   // resolves it (see data/functions.js).
   colours,
+  // How much padding the body it bleeds out of has. A room's is BLOCK_PADDING; a
+  // department's PanelShell is 16, and guessing wrong leaves the band inset by
+  // the difference on both sides.
+  pad = BLOCK_PADDING,
+  // A department's shell is ALREADY painted in its wash, so a band painted the
+  // same is invisible. `plain` rules it off top and bottom instead and paints
+  // nothing — the same band, without a second copy of this file.
+  plain = false,
+  // How far below whatever is above it the band sits. A room's butts against
+  // its header — the negative margin cancels the body's padding — which is what
+  // makes it read as part of the room. A department's follows a heading with
+  // figures beside it and needs air, so it takes a positive number.
+  top = null,
   children,
 }) {
   const [open, setOpen] = useState(false)
+
+  const skin = plain
+    ? {
+        background: 'none',
+        borderTop: `1px solid ${colours.inverted.border}`,
+        borderBottom: `1px solid ${colours.inverted.border}`,
+      }
+    : {
+        background: colours.inverted.background,
+        borderBottom: `1px solid ${colours.inverted.border}`,
+      }
 
   return (
     // A full-bleed band flush under the room's header: the negative margins
@@ -42,12 +66,17 @@ export default function StripBand({
     // department card wears on a group, and for the same reason: it sits on
     // white and has to stay unmistakably the room's own hue.
     <div
+      // spp-band: what the reduced-motion rule in index.css switches the
+      // caret's turn and the padding's ease off through.
+      className="spp-band"
       style={{
-        margin: `-${BLOCK_PADDING}px -${BLOCK_PADDING}px ${BLOCK_PADDING}px`,
-        padding: `4px ${BLOCK_PADDING}px ${open ? 6 : 4}px`,
-        background: colours.inverted.background,
-        borderBottom: `1px solid ${colours.inverted.border}`,
+        margin: `${top ?? -pad}px -${pad}px ${pad}px`,
+        // The padding eases with the row, or the band gains its last 2px in one
+        // frame after the slide has finished.
+        padding: `4px ${pad}px ${open ? 6 : 4}px`,
+        transition: 'padding 180ms ease',
         color: colours.inverted.color,
+        ...skin,
       }}
     >
       <button
@@ -77,17 +106,42 @@ export default function StripBand({
             display: 'inline-block',
             opacity: 0.6,
             transform: open ? 'rotate(90deg)' : 'none',
+            // Turns with the slide, so one gesture reads as one movement.
+            transition: 'transform 180ms ease',
           }}
         >
           ▶
         </span>
-        {/* Ink inherited from the band, not a fixed grey: the wash is a
+        {/* Heavier and a size up from the rows it heads — and NOTHING ELSE. It
+            was 11px regular, the same size as a room's rows and smaller than a
+            department's, so the heading was the quietest thing in the band it
+            headed. The fix for that is weight, not a different treatment: caps
+            and letterspacing read as a second typeface next to the sentence-case
+            rows below, which is a worse fault than the one being corrected.
+
+            Ink inherited from the band, not a fixed grey: the wash is a
             different hue on every room, and a grey that reads on a pale mint
             does not read on a pale navy. */}
-        <span style={{ fontSize: 11, flexShrink: 0, opacity: 0.8 }}>{title}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, flexShrink: 0, opacity: 0.8 }}>{title}</span>
       </button>
 
-      {open && children}
+      {/* SLIDES rather than appearing. The band is dense and sits mid-panel, so
+          switching it in place made the rooms below jump by a hundred pixels
+          with nothing to say which way they went.
+
+          A 0fr -> 1fr grid row, not an animated height: the content's height is
+          never known here — it depends on the fields, the panel's width and the
+          text in them — and a fixed max-height either clips a tall band or
+          makes a short one ease against a value it never reaches, which reads
+          as a pause. The row resolves to the real height, so the timing is the
+          same whatever is inside.
+
+          `minHeight: 0` on the inner box is load-bearing: a grid item's default
+          `min-height: auto` refuses to go below its content and the row would
+          not close at all. */}
+      <div className="spp-slide" style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
+        <div style={{ minHeight: 0, overflow: 'hidden' }}>{children}</div>
+      </div>
     </div>
   )
 }

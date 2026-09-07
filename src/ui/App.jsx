@@ -28,7 +28,7 @@ import { QuestionnaireEditorProvider } from './questions/useQuestionnaireEditor.
 import LoadingOverlay from './primitives/LoadingOverlay.jsx'
 import AppFooter from './AppFooter.jsx'
 import AppHeader from './AppHeader.jsx'
-import { RULE } from './layout.js'
+import { RULE, SIDE_WIDTH } from './layout.js'
 import { APP_STYLE } from './appStyle.js'
 import { ADD_BUTTON_STYLE } from './primitives/AddButton.jsx'
 import { REMOVE_BUTTON_STYLE } from './primitives/RemoveButton.jsx'
@@ -401,13 +401,14 @@ function SignedInApp({ session }) {
           }
         />
 
-        {/* Side is split 7:1. Everything above changes with what you clicked;
-            the bottom eighth is the HUD, which never does — it was a quarter,
-            which was more than a row of figures needed and came out of the
-            panel doing the work. */}
+        {/* A fixed SIDE_WIDTH, split 7:1. Everything above changes with what
+            you clicked; the bottom eighth is the HUD, which never does — it was
+            a quarter, which was more than a row of figures needed and came out
+            of the panel doing the work. */}
         <div
           style={{
-            flex: 1,
+            width: SIDE_WIDTH,
+            flexShrink: 0,
             minWidth: 0,
             display: 'flex',
             flexDirection: 'column',

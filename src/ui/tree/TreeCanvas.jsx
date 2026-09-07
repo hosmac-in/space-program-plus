@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import ReactFlow, { Background, ReactFlowProvider, useNodesState, useReactFlow } from 'reactflow'
+import CanvasFrame, { useCanvasInput } from '../canvas/CanvasFrame.jsx'
 import 'reactflow/dist/style.css'
 import { useCatalog } from '../../data/catalog.jsx'
 import { buildTreeLayout, NODE_HEIGHT, NODE_WIDTH } from './treeLayout.js'
@@ -37,6 +38,7 @@ function TreeCanvasInner({
   const editor = useTreeEditorContext()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const { getIntersectingNodes, screenToFlowPosition } = useReactFlow()
+  const canvasInput = useCanvasInput()
 
   const hoveredIdRef = useRef(null)
   const draggingCarouselRef = useRef(null)
@@ -353,19 +355,22 @@ function TreeCanvasInner({
         }
         onDrop={canEdit ? onCanvasDrop : undefined}
       >
-        <ReactFlow
-          nodes={nodes}
-          edges={NO_EDGES}
-          onNodesChange={onNodesChange}
-          onNodeDragStart={canEdit ? onNodeDragStart : undefined}
-          onNodeDrag={canEdit ? onNodeDrag : undefined}
-          onNodeDragStop={canEdit ? onNodeDragStop : undefined}
-          nodeTypes={nodeTypes}
-          fitView
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background />
-        </ReactFlow>
+        <CanvasFrame>
+          <ReactFlow
+            nodes={nodes}
+            edges={NO_EDGES}
+            onNodesChange={onNodesChange}
+            onNodeDragStart={canEdit ? onNodeDragStart : undefined}
+            onNodeDrag={canEdit ? onNodeDrag : undefined}
+            onNodeDragStop={canEdit ? onNodeDragStop : undefined}
+            nodeTypes={nodeTypes}
+            fitView
+            proOptions={{ hideAttribution: true }}
+            {...canvasInput}
+          >
+            <Background />
+          </ReactFlow>
+        </CanvasFrame>
       </div>
 
     </div>

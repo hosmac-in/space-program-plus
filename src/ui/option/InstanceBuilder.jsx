@@ -27,7 +27,7 @@ import {
 import DepartmentBlock from './DepartmentBlock.jsx'
 import OptionOutline from './OptionOutline.jsx'
 import OptionStats from './OptionStats.jsx'
-import { PanelNote } from '../panel/panelParts.jsx'
+import { PanelNote, formatPath } from '../panel/panelParts.jsx'
 import { SUBTLE_RULE } from '../panel/panelLayout.js'
 import { Z } from '../primitives/zIndex.js'
 import SaveDataButton from './SaveDataButton.jsx'
@@ -722,11 +722,19 @@ export default function InstanceBuilder({
   const isContainer =
     selection?.kind === 'group' || selection?.kind === 'section' || selection?.kind === 'building'
 
-  // Resolved live from the tree, with the option's frozen name as the fallback
-  // for a placement the catalog no longer has.
-  const shownSectionName = shownDept
-    ? resolveNodePlacement(sections, shownDept.treeNodeId, groupDefs, buildingDefs)?.sectionName ??
-      shownDept.fallbackSectionName
+  // Where the open department sits, resolved live from the tree with the
+  // option's frozen names as the fallback for a placement the catalog no longer
+  // has. THE WHOLE PATH lives on this line: the card below used to repeat it
+  // above its own name, which cost the card a line to say what the sticky
+  // heading — always on screen — already said.
+  const shownPlacement = shownDept
+    ? resolveNodePlacement(sections, shownDept.treeNodeId, groupDefs, buildingDefs)
+    : null
+  const shownPath = shownDept
+    ? formatPath(
+        shownPlacement?.sectionName ?? shownDept.fallbackSectionName,
+        shownPlacement?.groupName ?? shownDept.fallbackGroupName
+      )
     : null
 
   const error = catalogError || loadError
@@ -738,12 +746,12 @@ export default function InstanceBuilder({
           of the same line, directly above the card's top-right corner. Save Data
           belongs to the department only; everything else writes for itself.
 
-          The line names the SECTION, not the option: the option is already named
-          on the canvas and in the chip you opened it from, while the section is
+          The line names the PATH, not the option: the option is already named on
+          the canvas and in the chip you opened it from, while where you are is
           what moves as you click around. Deliberately smaller than the
           department name beneath it — this is where you are, that is what you
           are editing. Falls back to the option's name on the container faces,
-          which have no one section. */}
+          which have no one path. */}
       {(isContainer || shownDept) && (
         <div
           style={{
@@ -781,7 +789,7 @@ export default function InstanceBuilder({
               color: '#777',
             }}
           >
-            {shownSectionName ?? optionName}
+            {shownPath ?? optionName}
           </h2>
           {shownDept && (
             <SaveDataButton dirty={dirty} saving={saving} error={saveError} onSave={saveData} />

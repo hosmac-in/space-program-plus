@@ -7,6 +7,7 @@ import { supabase } from '../../data/supabase.js'
 import AddButton from '../primitives/AddButton.jsx'
 import Modal from '../primitives/Modal.jsx'
 import NewProject from './NewProject.jsx'
+import { SIDE_WIDTH } from '../layout.js'
 
 export default function ProjectPicker({
   canCreate,
@@ -62,6 +63,8 @@ export default function ProjectPicker({
 
       {error && <span style={{ color: '#c0392b', fontSize: 13 }}>{error}</span>}
 
+      {/* The overlay dims side only, leaving the map live to draw the site on —
+          so it tracks side's fixed width rather than guessing it as 75%. */}
       {showModal && (
         <Modal
           title="New Project"
@@ -69,7 +72,7 @@ export default function ProjectPicker({
             setShowModal(false)
             onStopDrawSite?.()
           }}
-          overlayLeft="75%"
+          overlayLeft={`calc(100% - ${SIDE_WIDTH}px)`}
         >
           <NewProject
             onCreated={handleCreated}
