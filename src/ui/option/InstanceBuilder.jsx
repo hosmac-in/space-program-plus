@@ -31,6 +31,7 @@ import { PanelNote, formatPath } from '../panel/panelParts.jsx'
 import { SUBTLE_RULE } from '../panel/panelLayout.js'
 import { Z } from '../primitives/zIndex.js'
 import SaveDataButton from './SaveDataButton.jsx'
+import { useReadOnly } from '../../readOnly.jsx'
 
 // A new or unloaded option: no departments, and no sections or buildings
 // either — every building and section is offered on the canvas, none is in the
@@ -63,6 +64,9 @@ export default function InstanceBuilder({
   selectedPhase,
   onExposeActions,
 }) {
+  // Inside Rhino, or as a viewer: the panel still reads, Save Data goes away.
+  // See src/readOnly.jsx.
+  const readOnly = useReadOnly()
   const {
     departments: departmentDefs,
     rooms: roomDefs,
@@ -791,7 +795,7 @@ export default function InstanceBuilder({
           >
             {shownPath ?? optionName}
           </h2>
-          {shownDept && (
+          {shownDept && !readOnly && (
             <SaveDataButton dirty={dirty} saving={saving} error={saveError} onSave={saveData} />
           )}
         </div>

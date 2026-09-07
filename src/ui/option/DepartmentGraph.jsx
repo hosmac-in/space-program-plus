@@ -29,6 +29,7 @@ import Modal from '../primitives/Modal.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
 import AddButton from '../primitives/AddButton.jsx'
 import RemoveButton from '../primitives/RemoveButton.jsx'
+import { useReadOnly } from '../../readOnly.jsx'
 import { CanvasBandHeading, CanvasCard, CanvasContainer } from '../canvas/canvasCards.jsx'
 import { buildLayout, NODE_HEIGHT, NODE_WIDTH } from './departmentGraphLayout.js'
 import { formatArea } from '../map/area.js'
@@ -156,7 +157,7 @@ function PhaseStrip({ data, entry, addable }) {
         </div>
       )}
 
-      {hover && entry.isReal && (
+      {hover && entry.isReal && data.onRequestRemove && (
         <div style={{ position: 'absolute', top: 1, right: 1 }}>
           <RemoveButton
             onRemove={() =>
@@ -184,7 +185,7 @@ function DepartmentNodeCard({ data }) {
   // a ghost section every card is inert: no +, no click, no pointer. The
   // section's own + in its header is the only way in, and the cards below it
   // are a preview of what that would bring — see the note on headerLeft.
-  const addable = ghost && data.canAdd
+  const addable = ghost && data.canAdd && !!data.onAdd
 
   // A phased option divides the card into a strip per phase, each added,
   // opened and removed on its own. An unphased one — which is every option
@@ -211,7 +212,7 @@ function DepartmentNodeCard({ data }) {
       }
       title={addable ? 'Click to add to this option' : undefined}
       corner={
-        ghost ? null : (
+        ghost || !data.onRequestRemove ? null : (
           <RemoveButton
             onRemove={() => data.onRequestRemove(data.instanceId, data.name, data.roomCount, data.objectCount)}
             title="Remove department"
@@ -525,6 +526,9 @@ export default function DepartmentGraph({
   selectedPhase,
 }) {
   const { groups, sections, functions, buildings } = useCatalog()
+  // No + and no × anywhere on the canvas. The cards still select and still
+  // report their areas — see src/readOnly.jsx.
+  const readOnly = useReadOnly()
   const canvasInput = useCanvasInput()
   const [confirmRemove, setConfirmRemove] = useState(null)
   const [confirmRemoveSection, setConfirmRemoveSection] = useState(null)
@@ -593,15 +597,15 @@ export default function DepartmentGraph({
         onClick: onSelectDepartment,
         // Opens the dialog rather than adding. Nothing on this canvas adds a
         // department on the click itself — see AddDepartmentModal.
-        onAdd: (defId, treeNodeId, phase) => setAddTarget({ defId, treeNodeId, phase }),
-        onAddSection: (sectionId) => handlersRef.current.onAddSection(sectionId),
-        onRequestRemoveSection: (sectionId, name, departmentCount) => {
+        onAdd: readOnly ? null : (defId, treeNodeId, phase) => setAddTarget({ defId, treeNodeId, phase }),
+        onAddSection: readOnly ? null : (sectionId) => handlersRef.current.onAddSection(sectionId),
+        onRequestRemoveSection: readOnly ? null : (sectionId, name, departmentCount) => {
           // An empty section holds nothing to lose, so it just goes. One with
           // departments in it takes them with it, which needs saying first.
           if (departmentCount === 0) handlersRef.current.onRemoveSection(sectionId)
           else setConfirmRemoveSection({ sectionId, name, departmentCount })
         },
-        onRequestRemove: (instanceId, name, roomCount, objectCount, phase) => {
+        onRequestRemove: readOnly ? null : (instanceId, name, roomCount, objectCount, phase) => {
           // Nothing to lose in an empty department, so skip the confirmation.
           if (roomCount === 0 && objectCount === 0) handlersRef.current.onRemoveDepartment(instanceId)
           else setConfirmRemove({ instanceId, name, roomCount, objectCount, phase })
@@ -627,6 +631,7 @@ export default function DepartmentGraph({
       selection,
       onSelectContainer,
       onSelectDepartment,
+      readOnly,
     ]
   )
 

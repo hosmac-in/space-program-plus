@@ -11,6 +11,7 @@
 // their nodes into these props.
 
 import RemoveButton from '../primitives/RemoveButton.jsx'
+import LinkButton from '../primitives/LinkButton.jsx'
 import { formatArea } from '../map/area.js'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -467,6 +468,9 @@ export function RoomBlock({
   // Project tab edits in memory and needs only onAreaChange.
   onAreaCommit,
   onRemove,
+  // Rhino only: tag the objects selected in the model as this room. Absent in a
+  // browser, where the bridge does not exist — see rhino.js.
+  onLink,
   children,
 }) {
   return (
@@ -529,10 +533,22 @@ export function RoomBlock({
           />
         )}
 
+        {/* ONE control slot, not two. Inside Rhino everything that writes to the
+            database is gone — the × included — so the link button takes the slot
+            the × would have had rather than widening the header for a second.
+            The two never appear together: see src/readOnly.jsx. */}
         <span
           style={{ width: CONTROL_SLOT, flexShrink: 0, display: 'inline-flex', justifyContent: 'center' }}
         >
-          {canEdit && onRemove && <RemoveButton onRemove={onRemove} title={`Remove ${name}`} size={ROOM_CONTROL} />}
+          {onLink ? (
+            <LinkButton
+              onLink={onLink}
+              title={`Tag the selected Rhino object as ${name}`}
+              size={ROOM_CONTROL}
+            />
+          ) : (
+            canEdit && onRemove && <RemoveButton onRemove={onRemove} title={`Remove ${name}`} size={ROOM_CONTROL} />
+          )}
         </span>
       </div>
 

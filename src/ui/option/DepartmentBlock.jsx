@@ -14,7 +14,10 @@
 //     tables hold. That distinction is the point of the tree; see data/tree.js.
 //   * the confirmation before dropping a room that has objects in it
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRhinoBridge } from '../../rhino.js'
+import { useReadOnly } from '../../readOnly.jsx'
+import { useToast } from '../primitives/Toast.jsx'
 import {
   catalogRoomDimensions,
   catalogRoomNode,
@@ -54,6 +57,7 @@ import {
   PanelNote,
   PanelShell,
   CatalogNote,
+  formatPath,
   RoomBlock,
   RoomBrief,
   RoomNotes,
@@ -84,6 +88,22 @@ export default function DepartmentBlock({
   onSelectDepartment,
 }) {
   const [confirmTarget, setConfirmTarget] = useState(null)
+
+  // Inert outside Rhino: `connected` is false in a browser, so no room ever
+  // gets a link button and this costs the deployed app nothing. See rhino.js.
+  const { connected: inRhino, link, lastResult } = useRhinoBridge()
+  const pushToast = useToast()
+  // Inside Rhino, or signed in as a viewer: no ×, no picker, no typing. The one
+  // control this pane keeps is the link button, which writes to the model and
+  // never to the database. See src/readOnly.jsx.
+  const readOnly = useReadOnly()
+
+  // Rhino answers every link with what it actually wrote — how many objects, or
+  // why none. It is the only confirmation there is: the writing happens in
+  // another process and nothing here can see the model.
+  useEffect(() => {
+    if (lastResult?.message) pushToast(lastResult.message, lastResult.ok ? 'success' : 'error')
+  }, [lastResult, pushToast])
 
   // This placement's own allowed rooms. Null when the tree node is gone, which
   // the filters treat as unrestricted rather than as "nothing allowed".
@@ -270,6 +290,7 @@ export default function DepartmentBlock({
               >
                 <CountField
                   value={f.value}
+                  canEdit={!readOnly}
                   colour="#555"
                   min={f.min}
                   step={0.05}
@@ -289,7 +310,7 @@ export default function DepartmentBlock({
                   an overridden factor carries: the number itself is the thing
                   being read, and a label saying it was typed here says nothing a
                   person who typed it does not know. */}
-              {f.source === 'option' && (
+              {f.source === 'option' && !readOnly && (
                 <ResetButton
                   onReset={() => onDeptChange?.(dept.instanceId, (d) => withFactor(d, f, null))}
                   title={
@@ -323,6 +344,7 @@ export default function DepartmentBlock({
             type={room.type}
             count={room.count}
             areaSqft={room.areaSqft ?? 0}
+            canEdit={!readOnly}
             onAreaChange={(areaSqft) =>
               onRoomChange(room.instanceId, (r) => ({ ...r, areaSqft }), {
                 coalesce: `roomArea:${room.instanceId}`,
@@ -344,6 +366,26 @@ export default function DepartmentBlock({
                 objectCount: room.objects.reduce((s, o) => s + o.count, 0),
               })
             }
+            // The frozen path goes with the id for the reason sp_questionnaire
+            // freezes one beside every node id: a room later deleted from this
+            // option still has to read as something on the object it tagged.
+            onLink={
+              inRhino
+                ? () =>
+                    link({
+                      kind: 'room',
+                      instanceId: room.instanceId,
+                      name: room.name,
+                      path: formatPath(
+                        placement?.buildingName,
+                        placement?.sectionName,
+                        placement?.groupName,
+                        dept.name,
+                        room.name
+                      ),
+                    })
+                : undefined
+            }
           >
             {/* What the catalog says about this room's energy, and this
                 option's overrides of it.
@@ -358,6 +400,7 @@ export default function DepartmentBlock({
                 back to whatever the catalog says — it does not set the room to
                 zero, or to "no schedule". See data/optionData.js. */}
             <RoomEnergyStrip
+              canEdit={!readOnly}
               scheduleRows={resolveRoomSchedules(catalogRoom, room.schedules)}
               fieldRows={{
                 [LOADS_GROUP]: resolveRoomFields(ROOM_LOADS, LOADS_GROUP, catalogRoom, room),
@@ -401,6 +444,7 @@ export default function DepartmentBlock({
                 name={obj.name}
                 type={obj.type}
                 count={obj.count}
+                canEdit={!readOnly}
                 area={obj.areaSqft != null ? obj.areaSqft * obj.count : null}
                 onCountChange={(count) =>
                   onRoomChange(
@@ -441,6 +485,7 @@ export default function DepartmentBlock({
                 )
               })()}
 
+            {!readOnly && (
             <SearchAddPicker
               options={objectDefs.filter((def) => {
                 // Circulation is what the room has left over, not something you
@@ -456,6 +501,7 @@ export default function DepartmentBlock({
               size={16}
               onAdd={(def) => addObjectToRoom(room.instanceId, def)}
             />
+            )}
 
             {/* This option's OWN note — a second note, not an override of the
                 catalog's General Note above. Reported on every keystroke and
@@ -463,7 +509,7 @@ export default function DepartmentBlock({
                 is still one undo step. */}
             <RoomNotes
               note={room.notes ?? ''}
-              canEdit
+              canEdit={!readOnly}
               onChange={(notes) =>
                 onRoomChange(room.instanceId, (r) => ({ ...r, notes }), {
                   coalesce: `notes:${room.instanceId}`,
@@ -477,6 +523,7 @@ export default function DepartmentBlock({
       {/* Below the rooms, not above them: the list is what the pane is for, and
           the picker is what you reach for after reading it — the same order an
           object's picker already sits in inside each room. */}
+      {!readOnly && (
       <SearchAddPicker
         options={roomDefs.filter((def) => {
           if (dept.rooms.some((r) => r.defId === def.id)) return false
@@ -488,6 +535,7 @@ export default function DepartmentBlock({
         label="Add a room"
         onAdd={onAddRoom}
       />
+      )}
 
       {confirmTarget && (
         <ConfirmModal

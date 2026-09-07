@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../../data/supabase.js'
 import { useCatalog } from '../../data/catalog.jsx'
 import AddButton from '../primitives/AddButton.jsx'
+import { useReadOnly } from '../../readOnly.jsx'
 import Modal from '../primitives/Modal.jsx'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
@@ -100,6 +101,8 @@ export default function OptionList({
   departmentCountByPhase,
 }) {
   const { buildings } = useCatalog()
+  // Picking an option is reading; creating one is not. See src/readOnly.jsx.
+  const readOnly = useReadOnly()
   const [options, setOptions] = useState([])
   const [error, setError] = useState(null)
 
@@ -283,7 +286,7 @@ export default function OptionList({
         >
           {options.map((o) => {
             const selected = o.id === selectedOptionId
-            const editable = selected && !!onSetOptionSettings
+            const editable = selected && !!onSetOptionSettings && !readOnly
             return (
               <button
                 key={o.id}
@@ -325,11 +328,13 @@ export default function OptionList({
         </div>
       )}
 
+      {!readOnly && (
       <AddButton
         onClick={() => setShowCreateModal(true)}
         title={options.length === 0 ? 'Create the first option' : 'New option'}
         size={large ? 56 : 22}
       />
+      )}
 
       {showCreateModal && (
         <Modal title="New Option" onClose={() => setShowCreateModal(false)}>

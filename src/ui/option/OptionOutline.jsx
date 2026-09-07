@@ -16,6 +16,7 @@ import { buildingAreaSqft, departmentAreaSqft } from '../../data/optionData.js'
 import { resolveBuildingFactors } from '../../data/factors.js'
 import { CountField } from '../panel/panelParts.jsx'
 import ResetButton from '../primitives/ResetButton.jsx'
+import { useReadOnly } from '../../readOnly.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
 import { formatArea } from '../map/area.js'
 
@@ -72,6 +73,9 @@ function SubHeading({ name, entries }) {
 // rather than waiting for Save Data — that button watches the focused
 // department and would never see them.
 function BuildingFactors({ building, overrides, onChange }) {
+  // A building's factors belong to the OPTION, so they are a write like any
+  // other. See src/readOnly.jsx.
+  const readOnly = useReadOnly()
   if (!building || !onChange) return null
 
   return (
@@ -95,6 +99,7 @@ function BuildingFactors({ building, overrides, onChange }) {
           >
             <CountField
               value={f.value}
+              canEdit={!readOnly}
               colour="#555"
               min={f.min}
               step={0.05}
@@ -106,7 +111,7 @@ function BuildingFactors({ building, overrides, onChange }) {
               onCommit={(value) => onChange(building.id, f, value, { persist: true })}
             />
           </span>
-          {f.source === 'option' && (
+          {f.source === 'option' && !readOnly && (
             <ResetButton
               onReset={() => onChange(building.id, f, null, { persist: true })}
               title={f.inherited != null ? `Back to the catalog's ${f.inherited}` : 'Back to the catalog'}

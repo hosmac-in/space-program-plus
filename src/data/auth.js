@@ -38,23 +38,39 @@ export function useSession() {
 }
 
 export function useIsAdmin(userId) {
-  const [isAdmin, setIsAdmin] = useState(false)
+  return useRoleFlag(userId, 'is_admin')
+}
+
+// A viewer reads everything and writes nothing — see sql/viewer_role.sql. The
+// same caveat as above applies twice over: this hides controls, the RLS
+// policies are what refuse the write.
+//
+// Viewer and admin are one column in sp_user_role, so they can never both be
+// true and no caller has to resolve a conflict between them.
+export function useIsViewer(userId) {
+  return useRoleFlag(userId, 'is_viewer')
+}
+
+// Both roles are a boolean RPC answering about the current user, so they differ
+// only in which function is called.
+function useRoleFlag(userId, rpcName) {
+  const [flag, setFlag] = useState(false)
 
   useEffect(() => {
     if (!userId) {
-      setIsAdmin(false)
+      setFlag(false)
       return
     }
 
     let cancelled = false
-    supabase.rpc('is_admin').then(({ data, error }) => {
-      if (!cancelled) setIsAdmin(!error && data === true)
+    supabase.rpc(rpcName).then(({ data, error }) => {
+      if (!cancelled) setFlag(!error && data === true)
     })
 
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [userId, rpcName])
 
-  return isAdmin
+  return flag
 }

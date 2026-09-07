@@ -9,7 +9,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../data/supabase.js'
 import { resolveNodePlacement } from '../data/tree.js'
 import { useUrlState } from '../url.js'
-import { useIsAdmin, useSession } from '../data/auth.js'
+import { useIsAdmin, useIsViewer, useSession } from '../data/auth.js'
+import { ReadOnlyProvider } from '../readOnly.jsx'
+import { useRhinoBridge, useRhinoSignIn } from '../rhino.js'
 import { CatalogProvider, useCatalog } from '../data/catalog.jsx'
 import Login from './Login.jsx'
 import MapPanel from './MapPanel.jsx'
@@ -33,10 +35,14 @@ import { APP_STYLE } from './appStyle.js'
 import { ADD_BUTTON_STYLE } from './primitives/AddButton.jsx'
 import { REMOVE_BUTTON_STYLE } from './primitives/RemoveButton.jsx'
 import { RESET_BUTTON_STYLE } from './primitives/ResetButton.jsx'
+import { LINK_BUTTON_STYLE } from './primitives/LinkButton.jsx'
 import { RIBBON_STYLE } from './primitives/UndoRedoRibbon.jsx'
 
 export default function App() {
   const { session, loading } = useSession()
+  // Inside Rhino the connect window signs itself in from gh/.env rather than
+  // showing a login form. Inert in a browser. See src/rhino.js.
+  const rhinoSignInError = useRhinoSignIn(!!session, loading)
 
   if (loading) return <LoadingOverlay />
 
@@ -44,6 +50,14 @@ export default function App() {
     return (
       <>
         <Login />
+        {/* Only ever set inside Rhino, where nobody is going to type into the
+            form behind this — the credentials came from gh/.env and were
+            refused, which is a thing to fix in that file. */}
+        {rhinoSignInError && (
+          <p style={{ position: 'fixed', bottom: 16, left: 0, right: 0, textAlign: 'center', color: 'red' }}>
+            Rhino sign-in failed: {rhinoSignInError}
+          </p>
+        )}
         <LoadingOverlay />
       </>
     )
@@ -57,7 +71,14 @@ export default function App() {
 }
 
 function SignedInApp({ session }) {
-  const isAdmin = useIsAdmin(session.user.id)
+  const isViewer = useIsViewer(session.user.id)
+  const { connected: inRhino } = useRhinoBridge()
+  // Two unrelated reasons nothing may be written; every control wants the one
+  // answer. See src/readOnly.jsx.
+  const readOnly = isViewer || inRhino
+  // An admin who cannot write is not an admin for any purpose the UI has: the
+  // tabs that check this are exactly the ones whose controls write.
+  const isAdmin = useIsAdmin(session.user.id) && !readOnly
   const { error: catalogError, sections, buildings } = useCatalog()
 
   // Which tab, project and option you're looking at lives in the address bar
@@ -275,6 +296,7 @@ function SignedInApp({ session }) {
   }, [selectedOptionId, selectedProjectId, navigate])
 
   return (
+    <ReadOnlyProvider readOnly={readOnly}>
     <TreeEditorProvider>
     {/* Both editors are held above the columns, not inside one: each tab's
         outline and its detail panel are one editing session and must share one
@@ -283,7 +305,9 @@ function SignedInApp({ session }) {
     {/* The four regions — header, main, side, footer — and the three
         regulating lines between them. See CLAUDE.md. */}
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' }}>
-      <style>{APP_STYLE + REMOVE_BUTTON_STYLE + RESET_BUTTON_STYLE + ADD_BUTTON_STYLE + RIBBON_STYLE}</style>
+      <style>
+        {APP_STYLE + REMOVE_BUTTON_STYLE + RESET_BUTTON_STYLE + ADD_BUTTON_STYLE + RIBBON_STYLE + LINK_BUTTON_STYLE}
+      </style>
 
       <AppHeader
         onHome={() => leaveOption({ view: 'map', projectId: null, optionId: null })}
@@ -522,5 +546,6 @@ function SignedInApp({ session }) {
     </div>
     </QuestionnaireEditorProvider>
     </TreeEditorProvider>
+    </ReadOnlyProvider>
   )
 }
