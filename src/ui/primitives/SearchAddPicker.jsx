@@ -19,6 +19,11 @@ import { Z } from './zIndex.js'
 // indistinguishable "Lobby"s. Options without one draw exactly as they always
 // did: a single line.
 //
+// An option may instead be `{ divider: true, id, label }` — a labelled rule
+// splitting the list into groups, such as the rooms this department already has
+// against every room in the database. See the filter below for when one is
+// drawn.
+//
 // THE POPOVER IS A PORTAL, AND HAS TO BE
 //
 // It used to be absolutely positioned inside this component, and the last room
@@ -38,14 +43,37 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
   const wrapRef = useRef(null)
   const popRef = useRef(null)
 
+  // An option may be `{ divider: true, label }` instead of a thing to add: a
+  // labelled rule between two groups of the list — what is already HERE, then
+  // everything the database holds.
+  //
+  // The caller writes it inline and this decides whether it earns its place: a
+  // divider with nothing above or below it after filtering is a heading over
+  // nothing, so it is dropped rather than left explaining an empty half. That
+  // keeps the caller from having to know what the query matched.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const pool = q
-      ? options.filter(
-          (o) => o.name.toLowerCase().includes(q) || (o.path ?? '').toLowerCase().includes(q)
-        )
-      : options
-    return pool.slice(0, 50)
+    const matches = (o) => !q || o.name.toLowerCase().includes(q) || (o.path ?? '').toLowerCase().includes(q)
+
+    const out = []
+    let pending = null
+    let shown = 0
+    for (const o of options) {
+      if (o.divider) {
+        // Held back until something below it survives; a leading one never does.
+        pending = out.length > 0 ? o : null
+        continue
+      }
+      if (!matches(o)) continue
+      if (shown >= 50) break
+      if (pending) {
+        out.push(pending)
+        pending = null
+      }
+      out.push(o)
+      shown += 1
+    }
+    return out
   }, [options, query])
 
   const close = () => {
@@ -165,6 +193,28 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                 <div style={{ padding: '6px 10px', fontSize: 12, color: '#999' }}>No matches</div>
               ) : (
                 filtered.map((opt) => (
+                  opt.divider ? (
+                    <div
+                      key={opt.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '6px 10px 2px',
+                        fontSize: 10,
+                        letterSpacing: '0.04em',
+                        textTransform: 'uppercase',
+                        color: '#aaa',
+                        // Not selectable and not hoverable: it is a heading, and
+                        // a heading that lit up under the pointer would read as
+                        // something you could add.
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      {opt.label}
+                      <span style={{ flex: 1, height: 1, background: '#eee' }} />
+                    </div>
+                  ) : (
                   <div
                     key={opt.id}
                     onMouseDown={(e) => {
@@ -181,6 +231,7 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                       <div style={{ fontSize: 11, color: '#999', overflowWrap: 'anywhere' }}>{opt.path}</div>
                     )}
                   </div>
+                  )
                 ))
               )}
             </div>

@@ -8,7 +8,7 @@
 //   sp_group          id, name, is_duplicable, function_id
 //   sp_room           id, name, type, function_id
 //   sp_object         id, name, type, area_sqft
-//   sp_section        id, name, tree, function_id, building_id, version  <- tree.js
+//   sp_section        id, name, tree, function_id, building_id, is_core, version  <- tree.js
 //   sp_building       id, name, function_id, sort_order,
 //                     built_area_grossing_factor, floor_area_grossing_factor  <- factors.js
 //   sp_function       id, name, bg_colour, text_colour  <- functions.js
@@ -48,7 +48,7 @@ const TABLES = {
   // `version` is fetched because every tree write is conditional on it.
   sections: {
     table: 'sp_section',
-    columns: 'id, name, tree, function_id, building_id, version',
+    columns: 'id, name, tree, function_id, building_id, is_core, sort_order, version',
     order: 'name',
   },
   functions: { table: 'sp_function', columns: 'id, name, bg_colour, text_colour', order: 'name' },

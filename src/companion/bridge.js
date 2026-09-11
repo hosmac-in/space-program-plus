@@ -1,25 +1,27 @@
-// THE RHINO BRIDGE — what the app can do when it is running inside Rhino
-// ======================================================================
+// THE RHINO BRIDGE — the channel between the Companion and the model
+// ==================================================================
 //
-// `gh/sp_connect.py` hosts this app in a WebView2 control inside Rhino, so an
+// `gh/sp_connect.py` hosts the Rhino Companion in a WebView2 control, so an
 // architect can select objects in the model and click a room here to say what
-// those objects ARE. This module is the whole channel between the two.
-//
-// It sits beside url.js rather than in data/: both are how the app talks to the
-// environment it is running in, and neither touches the database.
+// those objects ARE. This module is the whole channel between the two, and it is
+// the only file that knows a host exists.
 //
 // PRESENCE IS THE FLAG. `window.chrome.webview` exists only inside WebView2, so
-// `connected` needs no URL parameter, no build variant and no setting — the
-// deployed app simply never lights up the connect affordances, and nobody
-// browsing it can reach a control that would do nothing.
+// `inRhino()` needs no URL parameter, no build variant and no setting. main.jsx
+// reads it once to decide which app to mount; nothing else has to ask.
 //
 // The link gesture is RHINO-FIRST: objects are already selected when the click
 // happens here, so a message says only what was clicked and Rhino supplies the
 // rest. That is what makes this one-way and lets one click tag many objects.
-// Rhino answers only to report what it did.
+//
+// Rhino answers twice: `result` — what it just did, which becomes a toast — and
+// `census`, the tally of every tag in the document, which is how a room can say
+// how much of it is placed. NONE OF THIS IS IN THE DATABASE: the tags live in
+// the .3dm, so a census is true of that file on that machine and ends when Rhino
+// closes. See CLAUDE.md, Rhino Companion.
 
 import { useCallback, useEffect, useState } from 'react'
-import { supabase } from './data/supabase.js'
+import { supabase } from '../data/supabase.js'
 
 // Read through a function, never captured at module load: the control injects
 // this object, and a module evaluated during navigation can run first.
@@ -27,24 +29,43 @@ function host() {
   return (typeof window !== 'undefined' && window.chrome?.webview) || null
 }
 
-// { connected, link(payload), lastResult }
+// Whether this page is the Companion. Called once by main.jsx to pick an app —
+// a browser does not become Rhino, so nothing re-checks it later.
+export function inRhino() {
+  return host() != null
+}
+
+// { link(payload), lastResult, census }
 //
 // `link` takes { kind: 'room' | 'department', instanceId, path, name }.
 // `instanceId` and never a *_def_id — the same identity rule as everywhere else
 // (see data/tree.js): two placements of one duplicable department must not
 // collapse into one thing on the model side either.
+//
+// `census` is { rooms: {id: {count, areaSqft}}, departments: {…} }. Asked for
+// once on mount and re-sent by the host after every link and every document
+// change, so nothing here has to track what it just did — the document is
+// always the answer.
+const EMPTY_CENSUS = { rooms: {}, departments: {} }
+
 export function useRhinoBridge() {
-  // Fixed for the life of the page — a browser does not become Rhino.
-  const [connected] = useState(() => host() != null)
   const [lastResult, setLastResult] = useState(null)
+  const [census, setCensus] = useState(null)
 
   useEffect(() => {
     const bridge = host()
     if (!bridge) return undefined
 
     // Rhino replies with PostWebMessageAsJson, so `data` arrives parsed.
-    const onMessage = (event) => setLastResult(event.data)
+    const onMessage = (event) => {
+      if (event.data?.type === 'census') {
+        setCensus({ rooms: event.data.rooms ?? {}, departments: event.data.departments ?? {} })
+      } else if (event.data?.type === 'result') {
+        setLastResult(event.data)
+      }
+    }
     bridge.addEventListener('message', onMessage)
+    bridge.postMessage({ type: 'census-request' })
     return () => bridge.removeEventListener('message', onMessage)
   }, [])
 
@@ -52,15 +73,15 @@ export function useRhinoBridge() {
     host()?.postMessage({ type: 'link', ...payload })
   }, [])
 
-  return { connected, link, lastResult }
+  return { link, lastResult, census: census ?? EMPTY_CENSUS }
 }
 
-// SIGNING IN INSIDE RHINO
-// ----------------------
+// SIGNING IN
+// ----------
 //
 // WebView2 keeps its own profile, separate from the architect's browser, so the
-// connect window opens signed out and would otherwise show a login form in a
-// window that exists to be clicked through in seconds.
+// Companion opens signed out and would otherwise show a login form in a window
+// that exists to be clicked through in seconds.
 //
 // So it asks the host, which has the credentials already — gh/.env, the same
 // file gh/sp_option_bind.py reads. The page posts `auth-request` and Rhino
@@ -73,12 +94,9 @@ export function useRhinoBridge() {
 // its refresh and its persistence are all supabase-js's own.
 //
 // The account those credentials name should be a `viewer` — see
-// sql/viewer_role.sql. Nothing here relies on that (the connect view hides every
-// write control regardless, see readOnly.jsx), but it is what makes it a
-// boundary rather than a convention.
-//
-// Runs once, only when there is no session and only inside Rhino. Outside it the
-// effect returns immediately and the app's own Login screen is unaffected.
+// sql/viewer_role.sql. Nothing here relies on that (the Companion writes nothing
+// regardless, see readOnly.jsx), but it is what makes it a boundary rather than
+// a convention.
 export function useRhinoSignIn(hasSession, loading) {
   const [error, setError] = useState(null)
 

@@ -33,6 +33,36 @@ export const AREA_WIDTH = 78
 // setting its own.
 export const CONTROL_SLOT = 18
 
+
+// The slot an ANNOTATION sits in instead — a control a second app puts where the
+// × would be (ui/option/annotations.jsx). Wider because such a control may be
+// ringed, and a ring sits outside its button.
+//
+//   >>> A CONSTANT, not a prop, and reserved in the department heading even
+//   >>> where nothing fills it. Both apps draw the panel from the same numbers,
+//   >>> so a column that changed width between them would make one layout read
+//   >>> as a different screen rather than the same one with a control added.
+export const ANNOTATION_SLOT = 30
+
+// THE COLUMN EVERY ROW ENDS WITH, and the reason every sqft figure in the panel
+// lines up: the department heading, a room's header, a room's own area row and
+// every object row reserve this same trailing width, whatever they put in it —
+// a ×, an annotation, or nothing at all.
+//
+// It is the ANNOTATION slot's width, not the ×'s, because the widest thing that
+// can appear here sets the column. Reserving the smaller one and widening it
+// only where an annotation exists is what made the figures sit 12px further
+// left in the Companion than in the editor, and the heading's area chain sit
+// left of the very rooms it totals, in both.
+//
+//   >>> One number. A row that reserves CONTROL_SLOT instead — or nothing —
+//   >>> takes itself out of the column, and there is no way to see that except
+//   >>> by looking at the panel.
+//
+// Declared after ANNOTATION_SLOT, not before: a const read above its own
+// declaration throws at import time and takes the whole app to a blank page.
+export const TRAILING_SLOT = ANNOTATION_SLOT
+
 // Divides one kind of statement from another INSIDE a room's body — the room's
 // own generic size from the objects standing in it, one energy section from the
 // next. Lighter than anything in ui/layout.js, which rules off the regions of

@@ -6,6 +6,7 @@ import RemoveButton from '../primitives/RemoveButton.jsx'
 import { functionColours } from '../../data/functions.js'
 import { CanvasBandHeading, CanvasCard, CanvasContainer } from '../canvas/canvasCards.jsx'
 import { NODE_HEIGHT, NODE_WIDTH, PADDING } from './treeLayout.js'
+import { CARD_CONTROL } from '../canvas/canvasLayout.js'
 import { BandRow } from '../primitives/Band.jsx'
 
 export const CANVAS_STYLE = `
@@ -94,9 +95,11 @@ function HGroupBoxCard({ data }) {
       pulse={data.pulse}
       // Only the header strip drags the group — see dragHandle in the layout.
       headerClassName={data.canEdit ? 'group-drag-handle' : undefined}
-      headerRight={
+      // The control column, not headerRight — one card header shape across both
+      // canvases, and a group with no × still holds the space a section's takes.
+      headerControl={
         data.onRemove ? (
-          <RemoveButton onRemove={data.onRemove} title="Remove from section" size={16} stopPointerDown />
+          <RemoveButton onRemove={data.onRemove} title="Remove from section" size={CARD_CONTROL} stopPointerDown />
         ) : null
       }
     >
@@ -109,12 +112,17 @@ function HGroupBoxCard({ data }) {
   )
 }
 
-// Sections are fixtures: never dragged, never removed from the canvas.
+// A section is never removed from the canvas — it is a row in sp_section, added
+// and deleted in the table editor. It IS draggable, but only sideways within its
+// own building, which is what writes sp_section.sort_order. The core section
+// stays a fixture: it has no place in the row to be moved to.
 function HSectionBoxCard({ data }) {
   return (
     <CanvasContainer
       colours={data.colours}
-      name={data.name}
+      name={data.isDraggable ? `⠿ ${data.name}` : data.name}
+      title={data.name}
+      headerClassName={data.isDraggable ? 'section-drag-handle' : undefined}
       radius={10}
       borderWidth={1.5}
       fontSize={13}
@@ -141,6 +149,7 @@ function HBuildingBoxCard({ data }) {
       colours={data.colours}
       name={data.name}
       isSelected={data.isSelected}
+      gutter={data.gutter}
       // The band is the full width of the canvas and mostly empty space, so
       // only the heading itself takes the click — see CanvasBandHeading, which
       // wires onSelect to the title rather than to the band.
@@ -205,7 +214,7 @@ function CarouselItem({ label, kind, id, colours, onItemDragStart, onItemDragEnd
 
 export function CarouselRow({ title, items, kind, functions, last = false, onItemDragStart, onItemDragEnd }) {
   return (
-    <BandRow title={title} last={last}>
+    <BandRow title={title} last={last} scroller>
       {items.length === 0 ? (
         <span style={{ fontSize: 12, color: '#bbb' }}>Nothing available</span>
       ) : (

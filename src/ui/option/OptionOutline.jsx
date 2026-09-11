@@ -10,7 +10,7 @@
 // added, as ghosts; repeating those here would make the panel a second, worse
 // copy of the canvas rather than a summary of the thing you've built.
 
-import { deptNodeIndex, resolveNodePlacement } from '../../data/tree.js'
+import { catalogRoomNode, deptNodeIndex, resolveNodePlacement, resolveRoomLabel } from '../../data/tree.js'
 import { functionColours } from '../../data/functions.js'
 import { buildingAreaSqft, departmentAreaSqft } from '../../data/optionData.js'
 import { resolveBuildingFactors } from '../../data/factors.js'
@@ -249,7 +249,12 @@ function DepartmentEntry({
               }}
             >
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12, minWidth: 0 }}>
-                <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{room.name}</span>
+                {/* The placement's name where it has one — two Toilets in a
+                    department read as Male and Female here too. `node` is this
+                    department's catalog node, already a prop. */}
+                <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
+                  {resolveRoomLabel(catalogRoomNode(node?.rooms ?? null, room.treeRoomNodeId), room, room.name).name}
+                </span>
                 {/* Silent at one, which is what most rooms are — a "× 1" on
                     every line would be noise on the common case. The column is
                     still reserved, so the objects below stay aligned. */}

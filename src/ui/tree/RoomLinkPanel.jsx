@@ -20,6 +20,7 @@ import {
   catalogObjectCount,
   catalogRoomAreaSqft,
   catalogRoomDimensions,
+  catalogRoomLabel,
   catalogRoomNotes,
   findDeptContext,
   newObjectNode,
@@ -27,6 +28,7 @@ import {
   resolveNodePlacement,
   roomWithArea,
   roomWithDimension,
+  roomWithLabel,
   roomWithNotes,
   roomWithObjectCount,
 } from '../../data/tree.js'
@@ -51,6 +53,7 @@ import {
   PanelNote,
   PanelShell,
   CatalogNote,
+  RoomAreaRow,
   RoomBlock,
   RoomBrief,
   RoomNotes,
@@ -90,7 +93,6 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
   const linkedRooms = stored
     .map((node) => ({ node, def: rooms.find((r) => r.id === node.room_def_id) }))
     .filter((e) => e.def)
-  const linkedRoomDefIds = new Set(linkedRooms.map((e) => e.def.id))
 
   return (
     <PanelShell colours={colours}>
@@ -145,6 +147,11 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
             // painted a pale wash of it.
             const roomColours = functionColours(functions, def.function_id)
             const areaSqft = catalogRoomAreaSqft(node)
+            // What this placement is called here — its own label, or the
+            // definition's name. Resolved once and used for the header, every
+            // title and every undo message, so a department holding two Toilets
+            // says WHICH one each edit was to.
+            const shown = catalogRoomLabel(node) || def.name
 
             // Shaped as an option's room so circulationSqft can be shared —
             // there is one definition of that subtraction and this is not a
@@ -164,24 +171,31 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
               <RoomBlock
                 key={node.instance_id}
                 colours={roomColours}
-                name={def.name}
+                name={shown}
                 type={def.type}
                 canEdit={canEdit}
-                // The catalog's default size for one of this room here — what an
-                // option starts at when it adds it. Copied on add, not inherited:
-                // changing it never moves an option that already exists.
-                areaSqft={areaSqft}
-                // On commit, not on every keystroke: each edit here is a whole
-                // section's jsonb, and typing "1800" would be four writes and
-                // four undo steps.
-                onAreaCommit={(next) =>
-                  next !== areaSqft &&
-                  editRoom(node.instance_id, (r) => roomWithArea(r, next), `${def.name}: default area set`)
+                // Renamed by double-clicking the title, and WRITTEN on Enter —
+                // one write and one undo step for the whole name, never one per
+                // keystroke, because every edit here is a whole section's jsonb.
+                // Emptying the field clears the name back to the definition's.
+                inheritedName={def.name}
+                onNameCommit={(next) =>
+                  next !== catalogRoomLabel(node) &&
+                  editRoom(
+                    node.instance_id,
+                    (r) => roomWithLabel(r, next),
+                    next ? `${next}: named` : `${def.name}: name cleared`
+                  )
                 }
+                // No count in the catalog — how many of a room a facility has is
+                // the size of a program, not a fact about the room — so the
+                // header's total IS the area of one. Typed on the RoomAreaRow
+                // below, the same place the Project tab types it.
+                totalAreaSqft={areaSqft}
                 onRemove={() =>
                   write(
                     stored.filter((r) => r.instance_id !== node.instance_id),
-                    `${def.name} removed`
+                    `${shown} removed`
                   )
                 }
               >
@@ -201,7 +215,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                   }}
                   schedules={schedules}
                   colours={roomColours}
-                  roomName={def.name}
+                  roomName={shown}
                   canEdit={canEdit}
                   onFieldCommit={(field, group, value) =>
                     editRoom(
@@ -210,7 +224,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                         group === SCHEDULES_GROUP
                           ? roomWithSchedule(r, field.key, value)
                           : roomWithField(r, field, group, value),
-                      `${def.name}: ${field.label.toLowerCase()} set`
+                      `${shown}: ${field.label.toLowerCase()} set`
                     )
                   }
                 />
@@ -229,17 +243,35 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                   canEdit={canEdit}
                   onWidthCommit={(ft) =>
                     ft !== catalogRoomDimensions(node).widthFt &&
-                    editRoom(node.instance_id, (r) => roomWithDimension(r, 'width_ft', ft), `${def.name}: size`)
+                    editRoom(node.instance_id, (r) => roomWithDimension(r, 'width_ft', ft), `${shown}: size`)
                   }
                   onLengthCommit={(ft) =>
                     ft !== catalogRoomDimensions(node).lengthFt &&
-                    editRoom(node.instance_id, (r) => roomWithDimension(r, 'length_ft', ft), `${def.name}: size`)
+                    editRoom(node.instance_id, (r) => roomWithDimension(r, 'length_ft', ft), `${shown}: size`)
                   }
                 >
                   {!canEdit && catalogRoomNotes(node) && (
                     <CatalogNote label="General Note:">{catalogRoomNotes(node)}</CatalogNote>
                   )}
                 </RoomBrief>
+
+                {/* The catalog's default size for one of this room here — what
+                    an option starts at when it adds it. Copied on add, not
+                    inherited: changing it never moves an option that already
+                    exists.
+
+                    On commit, not on every keystroke: each edit here is a whole
+                    section's jsonb, and typing "1800" would be four writes and
+                    four undo steps. */}
+                <RoomAreaRow
+                  value={areaSqft}
+                  canEdit={canEdit}
+                  title={`Default area of one ${shown}`}
+                  onCommit={(next) =>
+                    next !== areaSqft &&
+                    editRoom(node.instance_id, (r) => roomWithArea(r, next), `${shown}: default area set`)
+                  }
+                />
 
                 {linked.length === 0
                   ? // For an editor the labelled + below already says it's empty.
@@ -328,7 +360,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                   canEdit={canEdit}
                   onCommit={(notes) =>
                     notes.trim() !== catalogRoomNotes(node) &&
-                    editRoom(node.instance_id, (r) => roomWithNotes(r, notes), `${def.name}: note saved`)
+                    editRoom(node.instance_id, (r) => roomWithNotes(r, notes), `${shown}: note saved`)
                   }
                 />
               </RoomBlock>
@@ -338,9 +370,13 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
       {/* Below the rooms, matching the Project tab's pane and each room's own
           object picker: the list is what the pane is for, the picker is what you
           reach for after reading it. */}
+      {/* EVERY definition, including ones already placed here. Placing the same
+          room twice in one department is the point — two Toilets, named "Male"
+          and "Female" on the row inside each. The filter that used to sit here
+          was what made that impossible. */}
       {canEdit && (
         <SearchAddPicker
-          options={rooms.filter((r) => !linkedRoomDefIds.has(r.id))}
+          options={rooms}
           placeholder="Search rooms..."
           title="Add a room to this department"
           label="Add a room"

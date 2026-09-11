@@ -27,6 +27,10 @@ body {
  *
  * The steppers are invisible until the count is hovered, and their space is
  * reserved in both states so nothing shifts under the pointer. */
+/* The field is type=text now (it has to hold "5,400" — see CountField), so the
+ * native spinner these two rules suppressed no longer exists. Kept because they
+ * cost nothing and cannot be right-or-wrong for a text input, and because the
+ * field would have to go back to type=number the day separators are dropped. */
 .count-field::-webkit-outer-spin-button,
 .count-field::-webkit-inner-spin-button {
   -webkit-appearance: none;
@@ -74,6 +78,64 @@ body {
 
 .spp-row:hover {
   background: rgba(0, 0, 0, 0.05);
+}
+
+/* THE OPTION CANVAS MOVES ITS CARDS, it does not redraw them somewhere else.
+ *
+ * Adding or removing a department changes what is a ghost, and ghosts are
+ * partitioned to the end of their group, of their section and of the building —
+ * so one click can move half a group. Redrawn instantly, that reads as the
+ * canvas having changed rather than as a card having moved, and the card you
+ * just clicked is the hardest one to follow.
+ *
+ * IT HAPPENS IN TWO STAGES, and they must not overlap: the card changes height
+ * where it stands (450ms), and only then does everything slide (700ms). The
+ * canvas holds its arrangement for the first of those — REORDER_DELAY_MS in
+ * DepartmentGraph.jsx, which MUST match .spp-card-grow's duration below.
+ *
+ * The slide is slow on purpose: the point is to be followed by eye, not to feel
+ * quick. Ease-out, not the Tree tab's overshoot spring — nothing here is being
+ * released from a drag, so a card that sailed past its slot and came back would
+ * be saying something untrue about what happened.
+ *
+ * Only the transform: colours say what a card IS and must not lag behind it. */
+.spp-option-canvas .react-flow__node {
+  transition: transform 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.spp-card-grow {
+  transition: height 450ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spp-option-canvas .react-flow__node,
+  .spp-card-grow {
+    transition: none;
+  }
+}
+
+/* A room's name while it is being renamed — double-click the title and this is
+ * what it becomes. It exists only for that moment, so it keeps the heading's
+ * ink, weight and size and takes no box of its own: a white input on a
+ * function-coloured strip would be the loudest thing in the panel.
+ *
+ * A hairline underline in the header's OWN ink is the whole of the affordance,
+ * which is what lets it work on any hue in sp_function — it is that colour's
+ * paired text colour, so it can never be the one that disappears. */
+.spp-title-field {
+  border-bottom: 1px solid currentColor !important;
+}
+
+/* A carousel scrolls but shows no bar: the arrows at its ends and the wheel say
+ * it is scrollable, and a bar under a one-line strip of cards is most of the
+ * strip's height. Scrolling itself is untouched — this hides the bar only. */
+.spp-noscrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.spp-noscrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* The same idea on the canvases: a department card, and a section or group's

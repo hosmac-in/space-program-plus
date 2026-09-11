@@ -14,7 +14,44 @@ export const GAP = 16
 // the left edge of the cards beneath it.
 export const PADDING = 16
 export const LABEL_HEIGHT = 30
+
+// The × (or +) in a card header, and the column reserved for it WHETHER OR NOT
+// there is one — a section has a ×, the group inside it does not, and without a
+// reserved slot their area figures sat at two different insets on cards drawn
+// one inside the other.
+export const CARD_CONTROL = 16
+// What squares it off: the control is inset from the right by the same amount
+// the header's height leaves above and below it, so it reads as equally padded
+// on all three sides. The NAME keeps the full PADDING — it lines up with the
+// cards below, which is a different alignment and a more important one.
+export const CARD_CONTROL_INSET = (LABEL_HEIGHT - CARD_CONTROL) / 2
+
+// The gap between a header's parts. Named because the sums below depend on it.
+export const HEADER_GAP = 6
+
+// HOW FAR A HEADER'S AREA FIGURE SITS FROM ITS CARD'S RIGHT EDGE, at each of
+// the two levels — and the two are chosen so the figures land in ONE COLUMN
+// down the nesting, not so each is tidy within its own box.
+//
+// A card that reserves the control column pays for the column and the gap
+// before it; one that does not is inset by PADDING inside its parent instead,
+// and pays that back. So:
+//
+//     section:  CARD_CONTROL_INSET + HEADER_GAP + CARD_CONTROL
+//     group:    the same, less the PADDING it is already inset by
+//
+//   >>> These two are a PAIR. Change the control size, the gap or PADDING and
+//   >>> the figures stagger again — which is exactly what "nearly aligned"
+//   >>> looked like, and it is only a few pixels, so it reads as a mistake
+//   >>> rather than as a difference.
+export const FIGURE_INSET = CARD_CONTROL_INSET + HEADER_GAP + CARD_CONTROL
+export const FIGURE_INSET_NESTED = FIGURE_INSET - PADDING
 const EMPTY_HEIGHT = 36
+
+// The air between a building's core section and the band proper. Wider than
+// GAP because it is the only thing saying the core is not one of the sections
+// in the row — at GAP it read as the first of them.
+export const CORE_GAP = GAP * 2
 
 // A building's heading is a title, not a card header — see CanvasBandHeading.
 // It gets its own height because 30px cannot hold 30px type.
@@ -31,19 +68,28 @@ export const BUILDING_GAP = 88
 // same amount on all four sides of its container.
 const CONTENT_TOP = LABEL_HEIGHT + PADDING
 
-// A group box: a header, then equal-height cards stacked at a fixed pitch.
+// A group box: a header, then cards stacked down it.
+//
+// `childHeight` is a number when every card is the same — the Tree tab — or a
+// function of the child when they differ, which is how the option canvas draws a
+// ghost shorter than a card carrying figures. The stack is walked cumulatively
+// either way rather than stepping by a pitch.
 export function layoutGroupBox(children, childHeight) {
-  const bodyHeight =
-    children.length === 0 ? EMPTY_HEIGHT : children.length * childHeight + Math.max(0, children.length - 1) * GAP
+  const heightOf = typeof childHeight === 'function' ? childHeight : () => childHeight
+
+  const childPositions = []
+  let y = CONTENT_TOP
+  children.forEach((entry) => {
+    childPositions.push({ entry, x: PADDING, y, height: heightOf(entry) })
+    y += heightOf(entry) + GAP
+  })
+
+  const bodyHeight = children.length === 0 ? EMPTY_HEIGHT : y - GAP - CONTENT_TOP
 
   return {
     width: NODE_WIDTH + PADDING * 2,
     height: CONTENT_TOP + bodyHeight + PADDING,
-    childPositions: children.map((entry, idx) => ({
-      entry,
-      x: PADDING,
-      y: CONTENT_TOP + idx * (childHeight + GAP),
-    })),
+    childPositions,
     isEmpty: children.length === 0,
   }
 }

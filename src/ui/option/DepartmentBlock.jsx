@@ -14,17 +14,18 @@
 //     tables hold. That distinction is the point of the tree; see data/tree.js.
 //   * the confirmation before dropping a room that has objects in it
 
-import { useEffect, useState } from 'react'
-import { useRhinoBridge } from '../../rhino.js'
+import { useState } from 'react'
+import { useAnnotations } from './annotations.jsx'
 import { useReadOnly } from '../../readOnly.jsx'
-import { useToast } from '../primitives/Toast.jsx'
 import {
   catalogRoomDimensions,
+  catalogRoomLabel,
   catalogRoomNode,
   catalogRoomNotes,
   catalogRoomsForNode,
   findDeptContext,
   resolveNodePlacement,
+  resolveRoomLabel,
 } from '../../data/tree.js'
 import {
   circulationSqft,
@@ -58,6 +59,7 @@ import {
   PanelShell,
   CatalogNote,
   formatPath,
+  RoomAreaRow,
   RoomBlock,
   RoomBrief,
   RoomNotes,
@@ -89,21 +91,13 @@ export default function DepartmentBlock({
 }) {
   const [confirmTarget, setConfirmTarget] = useState(null)
 
-  // Inert outside Rhino: `connected` is false in a browser, so no room ever
-  // gets a link button and this costs the deployed app nothing. See rhino.js.
-  const { connected: inRhino, link, lastResult } = useRhinoBridge()
-  const pushToast = useToast()
-  // Inside Rhino, or signed in as a viewer: no ×, no picker, no typing. The one
-  // control this pane keeps is the link button, which writes to the model and
-  // never to the database. See src/readOnly.jsx.
+  // Whatever a second app wants to say about this department and its rooms.
+  // Null in the editor, which is the ordinary case — see ./annotations.jsx.
+  const annotations = useAnnotations()
+  // A viewer, or an app that exists to read: no ×, no picker, no typing. An
+  // annotation is not affected — it does not write to the database and is the
+  // one thing such an app is for. See src/readOnly.jsx.
   const readOnly = useReadOnly()
-
-  // Rhino answers every link with what it actually wrote — how many objects, or
-  // why none. It is the only confirmation there is: the writing happens in
-  // another process and nothing here can see the model.
-  useEffect(() => {
-    if (lastResult?.message) pushToast(lastResult.message, lastResult.ok ? 'success' : 'error')
-  }, [lastResult, pushToast])
 
   // This placement's own allowed rooms. Null when the tree node is gone, which
   // the filters treat as unrestricted rather than as "nothing allowed".
@@ -123,6 +117,16 @@ export default function DepartmentBlock({
   // building's own total, once, see data/optionData.js.
   const buildingRow = buildingDefs.find((b) => b.id === placement?.buildingId) ?? null
   const buildingOverrides = placement?.buildingId ? (buildingFactors[placement.buildingId] ?? null) : null
+
+  // What the whole department comes to — the headline figure the heading, the
+  // canvas card and the HUD all show, from the one function.
+  const deptArea = departmentAreaSqft(dept, catalogDeptNode, buildingRow, buildingOverrides)
+  // Where anything in this pane sits, as one line: the department's own path,
+  // and a room's is that plus its name. One builder, so the two cannot drift.
+  // Handed to annotations, which may want to freeze it somewhere — see
+  // sp_questionnaire's `*_path` for the same idea.
+  const pathTo = (...tail) =>
+    formatPath(placement?.buildingName, placement?.sectionName, placement?.groupName, dept.name, ...tail)
 
   // Counts live only here: the catalog says an object may be in this room, this
   // option says how many.
@@ -160,6 +164,10 @@ export default function DepartmentBlock({
           // stays: a placement the catalog has lost is about this department,
           // not about where you are.
           note={!placement ? '(no longer in the tree)' : null}
+          // Held open even where nothing fills it, so the area figures sit in
+          // the same column in both apps — see PanelHeading.
+          reserveControl
+          control={annotations?.department?.(dept, deptArea, pathTo())}
           // What the whole department comes to: every room's area times how
           // many of it, grossed up. The same figure the HUD and the canvas card
           // show, from the same function — see departmentAreaSqft.
@@ -186,7 +194,7 @@ export default function DepartmentBlock({
                 style={{ fontSize: 13, fontStyle: 'italic', color: '#555', marginBottom: 4 }}
               >
                 <span style={{ fontStyle: 'normal' }}>department area </span>
-                {formatArea(departmentAreaSqft(dept, catalogDeptNode, buildingRow, buildingOverrides))} sqft
+                {formatArea(deptArea)} sqft
               </div>
               <div
                 title="Net area × the building's built-area grossing factor"
@@ -335,21 +343,33 @@ export default function DepartmentBlock({
         // Once per room: the block wears it and the schedule band is painted a
         // pale wash of it.
         const roomColours = functionColours(functions, roomDefs.find((d) => d.id === room.defId)?.function_id)
+        // What this room is called, and who said so: this option's label, the
+        // catalog placement's, or the definition's name. Resolved ONCE and
+        // threaded — the header, every title, the confirm dialog and the path
+        // handed to Rhino all read from here.
+        const shown = resolveRoomLabel(catalogRoom, room, room.name)
 
         return (
           <RoomBlock
             key={room.instanceId}
             colours={roomColours}
-            name={room.name}
+            name={shown.name}
+            // Renamed by double-clicking the title. What it falls back to is the
+            // catalog's label, or the definition's name — typing that back
+            // stores no override, and emptying the field clears one.
+            //
+            // The commit only changes what is IN MEMORY: this tab writes nothing
+            // until Save Data, which lights up because `draftOf` stringifies the
+            // whole rooms array. '' rather than deleting the key, so the dirty
+            // check compares like with like — see loadInstanceData.
+            inheritedName={shown.inherited ?? room.name}
+            onNameCommit={(label) => onRoomChange(room.instanceId, (r) => ({ ...r, label }))}
             type={room.type}
             count={room.count}
-            areaSqft={room.areaSqft ?? 0}
+            // What this many of it comes to. The area of ONE is typed on the
+            // RoomAreaRow below, beside the objects it has to hold.
+            totalAreaSqft={(room.areaSqft ?? 0) * room.count}
             canEdit={!readOnly}
-            onAreaChange={(areaSqft) =>
-              onRoomChange(room.instanceId, (r) => ({ ...r, areaSqft }), {
-                coalesce: `roomArea:${room.instanceId}`,
-              })
-            }
             onCountChange={(count) =>
               onRoomChange(
                 room.instanceId,
@@ -362,30 +382,12 @@ export default function DepartmentBlock({
             onRemove={() =>
               setConfirmTarget({
                 roomInstanceId: room.instanceId,
-                roomName: room.name,
+                roomName: shown.name,
                 objectCount: room.objects.reduce((s, o) => s + o.count, 0),
               })
             }
-            // The frozen path goes with the id for the reason sp_questionnaire
-            // freezes one beside every node id: a room later deleted from this
-            // option still has to read as something on the object it tagged.
-            onLink={
-              inRhino
-                ? () =>
-                    link({
-                      kind: 'room',
-                      instanceId: room.instanceId,
-                      name: room.name,
-                      path: formatPath(
-                        placement?.buildingName,
-                        placement?.sectionName,
-                        placement?.groupName,
-                        dept.name,
-                        room.name
-                      ),
-                    })
-                : undefined
-            }
+            control={annotations?.room?.(room, pathTo(shown.name), shown.name)}
+            countOverride={annotations?.roomCount?.(room, shown.name)}
           >
             {/* What the catalog says about this room's energy, and this
                 option's overrides of it.
@@ -408,7 +410,7 @@ export default function DepartmentBlock({
               }}
               schedules={schedules}
               colours={roomColours}
-              roomName={room.name}
+              roomName={shown.name}
               onFieldChange={(field, group, value) =>
                 onRoomChange(
                   room.instanceId,
@@ -437,6 +439,21 @@ export default function DepartmentBlock({
                 <CatalogNote label="General Note:">{catalogRoomNotes(catalogRoom)}</CatalogNote>
               )}
             </RoomBrief>
+
+            {/* The room, then what stands in it, then what they leave over. The
+                area of ONE of it is typed here — reported on every keystroke and
+                coalesced, so Save Data answers while you type and the whole
+                number is still one undo step. */}
+            <RoomAreaRow
+              value={room.areaSqft ?? 0}
+              canEdit={!readOnly}
+              title={`Area of one ${shown.name}`}
+              onChange={(areaSqft) =>
+                onRoomChange(room.instanceId, (r) => ({ ...r, areaSqft }), {
+                  coalesce: `roomArea:${room.instanceId}`,
+                })
+              }
+            />
 
             {room.objects.map((obj) => (
               <ObjectRow
@@ -523,13 +540,39 @@ export default function DepartmentBlock({
       {/* Below the rooms, not above them: the list is what the pane is for, and
           the picker is what you reach for after reading it — the same order an
           object's picker already sits in inside each room. */}
+      {/* THE PICKER LISTS PLACEMENTS, NOT DEFINITIONS. The same room may sit
+          twice in one department, so a list of definitions could not say which
+          one you meant — and that is what made addRoom guess with `matches[0]`
+          and anchor a room to the wrong catalog node's area and objects.
+
+          Each row is one catalog placement: its label as the name, the
+          definition underneath as the quiet second line SearchAddPicker already
+          draws. "Male Toilet / Toilet" and "Female Toilet / Toilet", and typing
+          "toilet" still finds both.
+
+          Dedup is by the PLACEMENT, never the definition. */}
       {!readOnly && (
       <SearchAddPicker
-        options={roomDefs.filter((def) => {
-          if (dept.rooms.some((r) => r.defId === def.id)) return false
-          if (!catalogRooms || catalogRooms.length === 0) return true
-          return catalogRooms.some((r) => r.room_def_id === def.id)
-        })}
+        options={[
+          // WHAT THIS DEPARTMENT ALREADY HAS, first: the catalog's own
+          // placements, each with its label as the name and the definition
+          // underneath. One placement may be added once, so the ones already in
+          // the option drop out.
+          ...(catalogRooms ?? []).flatMap((node) => {
+            const def = roomDefs.find((d) => d.id === node.room_def_id)
+            if (!def) return []
+            if (dept.rooms.some((r) => r.treeRoomNodeId === node.instance_id)) return []
+            const label = catalogRoomLabel(node)
+            return [{ id: node.instance_id, name: label || def.name, path: label ? def.name : null, node, def }]
+          }),
+          // Then everything else there is. The catalog says what a department is
+          // USUALLY built from, not what it may contain — a project needing a
+          // room nobody thought to place should not have to go and edit the
+          // catalog first, and a room added this way is anchored to no
+          // placement, so it inherits nothing and states everything itself.
+          { divider: true, id: 'all-rooms', label: 'All rooms' },
+          ...roomDefs.map((def) => ({ id: `def-${def.id}`, name: def.name, node: null, def })),
+        ]}
         placeholder="Search rooms..."
         title="Add a room to this department"
         label="Add a room"

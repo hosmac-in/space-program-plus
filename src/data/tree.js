@@ -17,6 +17,7 @@
 //         "rooms": [{
 //           "instance_id": "...",
 //           "room_def_id": "...",      <- which sp_room row
+//           "label": "Male Toilet",    <- optional, see A PLACEMENT'S OWN NAME
 //           "area_sqft": 180,          <- optional default, see AREA below
 //           "width_ft": 12,            <- optional, suggestion only, see below
 //           "length_ft": 15,
@@ -48,7 +49,8 @@
 //
 // Otherwise only ids are stored — no names. A *_def_id resolves against the
 // definition tables (catalog.jsx) at render, so renaming a room in sp_room
-// updates every placement at once.
+// updates every placement at once. The one authored name is a room's `label`,
+// which is not a copy of anything — see A PLACEMENT'S OWN NAME below.
 //
 // COUNTS: OBJECTS HAVE ONE, ROOMS DO NOT
 //
@@ -140,6 +142,92 @@
 
 import { supabase } from './supabase.js'
 
+// --- Pruning deleted definitions --------------------------------------------
+
+// A *_def_id whose row no longer exists is not data, and this is the one place
+// that says so.
+//
+// No foreign key reaches into jsonb, so deleting a row from sp_group,
+// sp_department, sp_room or sp_object succeeds unconditionally and leaves its id
+// here forever — re-saved verbatim by every later write. Kept, it was worse than
+// useless: the canvases filtered such a node out, the panels drew it nameless,
+// and an option's totals went on counting area for a department no card on
+// screen accounted for.
+//
+//   >>> PRUNING IS DESTRUCTIVE AND THAT IS THE POINT. A department pruned here
+//   >>> takes its rooms, their objects and their parameters with it. The id is
+//   >>> unrecoverable once its definition row is gone, so there is nothing to
+//   >>> restore it to; the alternative is a figure nobody can account for.
+//
+// Definition ids only. An `instance_id` is this document's own and is never
+// checked against anything, and nothing here looks at sp_option — see the note
+// in loadInstanceData on why a dangling tree_node_id is left alone.
+//
+// Pure, and returns the count it removed so a caller can say so.
+export function pruneTree(tree, { groups = [], departments = [], rooms = [], objects = [] }) {
+  const has = (list, id) => list.some((x) => x.id === id)
+  let removed = 0
+  const drop = (n) => {
+    removed += n
+    return false
+  }
+
+  const nextGroups = (tree?.groups || [])
+    .filter((g) => has(groups, g.group_def_id) || drop(1))
+    .map((g) => ({
+      ...g,
+      departments: (g.departments || [])
+        .filter((d) => has(departments, d.department_def_id) || drop(1))
+        .map((d) => ({
+          ...d,
+          rooms: (d.rooms || [])
+            .filter((r) => has(rooms, r.room_def_id) || drop(1))
+            .map((r) => ({
+              ...r,
+              objects: (r.objects || []).filter((o) => has(objects, o.object_def_id) || drop(1)),
+            })),
+        })),
+    }))
+
+  return { tree: { ...(tree || EMPTY_TREE), groups: nextGroups }, removed }
+}
+
+// --- Section order ----------------------------------------------------------
+
+// Sections are rows, not tree nodes, so their order is a COLUMN —
+// sp_section.sort_order, the same shape sp_building already uses. Both canvases
+// sort by it so the Tree tab's arrangement is the order an option is read in.
+//
+// Null sorts last, then by name: a section added straight in the table editor
+// has no order and must still appear, at the end, rather than jumping to the
+// front on a null-is-zero comparison.
+export function compareSections(a, b) {
+  const ax = a.sort_order ?? Infinity
+  const bx = b.sort_order ?? Infinity
+  return ax !== bx ? ax - bx : a.name.localeCompare(b.name)
+}
+
+// Writes one building's section order, one row per section. Small (a handful of
+// rows) and rare, so they go one at a time rather than as an upsert — an upsert
+// would have to carry every not-null column of a row it is only reordering.
+//
+// Each states its version for the reason writeSectionTree does, and .select()
+// because an update matching no rows comes back with no error and no data.
+export async function writeSectionOrder(rows) {
+  for (const { id, sortOrder, version } of rows) {
+    if (!Number.isInteger(version)) return { error: 'That section was not loaded with a version.' }
+    const { data, error } = await supabase
+      .from('sp_section')
+      .update({ sort_order: sortOrder })
+      .eq('id', id)
+      .eq('version', version)
+      .select('id')
+    if (error) return { error: error.message }
+    if (!data?.length) return { error: 'That section was changed by someone else — reloaded, please try again.', conflict: true }
+  }
+  return {}
+}
+
 // --- Writing ---------------------------------------------------------------
 
 // Rooms and objects are nested three levels inside a section, so there is no
@@ -188,8 +276,14 @@ export function removeGroupNode(tree, groupInstanceId) {
   }
 }
 
-export function insertGroupNode(tree, groupNode) {
-  return { ...tree, groups: [...(tree.groups || []), groupNode] }
+// ORDER IS THE ARRAY'S ORDER. The canvases draw groups and departments in the
+// order they are stored, and both insert at the END by default — a new one
+// arrives at the bottom of the list rather than sorting itself into the middle
+// of a list someone arranged by hand. `index` is what a reorder drag passes.
+export function insertGroupNode(tree, groupNode, index) {
+  const list = tree.groups || []
+  const at = index == null ? list.length : Math.max(0, Math.min(index, list.length))
+  return { ...tree, groups: [...list.slice(0, at), groupNode, ...list.slice(at)] }
 }
 
 export function newGroupNode(groupDefId) {
@@ -213,10 +307,14 @@ export function removeDeptNode(tree, deptInstanceId) {
   return { tree: { ...tree, groups }, removed, fromGroupInstanceId }
 }
 
-export function insertDeptNode(tree, groupInstanceId, deptNode) {
-  const groups = (tree.groups || []).map((g) =>
-    g.instance_id === groupInstanceId ? { ...g, departments: [...(g.departments || []), deptNode] } : g
-  )
+// Same rule one level down — see insertGroupNode.
+export function insertDeptNode(tree, groupInstanceId, deptNode, index) {
+  const groups = (tree.groups || []).map((g) => {
+    if (g.instance_id !== groupInstanceId) return g
+    const list = g.departments || []
+    const at = index == null ? list.length : Math.max(0, Math.min(index, list.length))
+    return { ...g, departments: [...list.slice(0, at), deptNode, ...list.slice(at)] }
+  })
   return { ...tree, groups }
 }
 
@@ -292,6 +390,57 @@ export function roomWithNotes(room, notes) {
   if (trimmed) next.notes = trimmed
   else delete next.notes
   return next
+}
+
+// --- A placement's own name --------------------------------------------------
+//
+// THE SAME ROOM MAY BE PLACED TWICE IN ONE DEPARTMENT, and `label` is what tells
+// the two apart: one Toilet is "Male Toilet", the other "Female Toilet", and
+// both are the same sp_room row.
+//
+//   >>> THIS IS NOT THE DENORMALISED NAME THIS FILE FORBIDS. That rule bans
+//   >>> COPYING a definition's name in, because the copy goes stale the moment
+//   >>> sp_room is renamed. A label is AUTHORED here, like `notes` and
+//   >>> `area_sqft` on this same node. Rename Toilet to WC and every unlabelled
+//   >>> placement follows; the two somebody named deliberately do not, which is
+//   >>> the whole point of having named them.
+
+// The catalog's label for this placement, or '' — never null, so a field bound
+// to it is always controlled. Same shape as catalogRoomNotes.
+export function catalogRoomLabel(roomNode) {
+  return typeof roomNode?.label === 'string' ? roomNode.label : ''
+}
+
+// Set or clear it. Blank and whitespace-only both DELETE the key, so a room
+// nobody has named is byte-identical to one from before this existed.
+export function roomWithLabel(room, label) {
+  const next = { ...room }
+  const trimmed = typeof label === 'string' ? label.trim() : ''
+  if (trimmed) next.label = trimmed
+  else delete next.label
+  return next
+}
+
+// WHAT A ROOM IS CALLED, and who said so: `option ?? catalog ?? the definition`,
+// the same chain every other overridable value on a room follows.
+//
+// `source` uses the three words resolveRoomFields returns — 'option',
+// 'inherited', or null when nobody has named it and the definition's own name is
+// standing in — so the panel's muted / normal-ink / ↺ treatment needs no new
+// vocabulary. `inherited` rides along on an overridden row so a reset can say
+// what it would restore.
+//
+// `treeRoomNode` may be null: an option room whose placement has left the
+// catalog inherits nothing, which is not an error.
+export function resolveRoomLabel(treeRoomNode, optionRoom, defName) {
+  const own = typeof optionRoom?.label === 'string' ? optionRoom.label.trim() : ''
+  const inherited = catalogRoomLabel(treeRoomNode).trim() || null
+
+  if (own) return { name: own, source: 'option', inherited }
+  if (inherited) return { name: inherited, source: 'inherited', inherited }
+  // Nobody has named it. The definition's name is not anyone's answer about
+  // THIS placement, which is what source: null says.
+  return { name: defName || 'Room', source: null, inherited: null }
 }
 
 export const DEFAULT_CATALOG_OBJECT_COUNT = 1
@@ -487,7 +636,11 @@ export function flattenTreeNodes(
         }
 
         for (const roomNode of deptNode.rooms || []) {
-          const roomName = nameOf(rooms, roomNode.room_def_id) ?? 'Room'
+          // The placement's own name where it has one. Two Toilets in one
+          // department are otherwise two rows identical to the character in
+          // every picker this feeds — and a path only tells placements apart
+          // ACROSS departments, never within one.
+          const roomName = catalogRoomLabel(roomNode) || nameOf(rooms, roomNode.room_def_id) || 'Room'
           const roomPath = [...deptPath, deptName]
           if (want.has('room')) {
             out.push({

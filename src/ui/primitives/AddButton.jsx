@@ -26,6 +26,16 @@ export default function AddButton({
   // proportional so it stays that way at any size.
   const ring = Math.max(2, Math.round(size * 0.17))
 
+  // THE CROSS IS DRAWN, NOT TYPED. It used to be a '+' character, and centring
+  // it centred the LINE BOX rather than the ink — a plus glyph sits on the
+  // font's math axis, a little above the optical centre of the em box. At rest
+  // that offset is vertical and passes for normal; rotated 45° to make the ×
+  // it becomes diagonal, and the cross reads as visibly off-centre.
+  //
+  // Two strokes about the middle of their own viewBox have no such opinion, and
+  // they rotate about the point they cross at.
+  const arm = Math.round((size - 2 * ring) * 0.62)
+
   return (
     <button
       type="button"
@@ -54,18 +64,23 @@ export default function AddButton({
         background: `linear-gradient(#fff, #fff) padding-box, ${RAINBOW} border-box`,
         boxSizing: 'border-box',
         color: GLYPH,
-        // Sized against the white disc inside the ring, not the button, or the
-        // glyph outgrows the space the thick border leaves it.
-        fontSize: Math.round((size - 2 * ring) * 0.95),
-        fontWeight: 700,
-        lineHeight: 1,
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
         cursor: 'pointer',
       }}
     >
-      +
+      {/* Sized against the white disc inside the ring, not the button, or the
+          cross outgrows the space the thick border leaves it. */}
+      <svg viewBox="0 0 10 10" width={arm} height={arm} aria-hidden focusable="false">
+        <path
+          d="M5 1V9 M1 5H9"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
     </button>
   )
 }

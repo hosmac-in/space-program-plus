@@ -11,10 +11,10 @@ import { useCatalog } from '../../data/catalog.jsx'
 import {
   catalogObjectCount,
   catalogRoomAreaSqft,
-  catalogRoomsForNode,
   resolveNodePlacement,
 } from '../../data/tree.js'
 import { withBuildingFactor } from '../../data/factors.js'
+import { loadProjectWeather } from '../../data/weather.js'
 import {
   buildInstanceData,
   DEPARTMENT_FACTORS,
@@ -64,8 +64,8 @@ export default function InstanceBuilder({
   selectedPhase,
   onExposeActions,
 }) {
-  // Inside Rhino, or as a viewer: the panel still reads, Save Data goes away.
-  // See src/readOnly.jsx.
+  // A viewer, or an app that only reads: the panel still reports, Save Data goes
+  // away. See src/readOnly.jsx.
   const readOnly = useReadOnly()
   const {
     departments: departmentDefs,
@@ -118,6 +118,10 @@ export default function InstanceBuilder({
   // The row version this option was loaded at. Null means no option is loaded,
   // and therefore that nothing may be written — see writeOption.
   const versionRef = useRef(null)
+
+  // The project's weather station, copied into every write. Not part of the
+  // option state: nothing here edits it, and it must not enter the undo stack.
+  const weatherRef = useRef(null)
 
   historyRef.current = history
   presentRef.current = history.present
@@ -253,7 +257,8 @@ export default function InstanceBuilder({
           present.sectionIds,
           present.buildingIds,
           present.phaseCount,
-          present.buildingFactors
+          present.buildingFactors,
+          weatherRef.current
         ),
         version: at + 1,
       })
@@ -357,7 +362,7 @@ export default function InstanceBuilder({
 
     supabase
       .from('sp_option')
-      .select('option_name, data, version')
+      .select('option_name, data, version, project_id')
       .eq('id', loadOptionId)
       .single()
       .then(({ data: row, error }) => {
@@ -370,11 +375,24 @@ export default function InstanceBuilder({
           )
           return
         }
-        const loaded = loadInstanceData(row.data, departmentDefs, roomDefs, objectDefs)
-        const dropped = (row.data?.departments ?? []).length - loaded.departments.length
-        if (dropped > 0) {
+        const loaded = loadInstanceData(row.data, departmentDefs, roomDefs, objectDefs, {
+          sections,
+          buildings: buildingDefs,
+        })
+        const { unanchored, departments: goneDepts, rooms: goneRooms, objects: goneObjects } = loaded.dropped
+        if (unanchored > 0) {
           onToast?.(
-            `${dropped} department${dropped === 1 ? '' : 's'} couldn't be loaded: they aren't anchored to a place in the tree. Re-add them from the map.`,
+            `${unanchored} department${unanchored === 1 ? '' : 's'} couldn't be loaded: they aren't anchored to a place in the tree. Re-add them from the map.`,
+            'error'
+          )
+        }
+        // Pruned, not failed to load: their definition rows are gone from the
+        // database, so there is nothing left for them to be. Said here because
+        // the next save writes the option without them — see loadInstanceData.
+        if (goneDepts + goneRooms + goneObjects > 0) {
+          const part = (n, word) => (n > 0 ? [`${n} ${word}${n === 1 ? '' : 's'}`] : [])
+          onToast?.(
+            `Removed ${[...part(goneDepts, 'department'), ...part(goneRooms, 'room'), ...part(goneObjects, 'object')].join(', ')} — deleted from the catalog.`,
             'error'
           )
         }
@@ -396,6 +414,15 @@ export default function InstanceBuilder({
         versionRef.current = row.version
         loadedIdRef.current = loadOptionId
         optionNameRef.current = row.option_name ?? ''
+
+        // The project's station, copied into the option on the next save so
+        // Grasshopper reads one document. A separate query, deliberately: it
+        // must never delay or fail the load, and until it answers the option
+        // keeps whatever station it was last saved with.
+        weatherRef.current = loaded.weather
+        loadProjectWeather(row.project_id).then((w) => {
+          if (!cancelled && w) weatherRef.current = w
+        })
       })
 
     return () => {
@@ -601,20 +628,27 @@ export default function InstanceBuilder({
     })
   }
 
-  function addRoom(deptInstanceId, def) {
+  // `pick` is one row from the room picker: { def, node }, where `node` is the
+  // CATALOG PLACEMENT chosen — null only in the unrestricted case, where the
+  // department's catalog node lists no rooms and there is no placement to point
+  // at.
+  //
+  // It used to take a bare definition and find the placement itself, taking the
+  // first match and toasting when there were several — which decided this room's
+  // anchor, its seeded area AND its seeded objects by array order. The picker
+  // names the placement now, so there is nothing left to guess.
+  function addRoom(deptInstanceId, pick) {
+    const { def, node = null } = pick
     mutateDepartments((prev) =>
       prev.map((d) => {
         if (d.instanceId !== deptInstanceId) return d
-        if (d.rooms.some((r) => r.defId === def.id)) return d
-
-        // Anchor the room to the catalog node it came from, so its object list
-        // stays isolated from other rooms sharing the definition. The picker
-        // lists definitions, so an ambiguous case takes the first and says so
-        // rather than blocking.
-        const matches = (catalogRoomsForNode(sections, d.treeNodeId) ?? []).filter((r) => r.room_def_id === def.id)
-        if (matches.length > 1) {
-          onToast?.(`${def.name} appears more than once in this department's catalog — using the first one.`)
-        }
+        // By the PLACEMENT, never the definition — two placements of one room
+        // are two rooms, and each may be added once.
+        //
+        // A room picked from "All rooms" is anchored to no placement, so there
+        // is nothing to refuse it against: it may be added as many times as
+        // someone wants, and renaming each is how they are told apart.
+        if (node && d.rooms.some((r) => r.treeRoomNodeId === node.instance_id)) return d
 
         return {
           ...d,
@@ -625,18 +659,22 @@ export default function InstanceBuilder({
               defId: def.id,
               name: def.name,
               type: def.type,
-              treeRoomNodeId: matches[0]?.instance_id ?? null,
+              treeRoomNodeId: node?.instance_id ?? null,
+              // No override: it goes by whatever the catalog placement is
+              // called. '' rather than absent, so the dirty check compares like
+              // with like — see loadInstanceData.
+              label: '',
               // NOT seeded: how many of a room there are is the size of this
               // program, and the catalog states none. See tree.js.
               count: DEFAULT_ROOM_COUNT,
               // Seeded from the catalog placement, and 0 when it states none.
               // COPIED, not inherited: from here the figure belongs to this
               // option, and editing the catalog never moves it. See tree.js.
-              areaSqft: catalogRoomAreaSqft(matches[0]),
+              areaSqft: catalogRoomAreaSqft(node),
               // This option's own note, separate from the catalog's. Empty, not
               // seeded: the catalog's note is shown beside it, not copied.
               notes: '',
-              objects: seedObjectsFrom(matches[0]),
+              objects: seedObjectsFrom(node),
             },
           ],
         }
@@ -726,20 +764,59 @@ export default function InstanceBuilder({
   const isContainer =
     selection?.kind === 'group' || selection?.kind === 'section' || selection?.kind === 'building'
 
-  // Where the open department sits, resolved live from the tree with the
-  // option's frozen names as the fallback for a placement the catalog no longer
-  // has. THE WHOLE PATH lives on this line: the card below used to repeat it
-  // above its own name, which cost the card a line to say what the sticky
-  // heading — always on screen — already said.
+  // WHERE YOU ARE — the full chain from the building down to what you clicked.
+  //
+  // >>> IT ALWAYS STARTS AT THE BUILDING AND ALWAYS ENDS AT THE SELECTION, on
+  // >>> every face of the panel. Neither is decoration. It showed the ANCESTORS
+  // >>> only, which meant a section read as one bare word and a group as two —
+  // >>> and a line whose length and meaning changed with what you clicked does
+  // >>> not read as a path at all, it reads as a caption that keeps changing its
+  // >>> mind. One shape, always, is what makes it a place.
+  //
+  // The one exception is a DEPARTMENT, whose own name stays off the line: the
+  // card immediately below is nothing but that name at 22px, and the line would
+  // be repeating it a centimetre above itself. A container's Header does repeat
+  // it, and that is the price of the rule — small grey type saying where, large
+  // type saying what.
+  //
+  // Same order as `sp_path`, the chain frozen onto a tagged Rhino object
+  // (CLAUDE.md, Rhino Companion), so the two read alike.
+  //
+  // Resolved live from the tree, with the option's frozen names as the fallback
+  // for a placement the catalog no longer has, and `selection.name` — carried
+  // from the canvas — for a container whose definition has gone.
   const shownPlacement = shownDept
     ? resolveNodePlacement(sections, shownDept.treeNodeId, groupDefs, buildingDefs)
     : null
-  const shownPath = shownDept
-    ? formatPath(
+
+  const buildingNameOf = (section) => buildingDefs.find((b) => b.id === section?.building_id)?.name
+
+  function whereYouAre() {
+    if (shownDept) {
+      return formatPath(
+        shownPlacement?.buildingName,
         shownPlacement?.sectionName ?? shownDept.fallbackSectionName,
         shownPlacement?.groupName ?? shownDept.fallbackGroupName
       )
-    : null
+    }
+    // Found by scanning the trees rather than through a placed department, so a
+    // group holding nothing yet still says where it is.
+    if (selection?.kind === 'group') {
+      const section = sections.find((s) => (s.tree?.groups ?? []).some((g) => g.instance_id === selection.id))
+      return formatPath(buildingNameOf(section), section?.name, selection.name)
+    }
+    if (selection?.kind === 'section') {
+      const section = sections.find((s) => s.id === selection.id)
+      return formatPath(buildingNameOf(section), section?.name ?? selection.name)
+    }
+    if (selection?.kind === 'building') {
+      return formatPath(buildingDefs.find((b) => b.id === selection.id)?.name ?? selection.name)
+    }
+    // Nothing selected: the option itself is where you are.
+    return null
+  }
+
+  const shownPath = whereYouAre()
 
   const error = catalogError || loadError
 
@@ -754,52 +831,51 @@ export default function InstanceBuilder({
           the canvas and in the chip you opened it from, while where you are is
           what moves as you click around. Deliberately smaller than the
           department name beneath it — this is where you are, that is what you
-          are editing. Falls back to the option's name on the container faces,
-          which have no one path. */}
-      {(isContainer || shownDept) && (
-        <div
+          are editing. Falls back to the option's name at the top of the tree —
+          a building, or nothing selected — which is what contains everything
+          else. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          minWidth: 0,
+          // STICKY, so Save Data is reachable from anywhere in a long
+          // department. It used to scroll away with the heading, and a
+          // department of twenty rooms put the only way to save what you were
+          // typing off the top of the panel.
+          position: 'sticky',
+          top: 0,
+          zIndex: Z.header,
+          // The negative margin pulls this out of the 16px inset App's
+          // wrapper puts on the panel, and the padding puts it back inside —
+          // so the background covers the full width and rooms scroll UNDER
+          // it rather than beside it. Same trick as the energy band.
+          margin: '-16px -16px 12px',
+          padding: '16px 16px 8px',
+          // Matches `side`, so what passes underneath is hidden rather than
+          // showing through a transparent strip.
+          background: '#fafafa',
+          borderBottom: `1px solid ${SUBTLE_RULE}`,
+        }}
+      >
+        <h2
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
+            margin: 0,
+            flex: 1,
             minWidth: 0,
-            // STICKY, so Save Data is reachable from anywhere in a long
-            // department. It used to scroll away with the heading, and a
-            // department of twenty rooms put the only way to save what you were
-            // typing off the top of the panel.
-            position: 'sticky',
-            top: 0,
-            zIndex: Z.header,
-            // The negative margin pulls this out of the 16px inset App's
-            // wrapper puts on the panel, and the padding puts it back inside —
-            // so the background covers the full width and rooms scroll UNDER
-            // it rather than beside it. Same trick as the energy band.
-            margin: '-16px -16px 12px',
-            padding: '16px 16px 8px',
-            // Matches `side`, so what passes underneath is hidden rather than
-            // showing through a transparent strip.
-            background: '#fafafa',
-            borderBottom: `1px solid ${SUBTLE_RULE}`,
+            overflowWrap: 'anywhere',
+            fontSize: 13,
+            fontWeight: 600,
+            color: '#777',
           }}
         >
-          <h2
-            style={{
-              margin: 0,
-              flex: 1,
-              minWidth: 0,
-              overflowWrap: 'anywhere',
-              fontSize: 13,
-              fontWeight: 600,
-              color: '#777',
-            }}
-          >
-            {shownPath ?? optionName}
-          </h2>
-          {shownDept && !readOnly && (
-            <SaveDataButton dirty={dirty} saving={saving} error={saveError} onSave={saveData} />
-          )}
-        </div>
-      )}
+          {shownPath ?? optionName}
+        </h2>
+        {shownDept && !readOnly && (
+          <SaveDataButton dirty={dirty} saving={saving} error={saveError} onSave={saveData} />
+        )}
+      </div>
       {error && <p style={{ color: 'red' }}>{error}</p>}
 
       {/* Four faces, chosen by what the canvas last selected. Only the

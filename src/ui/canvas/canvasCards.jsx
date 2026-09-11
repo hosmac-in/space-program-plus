@@ -8,7 +8,16 @@
 // Colours always arrive as a resolved palette from data/functions.js; this file
 // never reads bg_colour itself.
 
-import { BUILDING_LABEL_HEIGHT, LABEL_HEIGHT, PADDING } from './canvasLayout.js'
+import {
+  BUILDING_LABEL_HEIGHT,
+  CARD_CONTROL,
+  CARD_CONTROL_INSET,
+  CORE_GAP,
+  FIGURE_INSET_NESTED,
+  HEADER_GAP,
+  LABEL_HEIGHT,
+  PADDING,
+} from './canvasLayout.js'
 
 // Finer the deeper you go, so nesting reads from the strokes alone. It ran the
 // other way once, which made a department look like it contained its group.
@@ -41,6 +50,20 @@ export function CanvasContainer({
   // against the name it would add.
   headerLeft,
   headerRight,
+  // The header's ONE control — a × on a section, nothing on a group. It gets a
+  // column of its own so that `headerRight` (the area figure) ends at the same
+  // x on every card at this level whether or not that particular card can be
+  // removed: a ghost section has no × and a real one does, and packing the
+  // button into headerRight put their figures in two different places.
+  headerControl = null,
+  // Whether to hold that column open at all. A LEVEL decides it, never a card —
+  // sections reserve it, groups do not.
+  //
+  // A group reclaiming the space is what lines its figure up with the section's
+  // one level out: a group box is inset by PADDING, and PADDING is the width of
+  // the control column, so the two cancel and the figures land in one column
+  // down the nesting.
+  reserveControl = true,
   children,
 }) {
   const body = isGhost
@@ -80,12 +103,20 @@ export function CanvasContainer({
         className={`spp-hover-tint spp-hover-reveal${headerClassName ? ` ${headerClassName}` : ''}`}
         style={{
           height: LABEL_HEIGHT,
-          // Same inset as the cards below, so the two left edges line up.
-          padding: `0 ${PADDING}px`,
+          // Left: the same inset as the cards below, so the two left edges line
+          // up.
+          //
+          // Right: with a control column, what that control needs to sit equally
+          // off all three of its edges. Without one, the whole of what the
+          // column and its gap would have cost, LESS the PADDING this card is
+          // already inset by inside its parent — which is what puts its figure
+          // in the same column as its parent's. See FIGURE_INSET.
+          paddingLeft: PADDING,
+          paddingRight: reserveControl ? CARD_CONTROL_INSET : FIGURE_INSET_NESTED,
           boxSizing: 'border-box',
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
+          gap: HEADER_GAP,
           fontSize,
           fontWeight,
           // A solid body already carries the colour; painting the header again
@@ -105,6 +136,19 @@ export function CanvasContainer({
           {name}
         </span>
         {headerRight}
+        {reserveControl && (
+          <span
+            style={{
+              width: CARD_CONTROL,
+              flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {headerControl}
+          </span>
+        )}
       </div>
       {children}
     </div>
@@ -128,6 +172,12 @@ export function CanvasBandHeading({
   // space around a card. Both canvases pass it — the Tree tab to edit a
   // building's factors, the Project tab to report what is in it.
   onSelect,
+  // How far the core-section gutter reaches to the LEFT of this band (0 when no
+  // building has a core). The rule is extended back across it and a vertical
+  // rule dropped at the band's left edge, so the gutter reads as part of this
+  // building rather than as something floating beside it — the two together are
+  // the cross the core sits under. See ui/tree/treeLayout.js.
+  gutter = 0,
   right,
   children,
 }) {
@@ -139,7 +189,26 @@ export function CanvasBandHeading({
   const ink = isGhost ? ghostText : colours.border
 
   return (
-    <div style={{ width: '100%', height: '100%', boxSizing: 'border-box', pointerEvents: 'auto' }}>
+    <div
+      style={{ position: 'relative', width: '100%', height: '100%', boxSizing: 'border-box', pointerEvents: 'auto' }}
+    >
+      {gutter > 0 && (
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            // Centred in the gap, not on the band's edge: the rule divides the
+            // core from the row, and against the first section's edge it read as
+            // that section's border rather than as the building's own line.
+            // The half-width keeps the STROKE centred, not its left edge.
+            left: -CORE_GAP / 2 - (isSelected ? 1.5 : 1),
+            top: 0,
+            bottom: 0,
+            borderLeft: `${isSelected ? 3 : 2}px solid ${ink}`,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
       <div
         style={{
           height: BUILDING_LABEL_HEIGHT,
@@ -148,11 +217,17 @@ export function CanvasBandHeading({
           alignItems: 'center',
           gap: 12,
           // The rule runs the full width of the band: with no border, it is what
-          // says how far this building reaches.
+          // says how far this building reaches. It starts back at the gutter's
+          // left edge, so the core sits under this building's rule too.
+          marginLeft: -gutter,
+          width: `calc(100% + ${gutter}px)`,
           borderBottom: `${isSelected ? 3 : 2}px solid ${ink}`,
           color: ink,
         }}
       >
+        {/* Holds the name at the band's own left edge while the rule above
+            reaches further back. */}
+        {gutter > 0 && <span style={{ flex: `0 0 ${gutter - 12}px` }} />}
         <span
           title={name}
           onClick={
@@ -231,7 +306,9 @@ export function CanvasCard({
     <div
       // Safe on the whole card, unlike a container — nothing nested inside a
       // department card carries a × or a tint of its own to be triggered with it.
-      className={`spp-hover-tint spp-hover-reveal ${isDraggable ? '' : 'nodrag '}nopan${pulse ? ' tree-drop-pulse' : ''}`}
+      // spp-card-grow: a card that changes height — a ghost being added, which
+      // goes from one line to the full card — eases into it instead of jumping.
+      className={`spp-card-grow spp-hover-tint spp-hover-reveal ${isDraggable ? '' : 'nodrag '}nopan${pulse ? ' tree-drop-pulse' : ''}`}
       onClick={onClick}
       title={title}
       style={{

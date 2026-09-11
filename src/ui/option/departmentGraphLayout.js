@@ -7,26 +7,32 @@
 
 import { functionColours } from '../../data/functions.js'
 import { buildingAreaSqft } from '../../data/optionData.js'
+import { compareSections } from '../../data/tree.js'
 import {
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
+  CORE_GAP,
   layoutGroupBox,
   layoutRowBox,
   layoutSectionBox,
+  PADDING,
 } from '../canvas/canvasLayout.js'
 
 export { NODE_WIDTH } from '../canvas/canvasLayout.js'
 
 // Taller than the Tree tab's cards: these also carry an area figure.
 export const NODE_HEIGHT = 90
-const TOP_GAP = 60
 
-// Real first, then smallest to largest, then alphabetical.
-function compareDeptEntries(a, b) {
-  if (a.isReal !== b.isReal) return a.isReal ? -1 : 1
-  const areaDiff = (a.areaSqft ?? 0) - (b.areaSqft ?? 0)
-  return areaDiff !== 0 ? areaDiff : a.name.localeCompare(b.name)
-}
+// A GHOST IS SHORTER. It carries a name and nothing else — no area, no phase
+// strips — so at the full height it was mostly empty space, and a group of them
+// pushed everything below it down the canvas for nothing.
+//
+// THE HEIGHT IS THE + AND ITS INSET, NOTHING ELSE: 1px border, 4px, the 18px
+// button, 4px, 1px. The button sits at the same top-right inset the × has on a
+// real card, so squaring the bottom inset to match is what makes it read as
+// centred — centring it by hand instead would put it off that shared grid.
+export const GHOST_NODE_HEIGHT = 28
+const TOP_GAP = 60
 
 // A ghost's dashed edge and label take their colour from the surface behind
 // them, which is decided by what has been added above it:
@@ -59,6 +65,79 @@ function ghostInkFor({ sectionIsGhost, groupIsGhost, sectionColours, groupColour
 // behind the strip.
 function phaseGhostInkFor(entry, deptGhostInk) {
   return entry.isReal ? entry.colours.inverted.color : deptGhostInk
+}
+
+// ONE CARD TRAVELS, THE REST STEP ASIDE AS IT REACHES THEM.
+//
+// Adding a department makes it real, which moves it out of the ghosts and up
+// its group; removing one sends it down. Sliding every affected card at once
+// said "the list is different now"; this says "this card went there", which is
+// the only question being asked.
+//
+// The card that changed rank by more than one slot is the traveller. Everything
+// else in that same container moves by exactly one, and each starts as the
+// traveller draws level with it — so the gap opens ahead of it, one card at a
+// time, instead of all at once.
+//
+// Pure: takes the nodes and the two arrangements, returns nodes carrying their
+// own transition plus how long the whole thing runs.
+export function applyMotion(nodes, order, previous, { step = 110, base = 240 } = {}) {
+  if (!previous || !order) return { nodes, duration: 0 }
+
+  const moved = new Map()
+  order.forEach((rank, key) => {
+    const was = previous.get(key)
+    if (was != null && was !== rank) moved.set(key, { was, now: rank })
+  })
+  if (moved.size === 0) return { nodes, duration: 0 }
+
+  const containerOf = (key) => key.slice(0, key.lastIndexOf(':'))
+  const timing = new Map()
+  let duration = 0
+  const at = (key, delay, span) => {
+    const existing = timing.get(key)
+    // A card can be passed by only one traveller; if two claim it, the earlier
+    // is the one that reaches it first.
+    if (!existing || delay < existing.delay) timing.set(key, { delay, duration: span })
+    duration = Math.max(duration, delay + span)
+  }
+
+  moved.forEach(({ was, now }, key) => {
+    if (Math.abs(now - was) <= 1) return
+    const span = Math.abs(now - was)
+    at(key, 0, span * step + base)
+
+    const up = now < was
+    moved.forEach(({ was: theirs }, other) => {
+      if (other === key || containerOf(other) !== containerOf(key)) return
+      // How far the traveller has gone when it draws level with this card.
+      const reached = up ? was - 1 - theirs : theirs - was - 1
+      if (reached >= 0) at(other, reached * step, base)
+    })
+  })
+
+  // A card nothing explains — an arrangement that shifted for some other reason
+  // — simply moves. Never touches one already timed above.
+  moved.forEach((_, key) => {
+    if (!timing.has(key)) at(key, 0, base)
+  })
+
+  return {
+    nodes: nodes.map((n) => {
+      const t = n.orderKey && timing.get(n.orderKey)
+      if (!t) return n
+      return {
+        ...n,
+        style: {
+          ...n.style,
+          // Inline, so it beats .spp-option-canvas's blanket transition — which
+          // stays the default for everything this leaves alone.
+          transition: `transform ${t.duration}ms cubic-bezier(0.2, 0.8, 0.2, 1) ${t.delay}ms`,
+        },
+      }
+    }),
+    duration,
+  }
 }
 
 export function buildLayout({
@@ -96,6 +175,13 @@ export function buildLayout({
   onAddSection,
   onRequestRemoveSection,
   onRequestRemove,
+  // THE ARRANGEMENT TO HOLD, or null for the real one. An add or a remove
+  // changes what is a ghost, and a ghost is partitioned to the end — so the card
+  // that changed would grow and move in the same frame, and the move is the part
+  // that has to be watched. DepartmentGraph hands back the order that is
+  // currently on screen, the card changes height where it stands, and only then
+  // is this dropped and everything slides. See REORDER_DELAY_MS there.
+  frozenOrder = null,
 }) {
   // Keyed by tree node, never by definition id. That is what lets one
   // department definition placed twice in the catalog appear as two
@@ -153,10 +239,42 @@ export function buildLayout({
   // view adds. A group or department with no parent isn't drawn at all, since
   // this view can't place one (that's the Tree tab's job). Every section is
   // drawn even when empty, so the full set is always visible.
-  const items = [...sections]
-    .sort((a, b) => a.name.localeCompare(b.name))
+  // THE CATALOG'S ORDER, WITH THE GHOSTS PUSHED TO THE END. Sections by
+  // sp_section.sort_order, groups and departments in the order their arrays
+  // hold them — all three arranged on the Tree tab and never here. What is IN
+  // the option keeps that order among itself; what is not trails it, out of the
+  // way of the thing being read.
+  //
+  // Sections run across a building, so their ghosts go to the RIGHT; groups and
+  // departments stack down, so theirs go to the BOTTOM. Same rule, two axes.
+  //
+  // Every sort here is a stable partition — a two-way comparison and nothing
+  // else — so the authored order survives inside each half. Anything that
+  // compares further (this canvas once sorted departments by area) reorders
+  // cards as an option is filled in, and the same building then reads
+  // differently on the two tabs.
+  const ghostsLast = (a, b) => (a === b ? 0 : a ? -1 : 1)
+  const heightOfEntry = (entry) => (entry.isReal || phaseCount > 1 ? NODE_HEIGHT : GHOST_NODE_HEIGHT)
+
+  // One list, sorted either by where the ghosts belong or by where the cards
+  // currently are. Both are stable, so the catalog's order holds underneath.
+  // Anything the frozen order has never seen sorts last, which is where a
+  // newly-placed card would have gone anyway.
+  // Keys must match the ones `order` records below, or a held arrangement holds
+  // nothing.
+  const sectionKey = (section) => `sec:${section.building_id}:${section.id}`
+  const groupKey = (section, gb) => `grp:${section.id}:${gb.groupNode.instance_id}`
+  const deptKey = (groupNode, entry) => `dep:${groupNode.instance_id}:${entry.treeNodeId}`
+
+  const arrange = (list, keyOf, isRealOf) =>
+    frozenOrder
+      ? [...list].sort((a, b) => (frozenOrder.get(keyOf(a)) ?? Infinity) - (frozenOrder.get(keyOf(b)) ?? Infinity))
+      : [...list].sort((a, b) => ghostsLast(isRealOf(a), isRealOf(b)))
+
+  const itemsInCatalogOrder = [...sections]
+    .sort(compareSections)
     .map((section) => {
-      const groupLayouts = (section.tree?.groups || [])
+      const groupLayoutsInCatalogOrder = (section.tree?.groups || [])
         .map((groupNode) => {
           const group = groups.find((g) => g.id === groupNode.group_def_id)
           if (!group) return null
@@ -166,10 +284,16 @@ export function buildLayout({
               return def ? makeEntry(def, deptNode.instance_id) : null
             })
             .filter(Boolean)
-            .sort(compareDeptEntries)
-          return { groupNode, group, entries, ...layoutGroupBox(entries, NODE_HEIGHT) }
+          const ordered = arrange(entries, (e) => deptKey(groupNode, e), (e) => e.isReal)
+          return { groupNode, group, entries: ordered, ...layoutGroupBox(ordered, heightOfEntry) }
         })
         .filter(Boolean)
+      // A group is a ghost when nothing in it has been added.
+      const groupLayouts = arrange(
+        groupLayoutsInCatalogOrder,
+        (gb) => groupKey(section, gb),
+        (gb) => gb.entries.some((e) => e.isReal)
+      )
 
       const entries = groupLayouts.flatMap((gb) => gb.entries)
       return {
@@ -181,9 +305,22 @@ export function buildLayout({
       }
     })
 
-  // Sections in this option stack first; the rest trail after. A stable sort
-  // keeps each partition alphabetical.
-  items.sort((a, b) => (a.inOption === b.inOption ? 0 : a.inOption ? -1 : 1))
+  // Sections in the option first, the ghosts trailing to the right — the same
+  // rule, one level up. Stable, so sort_order holds inside each half.
+  const items = arrange(itemsInCatalogOrder, (item) => sectionKey(item.section), (item) => item.inOption)
+
+  // What is on screen once this layout is drawn: every card's rank among its
+  // SIBLINGS, keyed by container then by itself. The container is in the key
+  // because the stagger (applyMotion) has to know which cards a travelling one
+  // actually passes — two groups shifting at once are unrelated events.
+  const order = new Map()
+  items.forEach((item, si) => {
+    order.set(`sec:${item.section.building_id}:${item.section.id}`, si)
+    item.groupLayouts.forEach((gb, gi) => {
+      order.set(`grp:${item.section.id}:${gb.groupNode.instance_id}`, gi)
+      gb.entries.forEach((e, ei) => order.set(`dep:${gb.groupNode.instance_id}:${e.treeNodeId}`, ei))
+    })
+  })
 
   const ghostsOf = (entries) =>
     entries.filter((e) => !e.isReal).map((e) => ({ defId: e.defId, treeNodeId: e.treeNodeId }))
@@ -202,17 +339,30 @@ export function buildLayout({
   // Driven off the `buildings` list, in its sort_order, rather than off distinct
   // building_ids in `sections` — so a building the option holds but has put
   // nothing in still draws, as the empty shell you fill in as you go.
+  //
+  // The core section (sp_section.is_core) is drawn in a gutter to the LEFT of
+  // the band, outside it — see the same split in ui/tree/treeLayout.js. It is
+  // what a building always has, not one of the sections someone added to it.
   const buildingItems = buildings
     .filter((building) => buildingIds.includes(building.id))
     .map((building) => {
-      const own = items.filter((item) => item.section.building_id === building.id)
+      const mine = items.filter((item) => item.section.building_id === building.id)
+      const core = mine.find((item) => item.section.is_core) || null
+      const own = mine.filter((item) => item !== core)
       return {
         building,
+        core,
         items: own,
         buildingLayout: layoutRowBox(own.map((item) => item.sectionLayout), BUILDING_LABEL_HEIGHT),
-        entries: own.flatMap(entriesOf),
+        entries: own.concat(core || []).flatMap(entriesOf),
       }
     })
+
+  // One gutter width for the whole canvas, so every band starts at the same x.
+  // Cores are right-aligned in it, which keeps the gap to the band constant.
+  const coreWidth = Math.max(0, ...buildingItems.map((b) => b.core?.sectionLayout.width || 0))
+  const gutter = coreWidth ? coreWidth + CORE_GAP : 0
+  const CONTENT_TOP = BUILDING_LABEL_HEIGHT + PADDING
 
   const nodes = []
 
@@ -231,7 +381,7 @@ export function buildLayout({
   nodes.push({
     id: 'root',
     type: 'root',
-    position: { x: 0, y: 0 },
+    position: { x: gutter, y: 0 },
     data: { name: optionName || 'Program' },
     draggable: false,
     selectable: false,
@@ -249,7 +399,6 @@ export function buildLayout({
     : 0
 
   let runningY = NODE_HEIGHT + TOP_GAP
-  let deptIdCounter = 0
 
   buildingItems.forEach((bItem) => {
     // The building DEF id is the node id, unlike groups below — a building
@@ -257,23 +406,30 @@ export function buildLayout({
     // disambiguate. See the note in data/optionData.js on why that holds.
     const buildingNodeId = `buildingbox-${bItem.building.id}`
     const buildingColours = functionColours(functions, bItem.building.function_id)
-    // Every band starts at the left edge, so their headers line up down the page.
-    const buildingX = 0
+    // Every band starts past the gutter, so their headers line up down the page.
+    const buildingX = gutter
     const buildingY = runningY
+    // A core taller than every section in the row still has to fit inside the
+    // band's advance, or the next building climbs over it.
+    const bandHeight = Math.max(
+      bItem.buildingLayout.height,
+      bItem.core ? CONTENT_TOP + bItem.core.sectionLayout.height : 0
+    )
 
     nodes.push({
       id: buildingNodeId,
       type: 'buildingBox',
       position: { x: buildingX, y: buildingY },
       width: bandWidth,
-      height: bItem.buildingLayout.height,
-      style: { width: bandWidth, height: bItem.buildingLayout.height },
+      height: bandHeight,
+      style: { width: bandWidth, height: bandHeight },
       zIndex: 0,
       draggable: false,
       selectable: false,
       data: {
         name: bItem.building.name,
         colours: buildingColours,
+        gutter,
         isSelected: selection?.kind === 'building' && selection.id === bItem.building.id,
         onSelect: () =>
           onSelectContainer({ kind: 'building', id: bItem.building.id, name: bItem.building.name }),
@@ -287,17 +443,19 @@ export function buildLayout({
         ),
       },
     })
-    bItem.buildingLayout.placed.forEach((sb, sIdx) => {
-      const item = bItem.items[sIdx]
+    // The core and the band's sections are emitted by the same code — only
+    // where they sit differs.
+    const emitSection = (item, sectionX, sectionY) => {
       const sectionNodeId = `sectionbox-${item.section.id}`
       const entries = entriesOf(item)
       const sectionColours = functionColours(functions, item.section.function_id)
       const sectionIsGhost = !item.inOption
-      const sectionX = buildingX + sb.x
-      const sectionY = buildingY + sb.y
 
       nodes.push({
         id: sectionNodeId,
+        // Its place in `order`, so applyMotion can time this node without
+        // parsing its id back apart.
+        orderKey: sectionKey(item.section),
         type: 'sectionBox',
         position: { x: sectionX, y: sectionY },
         width: item.sectionLayout.width,
@@ -341,6 +499,7 @@ export function buildLayout({
           // The group DEF id can repeat across sections, so the node id is keyed
           // by the group's placement instance instead.
           id: `groupbox-${gb.groupNode.instance_id}`,
+          orderKey: groupKey(item.section, gb),
           type: 'groupBox',
           position: { x: groupX, y: groupY },
           width: gb.width,
@@ -366,16 +525,27 @@ export function buildLayout({
           },
         })
 
-        gb.childPositions.forEach(({ entry, x, y }) => {
-          deptIdCounter += 1
+        gb.childPositions.forEach(({ entry, x, y, height }) => {
           nodes.push({
-            id: `dept-${deptIdCounter}`,
+            // KEYED BY THE PLACEMENT, not by where it happens to sit. These ids
+            // were a running counter, which meant a card's id changed the moment
+            // anything above it moved — React Flow then reused that DOM node for
+            // a different department, and the slide in index.css animated
+            // nothing while the contents swapped underneath it.
+            //
+            // tree_node_id is the catalog placement this card is drawn from, and
+            // one card is drawn per placement — see data/tree.js on identity.
+            id: `dept-${entry.treeNodeId}`,
+            orderKey: deptKey(gb.groupNode, entry),
             type: 'department',
             position: { x: groupX + x, y: groupY + y },
             zIndex: 30,
             draggable: false,
             data: {
               ...entry,
+              // The slot the layout gave it — the card must draw at exactly that
+              // height or the stack below it no longer lines up.
+              height,
               phaseCount,
               selectedPhase,
               ghostInk: deptGhostInk,
@@ -393,10 +563,21 @@ export function buildLayout({
           })
         })
       })
-    })
+    }
 
-    runningY += bItem.buildingLayout.height + BUILDING_GAP
+    bItem.buildingLayout.placed.forEach((sb, sIdx) =>
+      emitSection(bItem.items[sIdx], buildingX + sb.x, buildingY + sb.y)
+    )
+    if (bItem.core) {
+      emitSection(
+        bItem.core,
+        gutter - CORE_GAP - bItem.core.sectionLayout.width,
+        buildingY + CONTENT_TOP
+      )
+    }
+
+    runningY += bandHeight + BUILDING_GAP
   })
 
-  return { nodes }
+  return { nodes, order }
 }

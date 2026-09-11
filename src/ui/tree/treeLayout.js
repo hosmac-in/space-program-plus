@@ -4,9 +4,11 @@
 // ui/canvas/canvasLayout.js. Only what's unique to this tab lives here.
 
 import { functionColours } from '../../data/functions.js'
+import { compareSections } from '../../data/tree.js'
 import {
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
+  CORE_GAP,
   layoutGroupBox,
   layoutRowBox,
   layoutSectionBox,
@@ -57,17 +59,18 @@ export function buildTreeLayout(
   const nodes = []
 
   const items = [...sections]
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort(compareSections)
     .map((section) => {
+      // No sort: groups and departments are drawn in the order they are STORED,
+      // which is the order someone arranged them in. Alphabetical was the rule
+      // until the tree could be reordered — see insertGroupNode in data/tree.js.
       const groupLayouts = (section.tree?.groups || [])
         .map((groupNode) => ({ groupNode, groupDef: groupById.get(groupNode.group_def_id) }))
         .filter((e) => e.groupDef)
-        .sort((a, b) => a.groupDef.name.localeCompare(b.groupDef.name))
         .map(({ groupNode, groupDef }) => {
           const deptEntries = (groupNode.departments || [])
             .map((deptNode) => ({ deptNode, deptDef: deptById.get(deptNode.department_def_id) }))
             .filter((e) => e.deptDef)
-            .sort((a, b) => a.deptDef.name.localeCompare(b.deptDef.name))
           return { groupNode, groupDef, ...layoutGroupBox(deptEntries, NODE_HEIGHT) }
         })
       return { section, sectionLayout: layoutSectionBox(groupLayouts) }
@@ -92,10 +95,17 @@ export function buildTreeLayout(
   // are stacked in a column and the rule is the only edge a building has:
   // ragged ones read as a measurement of the building rather than as the
   // heading they are, and a short one crops its own title.
+  // The core section is drawn in a gutter to the LEFT of the band, outside it —
+  // it is what a building always has rather than one of the sections someone
+  // added to it, and in the row it read as the first of those. One core per
+  // building (sp_section.is_core); a building without one simply has no gutter.
   const bands = buildings.map((building) => {
-    const own = items.filter((item) => item.section.building_id === building.id)
+    const mine = items.filter((item) => item.section.building_id === building.id)
+    const core = mine.find((item) => item.section.is_core) || null
+    const own = mine.filter((item) => item !== core)
     return {
       building,
+      core,
       own,
       band: layoutRowBox(
         own.map((item) => ({ ...item.sectionLayout, width: widthOf(item) })),
@@ -104,15 +114,30 @@ export function buildTreeLayout(
     }
   })
 
+  // One gutter width for the whole canvas, so every band starts at the same x
+  // and the headings still read as a column. Cores are right-aligned inside it,
+  // which keeps the gap to the band constant when they differ in width.
+  const coreWidth = Math.max(0, ...bands.map((b) => (b.core ? widthOf(b.core) : 0)))
+  const gutter = coreWidth ? coreWidth + CORE_GAP : 0
+
   // Only the drawn width is shared. Each band's sections keep their own
   // positions, so a narrow building simply has empty space to its right.
   const bandWidth = bands.length ? Math.max(...bands.map((b) => b.band.width)) : 0
 
-  bands.forEach(({ building, own, band }) => {
-    const height = Math.max(band.height, stableBuildingHeights?.get(building.id) ?? 0)
-    buildingHeights.set(building.id, band.height)
+  // Where a band's children start, below its heading — the same line the core
+  // sits on, so the gutter reads across into the row.
+  const CONTENT_TOP = BUILDING_LABEL_HEIGHT + PADDING
 
-    const buildingX = 0
+  bands.forEach(({ building, core, own, band }) => {
+    // A core taller than every section in the row still has to fit inside the
+    // band's advance, or the next building climbs over it.
+    const content = Math.max(band.height, core ? CONTENT_TOP + core.sectionLayout.height : 0)
+    const height = Math.max(content, stableBuildingHeights?.get(building.id) ?? 0)
+    buildingHeights.set(building.id, content)
+
+    // The band starts past the gutter; its heading moves with it, so every
+    // building's title and first section stay on one line.
+    const buildingX = gutter
     const buildingY = runningY
 
     nodes.push({
@@ -128,6 +153,7 @@ export function buildTreeLayout(
       data: {
         buildingId: building.id,
         name: building.name,
+        gutter,
         isEmpty: own.length === 0,
         canEdit,
         // A building band is selectable on this tab, unlike on the Project
@@ -139,13 +165,12 @@ export function buildTreeLayout(
       },
     })
 
-    band.placed.forEach((sb, sIdx) => {
-      const { section, sectionLayout } = own[sIdx]
-      const width = widthOf(own[sIdx])
+    // The core and the band's sections are emitted by the same code — only
+    // where they sit differs.
+    const emitSection = (item, sectionX, sectionY) => {
+      const { section, sectionLayout } = item
+      const width = widthOf(item)
       sectionWidths.set(section.id, sectionLayout.width)
-
-      const sectionX = buildingX + sb.x
-      const sectionY = buildingY + sb.y
 
       nodes.push({
         id: `sectionbox-${section.id}`,
@@ -155,12 +180,18 @@ export function buildTreeLayout(
         height: sectionLayout.height,
         style: { width, height: sectionLayout.height },
         zIndex: 10,
-        draggable: false,
+        // Reordering the row is the only thing a section drag does — the core
+        // is not in the row, so it stays put.
+        draggable: canEdit && !section.is_core,
+        dragHandle: '.section-drag-handle',
         selectable: false,
         data: {
           sectionId: section.id,
+          buildingId: section.building_id,
           name: section.name,
           isEmpty: sectionLayout.isEmpty,
+          isDraggable: canEdit && !section.is_core,
+          isCore: !!section.is_core,
           canEdit,
           colours: functionColours(functions, section.function_id),
         },
@@ -223,7 +254,10 @@ export function buildTreeLayout(
           })
         })
       })
-    })
+    }
+
+    band.placed.forEach((sb, sIdx) => emitSection(own[sIdx], buildingX + sb.x, buildingY + sb.y))
+    if (core) emitSection(core, gutter - CORE_GAP - widthOf(core), buildingY + CONTENT_TOP)
 
     runningY += height + BUILDING_GAP
   })

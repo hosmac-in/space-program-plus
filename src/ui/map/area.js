@@ -59,6 +59,12 @@ export function siteAreas(geojson) {
 // Every number the app prints goes through here, so thousands separators and
 // rounding are the same wherever a figure appears. It was defined four times
 // under three names.
-export function formatArea(n, digits = 0) {
-  return Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: digits })
+// `minDigits` pads: a multiplier shows 1.00 rather than 1, so a column of them
+// keeps one width and the steppers beside it do not shuffle as it is nudged.
+// Default 0, which is every figure that is simply printed.
+export function formatArea(n, digits = 0, minDigits = 0) {
+  return Number(n ?? 0).toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: minDigits,
+  })
 }

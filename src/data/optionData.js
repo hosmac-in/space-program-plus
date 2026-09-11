@@ -9,6 +9,11 @@
 //     "buildings": ["<sp_building id>"],
 //     "sections": ["<sp_section id>"],
 //     "building_factors": { "<sp_building id>": { "built_area_grossing_factor": 1.2 } },
+//     "weather": {                    <- the project's station, copied in
+//       "station_id": "<hb_weather id>",
+//       "epw_url": "https://.../IND_Mumbai...epw",   <- Grasshopper reads this
+//       "city": "Mumbai", "source": "ISHRAE"
+//     },
 //     "departments": [{
 //       "instance_id": "...",
 //       "department_def_id": "...",
@@ -23,6 +28,7 @@
 //         "count": 1,                   <- how many of this room
 //         "area_sqft": 0,               <- area of ONE of it, typed
 //         "notes": "...",               <- optional, this option's own note
+//         "label": "Female Toilet",     <- optional override of the catalog's
 //         "schedules": { "occupancy": "..." },  <- overrides, absent = inherit
 //         "loads": { "people": 6 },     <- overrides, absent = inherit
 //         "hvac": { "conditioned": true },      <- overrides, absent = inherit
@@ -36,6 +42,11 @@
 // reorganising the Tree tab keeps every option in sync. The frozen
 // fallback_*_name strings cover the one case that cannot resolve: the placement
 // was deleted from the catalog.
+//
+// A room's `label` is the exception, and is NOT a resolved name copied in: it is
+// authored here, overriding the catalog placement's own label. See
+// resolveRoomLabel in data/tree.js for why that is not the denormalisation this
+// document otherwise forbids.
 //
 // KEYS
 //
@@ -119,6 +130,17 @@
 // SCHEMA VERSIONS. Every older row still loads, and absence always means the
 // behaviour that version had, so none of these needs a migration.
 //
+// 15  a room may carry `label`: what this option calls that placement,
+//     overriding the catalog placement's own label and the sp_room name beneath
+//     it. Absent: whatever the catalog says, and failing that the definition's
+//     name — which is what every older row means. This is what lets one
+//     definition sit twice in one department and read as two different rooms.
+//
+// 14  `weather`: the project's station, COPIED in on every save so Grasshopper
+//     can read the .epw url straight off this document without joining two
+//     tables it has no client for. Absent: no station assigned to the project —
+//     which is what every older row means, and is not an error.
+//
 // 13  a room may carry `loads` and `hvac` — overrides only, exactly as
 //     `schedules` are. Absent: everything inherited. Note that 0 is a VALUE in
 //     both, as is `false` for a boolean, unlike a department factor where only
@@ -173,7 +195,7 @@ import {
 } from './factors.js'
 import { deptNodeIndex } from './tree.js'
 
-export const SCHEMA_VERSION = 13
+export const SCHEMA_VERSION = 15
 
 // Re-exported because this is where every other option figure is imported from.
 export {
@@ -207,9 +229,13 @@ export function buildInstanceData(
   sectionIds = [],
   buildingIds = [],
   phaseCount = DEFAULT_PHASE_COUNT,
-  buildingFactors = {}
+  buildingFactors = {},
+  weather = null
 ) {
   return {
+    // Copied from the project on every save, not resolved on read: Grasshopper
+    // reads this document alone. A project with no station writes no key.
+    ...(weather?.epw_url ? { weather } : {}),
     // Written as given, not clamped: the builder already holds a valid count,
     // and a legacy option using more phases than the input offers must keep them.
     phase_count: Number.isInteger(phaseCount) && phaseCount > 0 ? phaseCount : DEFAULT_PHASE_COUNT,
@@ -246,6 +272,11 @@ export function buildInstanceData(
         // Only when there is one, and trimmed — an emptied note leaves no key
         // behind, so a room nobody has annotated writes what it always did.
         ...(r.notes?.trim() ? { notes: r.notes.trim() } : {}),
+        // This option's own name for the placement, overriding the catalog's
+        // label and the definition's name beneath it. Same discipline as the
+        // note: absent rather than '', so a room nobody has renamed writes the
+        // payload it always did and Save Data stays grey on load.
+        ...(r.label?.trim() ? { label: r.label.trim() } : {}),
         // Only when there are any, so an option that never touches a schedule,
         // a load or its air writes exactly the payload it wrote before these
         // existed.
@@ -271,8 +302,12 @@ export function buildInstanceData(
 // `sectionIds` and `buildingIds` come back null, not [], for a row saved before
 // those keys existed — the caller can then tell "no key" (derive it) from "the
 // user removed every one", which is legitimate.
-export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs) {
+export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, catalog = {}) {
   const rows = (data?.departments ?? []).filter((d) => d.tree_node_id)
+  // Counted so the caller can say what went, and kept apart: an UNANCHORED
+  // department lost its place in the tree and could be re-added, a PRUNED one
+  // lost the definition it displays as and cannot exist at all.
+  const dropped = { unanchored: (data?.departments ?? []).length - rows.length, departments: 0, rooms: 0, objects: 0 }
 
   // Number.isInteger, not truthiness, so 0 and the stale uuid an early v4 row
   // may carry in phase_id are all rejected without a special case.
@@ -288,7 +323,28 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs) {
     DEFAULT_PHASE_COUNT
   )
 
+  // A DEFINITION THAT NO LONGER EXISTS IS NOT DATA. Deleting a row from
+  // sp_department / sp_room / sp_object leaves its id here — no foreign key
+  // reaches into jsonb — and it used to be kept: nameless in the panels,
+  // invisible on the canvas, and still counted in every total, so the HUD
+  // reported area that nothing on screen accounted for.
+  //
+  // Dropped on load, so what is drawn and what is totalled are the same thing,
+  // and written out pruned by the next save (buildInstanceData). The catalog is
+  // cleaned the same way — see pruneTree in data/tree.js.
+  //
+  //   >>> This is by DEFINITION id only. A department whose tree_node_id no
+  //   >>> longer resolves is left alone deliberately: that placement may come
+  //   >>> back, the frozen sp_path still reads as something, and the department
+  //   >>> itself is real work. See data/questionnaire.js on the same choice.
+  const keep = (list, id, kind) => {
+    if (list.some((x) => x.id === id)) return true
+    dropped[kind] += 1
+    return false
+  }
+
   const departments = rows
+    .filter((d) => keep(departmentDefs, d.department_def_id, 'departments'))
     .map((d) => {
       const deptDef = departmentDefs.find((x) => x.id === d.department_def_id)
       return {
@@ -309,51 +365,70 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs) {
           }),
           {}
         ),
-        rooms: (d.rooms ?? []).map((r) => {
-          const roomDef = roomDefs.find((x) => x.id === r.room_def_id)
-          return {
-            instanceId: r.instance_id ?? crypto.randomUUID(),
-            defId: r.room_def_id,
-            name: roomDef?.name,
-            type: roomDef?.type,
-            treeRoomNodeId: r.tree_room_node_id ?? null,
-            count: Number.isInteger(r.count) && r.count > 0 ? r.count : DEFAULT_ROOM_COUNT,
-            // Negative is not an area.
-            areaSqft:
-              Number.isFinite(r.area_sqft) && r.area_sqft >= 0 ? r.area_sqft : DEFAULT_ROOM_AREA_SQFT,
-            // '' rather than null, so the field bound to it is always
-            // controlled and the dirty check compares like with like.
-            notes: typeof r.notes === 'string' ? r.notes : '',
-            // Carried ONLY when the row has some: absent here must mean the
-            // same as absent on the wire, or the panel's dirty check would see
-            // a change ({} against nothing) the moment an option loaded.
-            ...(r.schedules ? { schedules: r.schedules } : {}),
-            ...(r.loads ? { loads: r.loads } : {}),
-            ...(r.hvac ? { hvac: r.hvac } : {}),
-            objects: (r.objects ?? []).map((o) => {
-              const objectDef = objectDefs.find((x) => x.id === o.object_def_id)
-              return {
-                instanceId: o.instance_id ?? crypto.randomUUID(),
-                defId: o.object_def_id,
-                name: objectDef?.name,
-                type: objectDef?.type,
-                areaSqft: objectDef?.area_sqft ?? null,
-                count: o.count,
-              }
-            }),
-          }
-        }),
+        rooms: (d.rooms ?? [])
+          .filter((r) => keep(roomDefs, r.room_def_id, 'rooms'))
+          .map((r) => {
+            const roomDef = roomDefs.find((x) => x.id === r.room_def_id)
+            return {
+              instanceId: r.instance_id ?? crypto.randomUUID(),
+              defId: r.room_def_id,
+              name: roomDef?.name,
+              type: roomDef?.type,
+              treeRoomNodeId: r.tree_room_node_id ?? null,
+              count: Number.isInteger(r.count) && r.count > 0 ? r.count : DEFAULT_ROOM_COUNT,
+              // Negative is not an area.
+              areaSqft:
+                Number.isFinite(r.area_sqft) && r.area_sqft >= 0 ? r.area_sqft : DEFAULT_ROOM_AREA_SQFT,
+              // '' rather than null, so the field bound to it is always
+              // controlled and the dirty check compares like with like.
+              notes: typeof r.notes === 'string' ? r.notes : '',
+              // Same, and for the same reason: '' here against no key on the
+              // wire is what keeps an untouched option from loading dirty.
+              // NOT the resolved name — that is derived at render, and a derived
+              // value in the draft is a dirty check that lies.
+              label: typeof r.label === 'string' ? r.label : '',
+              // Carried ONLY when the row has some: absent here must mean the
+              // same as absent on the wire, or the panel's dirty check would see
+              // a change ({} against nothing) the moment an option loaded.
+              ...(r.schedules ? { schedules: r.schedules } : {}),
+              ...(r.loads ? { loads: r.loads } : {}),
+              ...(r.hvac ? { hvac: r.hvac } : {}),
+              objects: (r.objects ?? [])
+                .filter((o) => keep(objectDefs, o.object_def_id, 'objects'))
+                .map((o) => {
+                  const objectDef = objectDefs.find((x) => x.id === o.object_def_id)
+                  return {
+                    instanceId: o.instance_id ?? crypto.randomUUID(),
+                    defId: o.object_def_id,
+                    name: objectDef?.name,
+                    type: objectDef?.type,
+                    areaSqft: objectDef?.area_sqft ?? null,
+                    count: o.count,
+                  }
+                }),
+            }
+          }),
       }
     })
 
+  // Sections and buildings are ROWS, so a stored id whose row is gone is prunable
+  // the same way. Only when the caller hands over the lists to check against —
+  // and only when the key exists, since null means "no key, derive it" and an
+  // empty array means "the user removed every one".
+  const known = (ids, list) => (Array.isArray(ids) && Array.isArray(list) ? ids.filter((id) => list.some((x) => x.id === id)) : ids ?? null)
+
   return {
     departments,
-    sectionIds: data?.sections ?? null,
-    buildingIds: data?.buildings ?? null,
+    dropped,
+    sectionIds: known(data?.sections, catalog.sections),
+    buildingIds: known(data?.buildings, catalog.buildings),
     // {} rather than null: unlike sections and buildings there is nothing to
     // derive from an absent key, and "no overrides" reads both the same.
     buildingFactors: data?.building_factors ?? {},
     phaseCount,
+    // Read back only so a save that cannot reach the project keeps what is
+    // already stored rather than dropping it. The project is the source.
+    weather: data?.weather ?? null,
   }
 }
 

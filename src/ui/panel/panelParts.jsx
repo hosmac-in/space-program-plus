@@ -11,22 +11,45 @@
 // their nodes into these props.
 
 import RemoveButton from '../primitives/RemoveButton.jsx'
-import LinkButton from '../primitives/LinkButton.jsx'
 import { formatArea } from '../map/area.js'
 import { useEffect, useRef, useState } from 'react'
 import {
   AREA_WIDTH,
   BLOCK_PADDING,
   BLOCK_RADIUS,
-  CONTROL_SLOT,
   HEADER_PADDING,
   OBJECT_CONTROL,
   ROOM_CONTROL,
   SUBTLE_GAP,
   SUBTLE_RULE,
+  TRAILING_SLOT,
 } from './panelLayout.js'
 
 const ellipsis = { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+
+// EVERY AREA IS DRAWN THE SAME WAY, and this is the only description of it: one
+// size, italic, right-aligned, in a fixed column that ends where every other
+// area's does. A room's total, an object's, the circulation line — they are read
+// down a column against each other, and a figure a size larger or a few pixels
+// short of the rest breaks that the moment anyone tries.
+//
+// Colour is the caller's: these sit on white bodies and on function-coloured
+// headers, and only the caller knows which.
+export const AREA_FIGURE = {
+  width: AREA_WIDTH,
+  flexShrink: 0,
+  textAlign: 'right',
+  fontSize: 12,
+  fontStyle: 'italic',
+  whiteSpace: 'nowrap',
+}
+
+// How far a room block's header content sits inside the panel's own content
+// box: the block's 1px border plus its horizontal padding, which HEADER_PADDING
+// keeps equal to BLOCK_PADDING. A heading that wants to line up with the rooms
+// below it pads by this. Derived rather than written as 13, so it follows if
+// the block's padding ever moves.
+const ROOM_INSET = BLOCK_PADDING + 1
 
 // The box the whole panel sits in, painted with the department's own function
 // colour — the same pale wash its card wears on either canvas, so the pane
@@ -72,7 +95,15 @@ export function formatPath(...names) {
 // `under` sits below the name INSIDE the name's column, so it runs alongside the
 // stacked figures in `right` rather than below the whole row — two columns of
 // small print reading across from each other, one left-aligned and one right.
-export function PanelHeading({ name, path, note, right, under }) {
+// `control` is an annotation slot (ui/option/annotations.jsx), at the FAR RIGHT
+// in ANNOTATION_SLOT — the same column a room's sits in, so the two line up down
+// the panel and the heading's figures end where a room's area does.
+//
+// `reserveControl` holds that column open whether or not anything fills it. A
+// department is removed on the canvas, not from this panel, so nothing else ever
+// will — and a column that appeared in one app and not the other would move
+// every figure in the panel sideways between them.
+export function PanelHeading({ name, path, note, right, under, control, reserveControl }) {
   return (
     <div style={{ minWidth: 0 }}>
       {/* Above the name: context is read on the way in, and below the name it
@@ -87,12 +118,42 @@ export function PanelHeading({ name, path, note, right, under }) {
           {note && <span style={{ marginLeft: path ? 6 : 0, color: '#c17' }}>{note}</span>}
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, minWidth: 0 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 12,
+          minWidth: 0,
+          // A room block's border plus its header's horizontal padding. With
+          // this the heading's right-hand column ends exactly where a room's
+          // does, one level in.
+          paddingRight: reserveControl ? ROOM_INSET : 0,
+        }}
+      >
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2, overflowWrap: 'anywhere' }}>{name}</div>
           {under}
         </div>
         {right}
+        {reserveControl && (
+          <span
+            style={{
+              width: TRAILING_SLOT,
+              flexShrink: 0,
+              display: 'inline-flex',
+              justifyContent: 'center',
+              // The row's gap is 12 and a room header's is 6; this makes up the
+              // difference, so the figures sit the same distance off the control
+              // in both.
+              marginLeft: -6,
+              // Not on the baseline: the item is a graphic, and it lines up with
+              // the first line of the figures beside it.
+              alignSelf: 'flex-start',
+            }}
+          >
+            {control}
+          </span>
+        )}
       </div>
     </div>
   )
@@ -131,7 +192,10 @@ export function CountField({
   // same italic and size.
   suffix = null,
   // How big the figure is against the text it follows. See `figure` below.
-  size = '0.75em',
+  // Was 0.75em, which at a 14px room name left a 10px italic figure carrying an
+  // editable number — subordinate to the point of being hard to read, and the
+  // steppers beside it smaller still.
+  size = '0.9em',
   // Off for a figure that is always typed rather than nudged. An area is a
   // measurement someone reads off a drawing — stepping it from 0 is not how it
   // is ever arrived at, and the buttons only take room from the column it has
@@ -141,11 +205,21 @@ export function CountField({
   // each sizes to its own digits and sits against the text it follows.
   width = null,
 }) {
-  // At rest a figure is shown at its full precision — "1.00", not "1" — so the
-  // field keeps the same width as it is stepped and the − / + beside it do not
-  // shuffle sideways under the pointer. Only at rest: reformatting what someone
-  // is halfway through typing moves the caret out from under them.
-  const format = (n) => (decimals > 0 ? Number(n ?? 0).toFixed(decimals) : String(n ?? ''))
+  // At rest a figure is shown at its full precision — "1.00", not "1" — and
+  // SEPARATED: 5,400, the way formatArea prints every other number in the app. A
+  // field that showed 5400 beside a total reading 5,400 made the two look like
+  // different quantities.
+  //
+  // Only at rest. Reformatting what someone is halfway through typing moves the
+  // caret out from under them, so while the field is focused the draft is left
+  // exactly as typed and the separators return on blur — which is also why
+  // `settle` has to strip them back out again.
+  const format = (n) => (n == null || n === '' ? '' : formatArea(Number(n), decimals, decimals))
+
+  // Back the other way: what is in the field, as a number. Separators are
+  // display only and must come off before anything parses it — Number('5,400')
+  // is NaN, which would settle a typed area back to its minimum.
+  const unformat = (raw) => String(raw ?? '').replace(/,/g, '')
 
   const [draft, setDraft] = useState(format(value))
   const [focused, setFocused] = useState(false)
@@ -170,7 +244,7 @@ export function CountField({
 
   // Whatever is in the field, as a legal value.
   const settle = (raw) => {
-    const parsed = Number(raw)
+    const parsed = Number(unformat(raw))
     return Math.max(min, quantise(Number.isFinite(parsed) ? parsed : min))
   }
 
@@ -195,7 +269,7 @@ export function CountField({
     []
   )
 
-  const shown = decimals > 0 ? Number(value).toFixed(decimals) : value
+  const shown = format(value)
 
   // Italic, the same ink as whatever it sits in, and three quarters the size of
   // it: the figure is part of the phrase — "Consultation Room ×10" — but the
@@ -267,11 +341,13 @@ export function CountField({
       }}
       title={by < 0 ? 'Decrease' : 'Increase'}
       style={{
-        width: 13,
-        height: 13,
-        lineHeight: '11px',
+        // A hit target, not a decoration — and big enough that the glyph inside
+        // it is legible at the size the figure beside it is now drawn.
+        width: 16,
+        height: 16,
+        lineHeight: '14px',
         padding: 0,
-        fontSize: 11,
+        fontSize: 13,
         cursor: 'pointer',
         color: 'inherit',
         background: 'rgba(255,255,255,0.35)',
@@ -306,13 +382,20 @@ export function CountField({
     >
       <span>{prefix}</span>
       <input
-        type="number"
-        // Suppresses the native spinner in both engines — see index.css.
+        // TEXT, NOT NUMBER. A number input refuses any value it cannot parse,
+        // and "5,400" is one of them — it would show an empty field the moment
+        // the separators went in. Nothing is lost: the native spinner was
+        // already suppressed (the − / + beside it are the steppers), and `min`,
+        // `step` and the precision are enforced by settle() rather than by the
+        // element. inputMode keeps the numeric keypad on a touch device.
+        type="text"
+        inputMode="decimal"
         className="count-field"
-        min={min}
-        step={step}
         value={draft}
-        onChange={(e) => typeCount(e.target.value)}
+        // Digits, one decimal point, and the separators a paste may bring —
+        // anything else would settle to the minimum on blur without ever
+        // looking like it was rejected.
+        onChange={(e) => typeCount(e.target.value.replace(/[^\d.,]/g, ''))}
         onFocus={() => setFocused(true)}
         onBlur={() => {
           setFocused(false)
@@ -321,14 +404,17 @@ export function CountField({
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === 'Enter') e.currentTarget.blur()
-          if (e.key === 'Escape') setDraft(String(value))
+          if (e.key === 'Escape') setDraft(format(value))
         }}
         title={title}
         style={{
           // Sized to its own contents so the figure sits against the name
           // rather than in a fixed column. The floor keeps a single digit from
           // collapsing to nothing.
-          width: `${Math.max(1.6, String(draft).length + 0.4)}ch`,
+          // Just enough slack for the caret. It was 0.4ch, which read as a
+          // second space before a unit — "2,000  sqft" against the printed
+          // "1,000 sqft" of the rows above it.
+          width: `${Math.max(1.6, String(draft).length + 0.2)}ch`,
           // Longhands only, never the `font` shorthand: mixing the two in one
           // React style object lets the shorthand reset fontStyle after it has
           // been set, and the figure comes out upright.
@@ -390,52 +476,102 @@ export function ObjectRow({
           most of a narrow row on a word that repeats what the name already
           says, and ellipsised the half that identifies the thing. `type` is
           still taken, and still the tooltip, so putting it back is one line. */}
-      <span
-        title={type ? `${name} (${type})` : name}
-        style={{
-          ...ellipsis,
-          fontSize: 13,
-          fontStyle: tone ? 'italic' : undefined,
-          color: tone === 'warn' ? '#c11' : tone ? '#888' : undefined,
-        }}
-      >
-        {name}
-      </span>
+      {/* THE COUNT SITS AGAINST THE NAME, not out in the middle of the row.
+          "AHU Machine ×2" is one phrase — the figure is part of what the thing
+          is called here — and floated between the name and the area it read as
+          a third column belonging to neither. The pair takes the row's spare
+          width together, so the name still ellipsises before the area does. */}
+      <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span
+          title={type ? `${name} (${type})` : name}
+          style={{
+            ...ellipsis,
+            flex: '0 1 auto',
+            fontSize: 13,
+            fontStyle: tone ? 'italic' : undefined,
+            color: tone === 'warn' ? '#c11' : tone ? '#888' : undefined,
+          }}
+        >
+          {name}
+        </span>
 
-      {count != null && (
-        <CountField
-          value={count}
-          canEdit={canEdit}
-          onChange={onCountChange ?? (() => {})}
-          onCommit={onCountCommit}
-          title={`How many ${name}`}
-        />
-      )}
+        {count != null && (
+          <CountField
+            value={count}
+            canEdit={canEdit}
+            onChange={onCountChange ?? (() => {})}
+            onCommit={onCountCommit}
+            title={`How many ${name}`}
+          />
+        )}
+      </span>
 
       {/* Same column as the room's own area in the header above — see
           AREA_WIDTH. The two have to line up: one is the room, the rest are
           what is in it. */}
       {area !== undefined && (
-        <span
-          style={{
-            width: AREA_WIDTH,
-            textAlign: 'right',
-            flexShrink: 0,
-            fontSize: 12,
-            fontStyle: 'italic',
-            color: tone === 'warn' ? '#c11' : '#555',
-            whiteSpace: 'nowrap',
-          }}
-        >
+        <span style={{ ...AREA_FIGURE, color: tone === 'warn' ? '#c11' : '#555' }}>
           {area != null ? `${formatArea(area)} sqft` : 'no area'}
         </span>
       )}
 
-      <span style={{ width: CONTROL_SLOT, flexShrink: 0, display: 'inline-flex', justifyContent: 'center' }}>
+      {/* TRAILING_SLOT, not the button's own width — see panelLayout. The × is
+          centred in the column every row ends with, rather than setting it. */}
+      <span style={{ width: TRAILING_SLOT, flexShrink: 0, display: 'inline-flex', justifyContent: 'center' }}>
         {canEdit && onRemove && (
           <RemoveButton onRemove={onRemove} title={`Remove ${name}`} size={OBJECT_CONTROL} />
         )}
       </span>
+    </div>
+  )
+}
+
+// THE ROOM'S OWN AREA, as a row above its object list rather than a figure in
+// its header. It leads: the room, ruled off, then what stands in it, then what
+// they leave over.
+//
+// That is the order the three are read in — you type the area, you list what has
+// to fit, and circulation is the answer at the bottom. The header used to hold
+// the input, which asked the same column to be a field on one line and a total
+// on every other, and left the room's real size — area × count — a figure
+// nothing on screen ever showed.
+//
+// Same three columns as an ObjectRow, so every figure in the block lines up:
+// label, the area in AREA_WIDTH, and the control slot left empty (there is
+// nothing to remove — a room always has an area, even if it is 0).
+export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChange, onCommit, title }) {
+  return (
+    <div
+      className="spp-row"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        paddingBlock: 4,
+        minWidth: 0,
+        // The breaker: the room, then what is in it.
+        borderBottom: `1px solid ${SUBTLE_RULE}`,
+        marginBottom: 4,
+      }}
+    >
+      <span style={{ ...ellipsis, fontSize: 13 }}>{label}</span>
+      <CountField
+        value={value}
+        canEdit={canEdit}
+        onChange={onChange ?? (() => {})}
+        onCommit={onCommit}
+        // A room may legitimately have no area entered yet, so unlike a count
+        // this floors at zero.
+        min={0}
+        prefix=""
+        suffix="sqft"
+        // Typed, never nudged — a measurement read off a drawing.
+        steppers={false}
+        width={AREA_WIDTH}
+        size="12px"
+        title={title ?? 'Area of one of this room'}
+      />
+      <span style={{ width: TRAILING_SLOT, flexShrink: 0 }} />
     </div>
   )
 }
@@ -457,22 +593,52 @@ export function RoomBlock({
   name,
   type,
   count,
-  // The area of ONE of this room, typed. The Project tab's is this option's
-  // figure; the Tree tab's is the catalog default an option starts from.
-  areaSqft,
+  // WHAT THIS MANY OF THE ROOM COMES TO — area × count, read-only. The area of
+  // ONE of it is typed on RoomAreaRow, down in the body; this is the figure
+  // that was never shown anywhere, and it is the one that adds up to the
+  // department. An object row states its total the same way.
+  totalAreaSqft,
   canEdit = true,
   onCountChange,
-  onAreaChange,
-  // Called once when the field is left, for the caller that WRITES on each edit
-  // — the Tree tab, where a keystroke would be a whole-section jsonb write. The
-  // Project tab edits in memory and needs only onAreaChange.
-  onAreaCommit,
+  // RENAMED BY DOUBLE-CLICKING THE TITLE. Pass no handler and the title is
+  // plain text — which is what a read-only view and the Companion get.
+  //
+  // `inheritedName` is what the room is called with nothing typed here: the
+  // catalog's label on the Tree tab, and on the Project tab the catalog's label
+  // or the definition's name. Typing exactly that stores NO override — see
+  // below.
+  onNameCommit,
+  inheritedName,
   onRemove,
-  // Rhino only: tag the objects selected in the model as this room. Absent in a
-  // browser, where the bridge does not exist — see rhino.js.
-  onLink,
+  // An annotation slot: a node a second app can put in the header's one control
+  // position, where the × would otherwise be. The two never appear together —
+  // an app with something to put here is read-only, so there is no ×. This file
+  // does not know or care what the node is; see ui/option/annotations.jsx.
+  control,
+  // A node rendered INSTEAD of the count field. The count is a fact about the
+  // program and an app that cannot edit it may have something better to say in
+  // its place. Null everywhere but that app.
+  countOverride = null,
   children,
 }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  // What Enter (or leaving the field) does with what was typed.
+  //
+  //   >>> TYPING BACK THE INHERITED NAME STORES NOTHING. The field opens holding
+  //   >>> the name as shown, so the commonest way to leave it unchanged is to
+  //   >>> type nothing at all — and storing "Toilet" over an inherited "Toilet"
+  //   >>> would look identical while quietly pinning the name against a later
+  //   >>> rename of sp_room. Blank does the same thing, which is how a name is
+  //   >>> cleared: empty the field and press Enter.
+  const commitName = () => {
+    if (!editing) return
+    setEditing(false)
+    const next = draft.trim()
+    onNameCommit?.(next && next !== (inheritedName ?? '') ? next : '')
+  }
+
   return (
     <div style={{ border: `1px solid ${colours.border}`, borderRadius: BLOCK_RADIUS, marginTop: 8, minWidth: 0 }}>
       <div
@@ -494,61 +660,115 @@ export function RoomBlock({
         {/* Name and count read as one phrase — "Consultation Room ×10" — so the
             count sits immediately after the name rather than being flung to the
             far edge. The name shrinks and ellipsises before the count does; the
-            spacer after them is what holds the × against the right edge. */}
-        <span title={name} style={{ ...ellipsis, flex: '0 1 auto' }}>
-          {name} {type ? `(${type})` : ''}
-        </span>
-        {count != null && (
-          <CountField
-            value={count}
-            canEdit={canEdit && !!onCountChange}
-            onChange={onCountChange}
-            title={`How many ${name}`}
-            // The header is painted with the room's function colour, so a
-            // read-only figure takes the ink that colour was paired with.
-            colour="inherit"
+            spacer after them is what holds the × against the right edge.
+
+            DOUBLE-CLICK TO RENAME. A title is a title until you ask it to be a
+            field: a room's name is read a hundred times for every time it is
+            changed, and an input sitting permanently on a function-coloured
+            strip would be the loudest thing in the panel — the same argument
+            the count field settled long ago. A single click is spoken for
+            anyway; the header selects and drags in other panels.
+
+            Opens holding the name AS SHOWN, so you edit the words you were
+            looking at rather than an empty box. Enter commits, Escape abandons,
+            and leaving the field commits too — the tab's own rule, since a blur
+            that threw away what you typed would be the same trap as the room
+            count's flush-on-unmount. */}
+        {editing ? (
+          <input
+            className="spp-title-field"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={(e) => e.currentTarget.select()}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onBlur={() => commitName()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+              if (e.key === 'Escape') {
+                // Abandon before the blur handler can commit it.
+                setEditing(false)
+                e.currentTarget.blur()
+              }
+            }}
+            style={{
+              flex: '0 1 auto',
+              minWidth: 0,
+              // Sized to what is in it, so the count still sits against the name
+              // rather than across a gap.
+              width: `${Math.max(8, draft.length + 1)}ch`,
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              fontWeight: 'inherit',
+              color: 'inherit',
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              padding: 0,
+            }}
           />
+        ) : (
+          <span
+            title={canEdit && onNameCommit ? `${name} — double-click to rename` : name}
+            onDoubleClick={
+              canEdit && onNameCommit
+                ? (e) => {
+                    e.stopPropagation()
+                    setDraft(name ?? '')
+                    setEditing(true)
+                  }
+                : undefined
+            }
+            style={{ ...ellipsis, flex: '0 1 auto' }}
+          >
+            {name} {type ? `(${type})` : ''}
+          </span>
         )}
+        {count != null &&
+          (countOverride ?? (
+            <CountField
+              value={count}
+              canEdit={canEdit && !!onCountChange}
+              onChange={onCountChange}
+              title={`How many ${name}`}
+              // The header is painted with the room's function colour, so a
+              // read-only figure takes the ink that colour was paired with.
+              colour="inherit"
+            />
+          ))}
         <span style={{ flex: 1, minWidth: 0 }} />
 
-        {/* The room's own area, typed — the objects do not add up to it. Held
-            against the right edge rather than against the name: it is a
-            measurement of the room, not part of what the room is called. */}
-        {areaSqft != null && (
-          <CountField
-            value={areaSqft}
-            canEdit={canEdit && !!(onAreaChange || onAreaCommit)}
-            onChange={onAreaChange ?? (() => {})}
-            onCommit={onAreaCommit}
-            // A room may legitimately have no area entered yet, so unlike a
-            // count this floors at zero.
-            min={0}
-            prefix=""
-            suffix="sqft"
-            // Typed, never nudged — see CountField.
-            steppers={false}
-            width={AREA_WIDTH}
-            title={`Area of one ${name}`}
-            colour="inherit"
-          />
+        {/* EVERY AREA IN THIS BLOCK IS THE SAME FIGURE IN THE SAME COLUMN: the
+            same size, italic, right-aligned in AREA_WIDTH, ending where the one
+            below it ends. This one is a total, not an input — typed on
+            RoomAreaRow — so it is drawn, not fielded. */}
+        {totalAreaSqft != null && (
+          <span
+            title={count != null ? `${count} × the area of one ${name}` : `Area of ${name}`}
+            style={{ ...AREA_FIGURE, color: 'inherit' }}
+          >
+            {formatArea(totalAreaSqft)} sqft
+          </span>
         )}
 
-        {/* ONE control slot, not two. Inside Rhino everything that writes to the
-            database is gone — the × included — so the link button takes the slot
-            the × would have had rather than widening the header for a second.
-            The two never appear together: see src/readOnly.jsx. */}
+        {/* ONE control slot, not two. An annotation takes the slot the × would
+            have had rather than widening the header for a second: an app with
+            something to put here writes nothing, so there is no × to sit beside
+            — see src/readOnly.jsx.
+
+            And ONE WIDTH, whichever it holds: the slot used to grow from 18 to
+            30 when an annotation arrived, which moved every area figure in the
+            header 12px left in the Companion and nowhere else. */}
         <span
-          style={{ width: CONTROL_SLOT, flexShrink: 0, display: 'inline-flex', justifyContent: 'center' }}
+          style={{
+            width: TRAILING_SLOT,
+            flexShrink: 0,
+            display: 'inline-flex',
+            justifyContent: 'center',
+          }}
         >
-          {onLink ? (
-            <LinkButton
-              onLink={onLink}
-              title={`Tag the selected Rhino object as ${name}`}
-              size={ROOM_CONTROL}
-            />
-          ) : (
-            canEdit && onRemove && <RemoveButton onRemove={onRemove} title={`Remove ${name}`} size={ROOM_CONTROL} />
-          )}
+          {control ?? (canEdit && onRemove && <RemoveButton onRemove={onRemove} title={`Remove ${name}`} size={ROOM_CONTROL} />)}
         </span>
       </div>
 

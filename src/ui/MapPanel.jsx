@@ -4,7 +4,6 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import DrawControl from './map/DrawControl.jsx'
 import SiteClusterLayer from './map/SiteClusterLayer.jsx'
-import DepartmentGraph from './option/DepartmentGraph.jsx'
 import TreeCanvas from './tree/TreeCanvas.jsx'
 import QuestionOutline from './questions/QuestionOutline.jsx'
 import { RULE } from './layout.js'
@@ -58,25 +57,12 @@ export default function MapPanel({
   drawMode,
   onSiteDrawn,
   optionId,
-  optionName,
-  departments,
-  departmentDefs,
-  onAddDepartments,
-  onRemoveDepartment,
-  sectionIds,
-  onAddSection,
-  onRemoveSection,
-  buildingIds,
-  phaseCount,
-  selection,
-  onSelectContainer,
   onSelectDepartment,
   selectedDeptInstanceId,
   // Tree tab only: a building's band is selectable there, because a building
   // has attributes of its own to edit — see tree/BuildingPanel.jsx.
   onSelectTreeBuilding,
   selectedTreeBuildingId,
-  selectedPhase,
   // The Questions tab: which building is being authored, and which node in it
   // side is reporting on.
   questionBuildingId,
@@ -94,6 +80,10 @@ export default function MapPanel({
   // no option is. Passed in like `band`: it lists and creates options, which is
   // App's data to wire.
   optionChooser,
+  // The open option's canvas, as a slot rather than fifteen props — it is wired
+  // from the option workspace, which is shared with the other app that shows it.
+  // See ui/option/OptionCanvas.jsx.
+  optionCanvas,
   // The projects with their geometry. App fetches them, because side reports on
   // the same list — see ProjectSummary.
   projects,
@@ -126,27 +116,7 @@ export default function MapPanel({
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
           {view === 'project' && !optionId && <div style={{ position: 'absolute', inset: 0 }}>{optionChooser}</div>}
 
-          {view === 'project' && optionId && (
-            <div style={{ position: 'absolute', inset: 0 }}>
-              <DepartmentGraph
-                optionName={optionName}
-                departments={departments}
-                departmentDefs={departmentDefs}
-                onAddDepartments={onAddDepartments}
-                onRemoveDepartment={onRemoveDepartment}
-                sectionIds={sectionIds}
-                onAddSection={onAddSection}
-                onRemoveSection={onRemoveSection}
-                buildingIds={buildingIds}
-                phaseCount={phaseCount}
-                selection={selection}
-                onSelectContainer={onSelectContainer}
-                onSelectDepartment={onSelectDepartment}
-                selectedDeptInstanceId={selectedDeptInstanceId}
-                selectedPhase={selectedPhase}
-              />
-            </div>
-          )}
+          {view === 'project' && optionId && <div style={{ position: 'absolute', inset: 0 }}>{optionCanvas}</div>}
 
           {view === 'tree' && (
             <div style={{ position: 'absolute', inset: 0 }}>

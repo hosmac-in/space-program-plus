@@ -1,19 +1,22 @@
-// Top-level shell: auth gate, then a 75/25 split of map-or-canvas on the left
-// and the project/option controls on the right.
+// THE EDITOR — the full app: four tabs, the map, the catalog, the questionnaire.
 //
-// App owns exactly one piece of cross-cutting state — which department is
-// selected — because three panes need to agree on it. Everything else lives in
-// the component that uses it, or in the catalog provider.
+// The other app is the Rhino Companion (src/companion/), which shows one option
+// and nothing else. Both are assembled from src/ui/; what they share about an
+// option is `useOptionWorkspace`, `OptionCanvas` and `OptionPanel`, so the two
+// cannot drift in what they show. See CLAUDE.md, Rhino Companion.
+//
+// This shell owns what only it has: the tabs, the map's state, and the
+// selections the Tree and Questions tabs make. Everything about the open option
+// comes from the workspace hook.
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../data/supabase.js'
 import { resolveNodePlacement } from '../data/tree.js'
 import { useUrlState } from '../url.js'
-import { useIsAdmin, useIsViewer, useSession } from '../data/auth.js'
+import { useIsAdmin, useIsViewer } from '../data/auth.js'
 import { ReadOnlyProvider } from '../readOnly.jsx'
-import { useRhinoBridge, useRhinoSignIn } from '../rhino.js'
-import { CatalogProvider, useCatalog } from '../data/catalog.jsx'
-import Login from './Login.jsx'
+import { useCatalog } from '../data/catalog.jsx'
+import SessionGate from './SessionGate.jsx'
 import MapPanel from './MapPanel.jsx'
 import ProjectBand from './ProjectBand.jsx'
 import ProjectSummary from './map/ProjectSummary.jsx'
@@ -21,7 +24,9 @@ import Hud from './Hud.jsx'
 import ConfirmModal from './primitives/ConfirmModal.jsx'
 import { PanelNote } from './panel/panelParts.jsx'
 import OptionChooser from './option/OptionChooser.jsx'
-import InstanceBuilder from './option/InstanceBuilder.jsx'
+import OptionCanvas from './option/OptionCanvas.jsx'
+import OptionPanel from './option/OptionPanel.jsx'
+import { useOptionWorkspace } from './option/useOptionWorkspace.js'
 import RoomLinkPanel from './tree/RoomLinkPanel.jsx'
 import BuildingPanel from './tree/BuildingPanel.jsx'
 import { TreeEditorProvider } from './tree/useTreeEditor.jsx'
@@ -31,51 +36,16 @@ import LoadingOverlay from './primitives/LoadingOverlay.jsx'
 import AppFooter from './AppFooter.jsx'
 import AppHeader from './AppHeader.jsx'
 import { RULE, SIDE_WIDTH } from './layout.js'
-import { APP_STYLE } from './appStyle.js'
-import { ADD_BUTTON_STYLE } from './primitives/AddButton.jsx'
-import { REMOVE_BUTTON_STYLE } from './primitives/RemoveButton.jsx'
-import { RESET_BUTTON_STYLE } from './primitives/ResetButton.jsx'
-import { LINK_BUTTON_STYLE } from './primitives/LinkButton.jsx'
-import { RIBBON_STYLE } from './primitives/UndoRedoRibbon.jsx'
+import { SHARED_STYLE } from './appStyles.js'
 
 export default function App() {
-  const { session, loading } = useSession()
-  // Inside Rhino the connect window signs itself in from gh/.env rather than
-  // showing a login form. Inert in a browser. See src/rhino.js.
-  const rhinoSignInError = useRhinoSignIn(!!session, loading)
-
-  if (loading) return <LoadingOverlay />
-
-  if (!session) {
-    return (
-      <>
-        <Login />
-        {/* Only ever set inside Rhino, where nobody is going to type into the
-            form behind this — the credentials came from gh/.env and were
-            refused, which is a thing to fix in that file. */}
-        {rhinoSignInError && (
-          <p style={{ position: 'fixed', bottom: 16, left: 0, right: 0, textAlign: 'center', color: 'red' }}>
-            Rhino sign-in failed: {rhinoSignInError}
-          </p>
-        )}
-        <LoadingOverlay />
-      </>
-    )
-  }
-
-  return (
-    <CatalogProvider>
-      <SignedInApp session={session} />
-    </CatalogProvider>
-  )
+  return <SessionGate>{(session) => <SignedInApp session={session} />}</SessionGate>
 }
 
 function SignedInApp({ session }) {
-  const isViewer = useIsViewer(session.user.id)
-  const { connected: inRhino } = useRhinoBridge()
-  // Two unrelated reasons nothing may be written; every control wants the one
-  // answer. See src/readOnly.jsx.
-  const readOnly = isViewer || inRhino
+  // The editor's one reason nothing may be written. The Companion has the other
+  // — it is read-only by construction. See src/readOnly.jsx.
+  const readOnly = useIsViewer(session.user.id)
   // An admin who cannot write is not an admin for any purpose the UI has: the
   // tabs that check this are exactly the ones whose controls write.
   const isAdmin = useIsAdmin(session.user.id) && !readOnly
@@ -94,49 +64,30 @@ function SignedInApp({ session }) {
   const [isDrawingSite, setIsDrawingSite] = useState(false)
   const [drawnSiteGeometry, setDrawnSiteGeometry] = useState(null)
 
-  // Which department definition is selected...
-  const [highlightedDepartmentId, setHighlightedDepartmentId] = useState(null)
-  // ...and, when the selection came from a specific placement on a canvas, that
-  // placement's tree node id. The rooms panel needs the placement, not the
-  // definition, since rooms hang off the placement. A selection carrying no
-  // node (there's no one placement it refers to) clears this.
-  const [selectedDeptInstanceId, setSelectedDeptInstanceId] = useState(null)
   // Which building's band is selected on the TREE tab. Never set at the same
   // time as a department: the two are the pane's two faces there, and holding
   // both would leave it showing one while the canvas highlighted the other.
   //
   // Not the same thing as `selection`, which is the Project canvas's — that one
-  // has four kinds and drives a different panel entirely.
+  // has four kinds and drives a different panel entirely. It is also the one
+  // piece of the workspace's selection that is tab-specific, which is why the
+  // hook takes `onSelect` rather than knowing about it.
   const [selectedTreeBuildingId, setSelectedTreeBuildingId] = useState(null)
-  // ...and which of the option's phases. A placement holds one entry per phase
-  // it is staged in, each with its own rooms, so the node id alone no longer
-  // names one department to edit. Meaningless on the Tree tab, which has no
-  // phases — that panel reads the node id only.
-  const [selectedPhase, setSelectedPhase] = useState(1)
 
-  // Exposed by InstanceBuilder so the canvases can add and remove departments
-  // without App owning the option's state.
-  const [builderState, setBuilderState] = useState({
-    departments: [],
-    sectionIds: [],
-    buildingIds: [],
-    departmentDefs: [],
-    optionName: '',
-    addDepartments: () => {},
-    removeDepartment: () => {},
-    addSection: () => {},
-    removeSection: () => {},
-    phaseCount: 1,
-    setOptionSettings: () => {},
-    undo: () => {},
-    redo: () => {},
-    canUndo: false,
-    canRedo: false,
-    dirty: false,
-    saving: false,
-    saveError: null,
-    save: () => {},
-  })
+  // Everything about the open option, shared with the Companion so the two
+  // cannot show different things — see ui/option/useOptionWorkspace.js.
+  const workspace = useOptionWorkspace({ onSelect: () => setSelectedTreeBuildingId(null) })
+  const {
+    highlightedDepartmentId,
+    selectedDeptInstanceId,
+    setSelectedDeptInstanceId,
+    selectedPhase,
+    builderState,
+    pending,
+    setPending,
+    guard,
+    selectDepartment: handleSelectDepartment,
+  } = workspace
 
   // How many of the open option's departments sit in each building, resolved
   // live from the tree. The building list dialog uses it to say what unticking
@@ -202,37 +153,6 @@ function SignedInApp({ session }) {
   // questions would flood the Back button.
   const [selectedQuestionId, setSelectedQuestionId] = useState(null)
 
-  // What side is showing on the Project tab, set by what was last clicked on
-  // its canvas: a department, a group box, a section box, or nothing at all.
-  // Null means nothing — the canvas's own empty space — and side falls back to
-  // the option's totals.
-  const [selection, setSelection] = useState(null)
-
-  // ANY change that takes the edited department off the side panel asks first.
-  //
-  // Room and object edits live only in memory until Save Data is pressed, and
-  // the panel shows one department at a time — so clicking another department,
-  // clicking the canvas, selecting a group or section, and switching option or
-  // project all replace what you were editing. Every one of them goes through
-  // here, and none of them proceeds until you've said save or discard.
-  //
-  // Switching TAB deliberately does not. The option panel is hidden rather than
-  // unmounted off the Project tab (see the note below it), so a tab change loses
-  // nothing and a prompt over it would be asking about a loss that isn't
-  // happening. Every view change is therefore a bare navigate.
-  //
-  // Structural edits write themselves, so `dirty` only ever means rooms,
-  // objects and counts.
-  //
-  // The pending action is held as `{ run }` rather than bare, because a bare
-  // function passed to setState is taken as an updater and called immediately.
-  const [pending, setPending] = useState(null)
-
-  function guard(run) {
-    if (builderState.dirty) setPending({ run })
-    else run()
-  }
-
   const leaveOption = (next) => guard(() => navigate(next))
 
   function handleSelectTreeBuilding(buildingId) {
@@ -240,27 +160,6 @@ function SignedInApp({ session }) {
     // The pane shows one or the other. No guard: the Tree tab writes every edit
     // as it is made, so there is never anything unsaved to ask about.
     setSelectedDeptInstanceId(null)
-  }
-
-  function handleSelectDepartment(defId, treeNodeId, phase = 1) {
-    const select = () => {
-      setSelectedTreeBuildingId(null)
-      setHighlightedDepartmentId(defId)
-      setSelectedDeptInstanceId(treeNodeId ?? null)
-      setSelectedPhase(phase)
-      setSelection({ kind: 'department', id: treeNodeId ?? defId })
-    }
-    // Clicking the department already open changes nothing, so it needn't ask.
-    //
-    // The PHASE is part of that: two strips of one card are two departments to
-    // edit, with their own rooms, so moving between them must ask about unsaved
-    // ones exactly as moving between two cards does.
-    const same =
-      selection?.kind === 'department' &&
-      phase === selectedPhase &&
-      (treeNodeId ? treeNodeId === selectedDeptInstanceId : defId === highlightedDepartmentId)
-    if (same) select()
-    else guard(select)
   }
 
   // Changing project clears the option, since an option belongs to one project.
@@ -306,7 +205,7 @@ function SignedInApp({ session }) {
         regulating lines between them. See CLAUDE.md. */}
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' }}>
       <style>
-        {APP_STYLE + REMOVE_BUTTON_STYLE + RESET_BUTTON_STYLE + ADD_BUTTON_STYLE + RIBBON_STYLE + LINK_BUTTON_STYLE}
+        {SHARED_STYLE}
       </style>
 
       <AppHeader
@@ -346,19 +245,6 @@ function SignedInApp({ session }) {
           drawMode={isDrawingSite}
           onSiteDrawn={setDrawnSiteGeometry}
           optionId={selectedOptionId}
-          optionName={builderState.optionName}
-          departments={builderState.departments}
-          departmentDefs={builderState.departmentDefs}
-          onAddDepartments={builderState.addDepartments}
-          onRemoveDepartment={builderState.removeDepartment}
-          sectionIds={builderState.sectionIds}
-          onAddSection={builderState.addSection}
-          onRemoveSection={builderState.removeSection}
-          buildingIds={builderState.buildingIds}
-          buildingFactors={builderState.buildingFactors}
-          phaseCount={builderState.phaseCount}
-          selection={selection}
-          onSelectContainer={(next) => guard(() => setSelection(next))}
           onSelectDepartment={handleSelectDepartment}
           onSelectTreeBuilding={handleSelectTreeBuilding}
           selectedTreeBuildingId={selectedTreeBuildingId}
@@ -412,6 +298,7 @@ function SignedInApp({ session }) {
               />
             )
           }
+          optionCanvas={<OptionCanvas workspace={workspace} onSelectDepartment={handleSelectDepartment} />}
           optionChooser={
             selectedProjectId ? (
               <OptionChooser
@@ -466,15 +353,11 @@ function SignedInApp({ session }) {
               tabs doesn't discard unsaved option edits. */}
           <div style={{ display: view === 'project' ? 'block' : 'none', padding: 16, minWidth: 0 }}>
             {selectedOptionId && (
-              <InstanceBuilder
-                loadOptionId={selectedOptionId}
-                selection={selection}
-                onSaved={() => setOptionsRefreshKey((k) => k + 1)}
+              <OptionPanel
+                workspace={workspace}
+                optionId={selectedOptionId}
                 onSelectDepartment={handleSelectDepartment}
-                highlightedDepartmentId={highlightedDepartmentId}
-                selectedDeptInstanceId={selectedDeptInstanceId}
-                selectedPhase={selectedPhase}
-                onExposeActions={setBuilderState}
+                onSaved={() => setOptionsRefreshKey((k) => k + 1)}
               />
             )}
           </div>

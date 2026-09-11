@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../../data/supabase.js'
+import { loadStations, nearestStation, siteCentre } from '../../data/weather.js'
 
 function extractGeometry(parsed) {
   if (parsed.type === 'Feature') return parsed.geometry
@@ -61,6 +62,22 @@ export default function NewProject({
     if (error) {
       setError(error.message)
       return
+    }
+
+    // The nearest weather station, assigned once and then left alone — see
+    // data/weather.js. A second statement rather than part of create_project:
+    // failing to find one must not lose the project, so it is reported and the
+    // project stands with no station rather than not existing.
+    try {
+      const found = nearestStation(siteCentre(site), await loadStations())
+      if (found) {
+        await supabase
+          .from('sp_project')
+          .update({ weather_station: found.station.id })
+          .eq('id', data.id)
+      }
+    } catch (e) {
+      setError(`Project created, but no weather station could be assigned: ${e.message}`)
     }
 
     setName('')

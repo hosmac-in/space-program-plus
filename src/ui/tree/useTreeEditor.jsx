@@ -15,6 +15,7 @@ import { useCatalog } from '../../data/catalog.jsx'
 import { useToast } from '../primitives/Toast.jsx'
 import {
   cleanObjectNode,
+  compareSections,
   EMPTY_TREE,
   findDeptContext,
   findGroupNode,
@@ -23,9 +24,11 @@ import {
   insertGroupNode,
   newDeptNode,
   newGroupNode,
+  pruneTree,
   removeDeptNode,
   removeGroupNode,
   updateDeptNode,
+  writeSectionOrder,
   writeSectionTree,
 } from '../../data/tree.js'
 import { withFactor } from '../../data/factors.js'
@@ -33,6 +36,12 @@ import { describeMove } from './treeLayout.js'
 import { UNDO_DEPTH } from '../undo.js'
 
 const RECORD = { record: true }
+
+// The index that puts a reordered node BACK. An index is measured against the
+// list with the node still in it, so undoing a move to the LEFT has to aim one
+// slot further right than the node came from — without this, undo left the node
+// one place short of where it started.
+const undoIndexFor = (fromIndex, at) => (fromIndex > at ? fromIndex + 1 : fromIndex)
 
 export function useTreeEditor() {
   const catalog = useCatalog()
@@ -87,8 +96,17 @@ export function useTreeEditor() {
   // an edit computed against a tree that no longer exists, which is the
   // destruction the check exists to prevent.
   const write = useCallback(async (sectionId, tree) => {
-    const section = catalogRef.current.sections.find((s) => s.id === sectionId)
-    const { error: message, conflict } = await writeSectionTree(sectionId, tree, section?.version)
+    const { sections, groups, departments, rooms, objects } = catalogRef.current
+    const section = sections.find((s) => s.id === sectionId)
+
+    // EVERY WRITE CLEANS ITS SECTION. A definition deleted from the database
+    // leaves its id in this jsonb with nothing to resolve it — see pruneTree.
+    // Done here rather than on load because this is the moment the column is
+    // rewritten anyway: nothing is written for the sake of the prune alone, and
+    // a section nobody edits keeps its ids until someone does.
+    const { tree: pruned, removed } = pruneTree(tree, { groups, departments, rooms, objects })
+
+    const { error: message, conflict } = await writeSectionTree(sectionId, pruned, section?.version)
 
     if (conflict) {
       await catalogRef.current.reloadSections()
@@ -100,6 +118,13 @@ export function useTreeEditor() {
       return false
     }
     await catalogRef.current.reloadSections()
+    // Said, never silent: this removes placements nobody asked to remove, and
+    // the only trace of them left is this line.
+    if (removed > 0) {
+      pushToast(
+        `Removed ${removed} deleted ${removed === 1 ? 'item' : 'items'} from ${section?.name ?? 'that section'}`
+      )
+    }
     return true
   }, [])
 
@@ -158,17 +183,40 @@ export function useTreeEditor() {
 
   // Returns false when the move was rejected, so the caller can snap the card
   // back to where it was.
+  //
+  // `index` is where in the target section it lands. Dropped into the section it
+  // is already in, that is a REORDER — the one case where from === to is a real
+  // edit, so the undo pair has to carry the index it came from.
   const moveGroup = useCallback(serialise(async (groupInstanceId, fromSectionId, toSectionId, opts = RECORD) => {
-    const { record = true } = opts
-    if (!fromSectionId || !toSectionId || fromSectionId === toSectionId) return false
+    const { record = true, index = null } = opts
+    if (!fromSectionId || !toSectionId) return false
+    if (fromSectionId === toSectionId && index == null) return false
 
     const { sections } = catalogRef.current
     const fromSection = sections.find((s) => s.id === fromSectionId)
     const toSection = sections.find((s) => s.id === toSectionId)
     if (!fromSection || !toSection) return false
 
-    const moving = (fromSection.tree?.groups || []).find((g) => g.instance_id === groupInstanceId)
+    const fromList = fromSection.tree?.groups || []
+    const fromIndex = fromList.findIndex((g) => g.instance_id === groupInstanceId)
+    const moving = fromList[fromIndex]
     if (!moving) return false
+
+    if (fromSectionId === toSectionId) {
+      const { tree: strippedTree } = removeGroupNode(fromSection.tree || EMPTY_TREE, groupInstanceId)
+      // The index was measured against the list WITH this group still in it, so
+      // one removed from before the target shifts every later slot down by one.
+      const at = index > fromIndex ? index - 1 : index
+      if (at === fromIndex) return false
+      if (!(await write(fromSectionId, insertGroupNode(strippedTree, moving, at)))) return false
+      if (record) {
+        pushCommand(
+          () => moveGroup(groupInstanceId, fromSectionId, fromSectionId, { record: false, index: undoIndexFor(fromIndex, at) }),
+          () => moveGroup(groupInstanceId, fromSectionId, fromSectionId, { record: false, index })
+        )
+      }
+      return true
+    }
 
     if ((toSection.tree?.groups || []).some((g) => g.group_def_id === moving.group_def_id)) {
       pushToast(`${nameOfGroup(moving.group_def_id) ?? 'Group'} is already in ${toSection.name}`)
@@ -177,13 +225,61 @@ export function useTreeEditor() {
 
     const { tree: strippedTree } = removeGroupNode(fromSection.tree || EMPTY_TREE, groupInstanceId)
     if (!(await write(fromSectionId, strippedTree))) return false
-    if (!(await write(toSectionId, insertGroupNode(toSection.tree || EMPTY_TREE, moving)))) return false
+    if (!(await write(toSectionId, insertGroupNode(toSection.tree || EMPTY_TREE, moving, index)))) return false
 
     pushToast(describeMove(nameOfGroup(moving.group_def_id) ?? 'Group', fromSection.name, toSection.name))
     if (record) {
       pushCommand(
-        () => moveGroup(groupInstanceId, toSectionId, fromSectionId, { record: false }),
-        () => moveGroup(groupInstanceId, fromSectionId, toSectionId, { record: false })
+        () => moveGroup(groupInstanceId, toSectionId, fromSectionId, { record: false, index: fromIndex }),
+        () => moveGroup(groupInstanceId, fromSectionId, toSectionId, { record: false, index })
+      )
+    }
+    return true
+  }), [])
+
+  // Sections are ROWS, so their order is a column and this is the one action
+  // here that writes no tree — see writeSectionOrder. The whole building is
+  // renumbered 0..n-1 from the arrangement the drop produced, rather than
+  // squeezing a value in between: a handful of rows, and it leaves no gaps to
+  // run out of.
+  const moveSection = useCallback(serialise(async (sectionId, index, opts = RECORD) => {
+    const { record = true } = opts
+    const { sections } = catalogRef.current
+    const section = sections.find((s) => s.id === sectionId)
+    if (!section || index == null) return false
+
+    // The core sits outside the row and is never dragged, so it is not part of
+    // the order — see ui/tree/treeLayout.js.
+    const siblings = sections
+      .filter((s) => s.building_id === section.building_id && !s.is_core)
+      .sort(compareSections)
+    const fromIndex = siblings.findIndex((s) => s.id === sectionId)
+    const at = index > fromIndex ? index - 1 : index
+    if (fromIndex === -1 || at === fromIndex) return false
+
+    const rest = siblings.filter((s) => s.id !== sectionId)
+    const ordered = [...rest.slice(0, at), section, ...rest.slice(at)]
+
+    // Only the rows whose position actually changed.
+    const rows = ordered
+      .map((s, i) => ({ id: s.id, sortOrder: i, version: s.version }))
+      .filter((r, i) => siblings[i]?.id !== r.id || siblings[i]?.sort_order !== r.sortOrder)
+
+    const { error: message, conflict } = await writeSectionOrder(rows)
+    await catalogRef.current.reloadSections()
+    if (conflict) {
+      pushToast(message)
+      return false
+    }
+    if (message) {
+      setError(message)
+      return false
+    }
+
+    if (record) {
+      pushCommand(
+        () => moveSection(sectionId, undoIndexFor(fromIndex, at), { record: false }),
+        () => moveSection(sectionId, index, { record: false })
       )
     }
     return true
@@ -248,9 +344,12 @@ export function useTreeEditor() {
     }
   }), [])
 
+  // `index` as in moveGroup: within one group it is a reorder, and the only
+  // case where from === to does anything.
   const moveDept = useCallback(serialise(async (deptInstanceId, fromGroupInstanceId, toGroupInstanceId, opts = RECORD) => {
-    const { record = true } = opts
-    if (!fromGroupInstanceId || !toGroupInstanceId || fromGroupInstanceId === toGroupInstanceId) return false
+    const { record = true, index = null } = opts
+    if (!fromGroupInstanceId || !toGroupInstanceId) return false
+    if (fromGroupInstanceId === toGroupInstanceId && index == null) return false
 
     const { sections } = catalogRef.current
     const toGroupNode = findGroupNode(sections, toGroupInstanceId)
@@ -260,6 +359,25 @@ export function useTreeEditor() {
 
     const deptName = nameOfDept(fromCtx.deptNode.department_def_id) ?? 'Department'
     const toGroupName = nameOfGroup(toGroupNode.group_def_id)
+    const fromIndex = (fromCtx.groupNode.departments || []).findIndex((d) => d.instance_id === deptInstanceId)
+
+    if (fromGroupInstanceId === toGroupInstanceId) {
+      const fromSection = sections.find((s) => s.id === fromCtx.sectionId)
+      const { tree: strippedTree, removed } = removeDeptNode(fromSection.tree || EMPTY_TREE, deptInstanceId)
+      if (!removed) return false
+      // Measured against the list with this department still in it — see
+      // moveGroup.
+      const at = index > fromIndex ? index - 1 : index
+      if (at === fromIndex) return false
+      if (!(await write(fromCtx.sectionId, insertDeptNode(strippedTree, toGroupInstanceId, removed, at)))) return false
+      if (record) {
+        pushCommand(
+          () => moveDept(deptInstanceId, fromGroupInstanceId, fromGroupInstanceId, { record: false, index: undoIndexFor(fromIndex, at) }),
+          () => moveDept(deptInstanceId, fromGroupInstanceId, fromGroupInstanceId, { record: false, index })
+        )
+      }
+      return true
+    }
 
     if ((toGroupNode.departments || []).some((d) => d.department_def_id === fromCtx.deptNode.department_def_id)) {
       pushToast(`${deptName} is already in ${toGroupName ?? 'this group'}`)
@@ -273,19 +391,20 @@ export function useTreeEditor() {
     if (fromCtx.sectionId === toSectionId) {
       // Both ends live in the same JSON document — one write, not two, so the
       // move can never half-apply.
-      if (!(await write(fromCtx.sectionId, insertDeptNode(strippedTree, toGroupInstanceId, removed)))) return false
+      if (!(await write(fromCtx.sectionId, insertDeptNode(strippedTree, toGroupInstanceId, removed, index))))
+        return false
     } else {
       const toSection = sections.find((s) => s.id === toSectionId)
       if (!(await write(fromCtx.sectionId, strippedTree))) return false
-      if (!(await write(toSectionId, insertDeptNode(toSection.tree || EMPTY_TREE, toGroupInstanceId, removed))))
+      if (!(await write(toSectionId, insertDeptNode(toSection.tree || EMPTY_TREE, toGroupInstanceId, removed, index))))
         return false
     }
 
     pushToast(describeMove(deptName, nameOfGroup(fromCtx.groupNode.group_def_id) ?? null, toGroupName ?? null))
     if (record) {
       pushCommand(
-        () => moveDept(deptInstanceId, toGroupInstanceId, fromGroupInstanceId, { record: false }),
-        () => moveDept(deptInstanceId, fromGroupInstanceId, toGroupInstanceId, { record: false })
+        () => moveDept(deptInstanceId, toGroupInstanceId, fromGroupInstanceId, { record: false, index: fromIndex }),
+        () => moveDept(deptInstanceId, fromGroupInstanceId, toGroupInstanceId, { record: false, index })
       )
     }
     return true
@@ -385,6 +504,7 @@ export function useTreeEditor() {
     placeGroup,
     removeGroup,
     moveGroup,
+    moveSection,
     placeDept,
     removeDept,
     moveDept,
