@@ -5,7 +5,7 @@
 // markup in treeNodes.jsx, and every tree edit in useTreeEditor.jsx —
 // which the rooms panel shares, so both columns feed one undo stack.
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, { Background, ReactFlowProvider, useNodesState, useReactFlow } from 'reactflow'
 import CanvasFrame, { useCanvasInput } from '../canvas/CanvasFrame.jsx'
 import 'reactflow/dist/style.css'
@@ -35,7 +35,8 @@ function TreeCanvasInner({
   selectedBuildingId,
   canEdit,
 }) {
-  const { departments, groups, sections, functions, buildings } = useCatalog()
+  // `rooms` is the definition table, for the names a department card lists.
+  const { departments, groups, rooms, sections, functions, buildings } = useCatalog()
   const editor = useTreeEditorContext()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const { getIntersectingNodes, screenToFlowPosition } = useReactFlow()
@@ -62,16 +63,29 @@ function TreeCanvasInner({
   const onCardRemoveDept = useCallback((id) => editor.removeDept(id), [editor.removeDept])
   const onCardRemoveGroup = useCallback((id) => editor.removeGroup(id), [editor.removeGroup])
 
+  // WHICH CARDS HAVE THEIR ROOMS OPEN, by placement instance_id. Collapsed is the
+  // resting state, and it lives here rather than in the card because the layout
+  // stacks a group by each card's height — see buildTreeLayout.
+  const [expandedRooms, setExpandedRooms] = useState(() => new Set())
+  const onToggleRooms = useCallback((id) => {
+    setExpandedRooms((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  }, [])
+
   const computed = useMemo(
     () =>
       buildTreeLayout(
-        { sections, groups, departments, buildings, functions, canEdit },
+        { sections, groups, departments, rooms, buildings, functions, canEdit, expandedRooms },
         selectedDeptInstanceId,
         {
           onSelectDepartment,
           onSelectBuilding,
           onRemoveDepartment: onCardRemoveDept,
           onRemoveGroup: onCardRemoveGroup,
+          onToggleRooms,
         },
         stableSectionWidthsRef.current,
         stableBuildingHeightsRef.current,
@@ -81,15 +95,18 @@ function TreeCanvasInner({
       sections,
       groups,
       departments,
+      rooms,
       buildings,
       functions,
       canEdit,
+      expandedRooms,
       selectedDeptInstanceId,
       selectedBuildingId,
       onSelectDepartment,
       onSelectBuilding,
       onCardRemoveDept,
       onCardRemoveGroup,
+      onToggleRooms,
     ]
   )
 
@@ -196,7 +213,11 @@ function TreeCanvasInner({
     }
     return {
       axis: 'y',
-      size: () => NODE_HEIGHT,
+      // A DEPARTMENT CARD IS NOT A FIXED HEIGHT. It grows by the rooms listed on
+      // it, so the shuffle has to measure each one — a constant pitch here made
+      // every card a drag passed step aside by the wrong amount, and the gap
+      // opened in the wrong place.
+      size: (n) => n.height ?? NODE_HEIGHT,
       items: all
         .filter((n) => n.type === 'tDepartment' && n.parentNode === containerId)
         .sort((a, b) => a.position.y - b.position.y),

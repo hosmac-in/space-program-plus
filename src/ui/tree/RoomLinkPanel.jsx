@@ -54,12 +54,14 @@ import {
   PanelShell,
   CatalogNote,
   RoomAreaRow,
+  RoomAddRow,
   RoomBlock,
   RoomBrief,
   RoomNotes,
 } from '../panel/panelParts.jsx'
 import RoomEnergyStrip, { SCHEDULES_GROUP } from '../panel/RoomEnergyStrip.jsx'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
+import { useReorderList } from '../primitives/useReorderList.js'
 
 export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
   const { rooms, objects, sections, groups, departments, functions, schedules } = useCatalog()
@@ -78,6 +80,23 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
       message
     )
 
+  // DRAG A ROOM UP OR DOWN THE LIST. One write and one undo step for the whole
+  // drag, not one per row it passed — see useReorderList.
+  //
+  // Reordered against `stored`, the saved list, rather than against the rows on
+  // screen: a room whose definition has been deleted is filtered out of
+  // `linkedRooms` below, and rebuilding the list from what is drawn would drop
+  // it. (pruneTree removes those on the way out anyway, but a reorder must not
+  // be the thing that decides it.)
+  //
+  // Called before the early returns below, as every hook must be.
+  const roomOrder = useReorderList({
+    items: stored,
+    keyOf: (node) => node.instance_id,
+    enabled: canEdit,
+    onCommit: (rooms) => write(rooms, 'Rooms reordered'),
+  })
+
   if (!selectedDeptInstanceId) {
     return <PanelNote pad>Click a department in the tree canvas to manage its rooms.</PanelNote>
   }
@@ -90,7 +109,9 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
   const placement = resolveNodePlacement(sections, selectedDeptInstanceId, groups)
   const circulationDef = findCirculationDef(objects)
 
-  const linkedRooms = stored
+  // From the reorder hook, not `stored`: while a drag is in progress that is the
+  // arrangement under the pointer, and the saved one the rest of the time.
+  const linkedRooms = roomOrder.items
     .map((node) => ({ node, def: rooms.find((r) => r.id === node.room_def_id) }))
     .filter((e) => e.def)
 
@@ -136,6 +157,9 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
         )
       })}
 
+      {/* The wrapper is the drop target, so a drop landing in the gutter between
+          two rooms still counts — see useReorderList. */}
+      <div {...roomOrder.listProps}>
       {linkedRooms.length === 0
         ? !canEdit && <PanelNote>No rooms linked yet</PanelNote>
         : linkedRooms.map(({ node, def }) => {
@@ -192,6 +216,17 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 // header's total IS the area of one. Typed on the RoomAreaRow
                 // below, the same place the Project tab types it.
                 totalAreaSqft={areaSqft}
+                // A size and a note are drawn when this placement has one, and
+                // offered as a + beside the object picker when it has not. Both
+                // are catalog facts, so both are offered here and neither is on
+                // the Project tab. See RoomExtras.
+                hasSize={catalogRoomDimensions(node).widthFt > 0 && catalogRoomDimensions(node).lengthFt > 0}
+                hasNote={!!catalogRoomNotes(node)}
+                canAddSize={canEdit}
+                canAddNote={canEdit}
+                dragHandleProps={roomOrder.handleProps(node.instance_id)}
+                dragProps={roomOrder.itemProps(node.instance_id)}
+                isDragging={roomOrder.draggingKey === node.instance_id}
                 onRemove={() =>
                   write(
                     stored.filter((r) => r.instance_id !== node.instance_id),
@@ -330,25 +365,29 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                   />
                 )}
 
+                {/* The object picker, and a + for whatever this room has not
+                    got yet — a suggested size, a note. See RoomAddRow. */}
                 {canEdit && (
-                  <SearchAddPicker
-                    options={objects.filter(
-                      // Circulation is what the room has left over, not
-                      // something you put in it — it is the derived row above.
-                      (o) => !linkedIds.has(o.id) && o.id !== circulationDef?.id
-                    )}
-                    placeholder="Search objects..."
-                    title="Add an object to this room"
-                    label="Add an object"
-                    size={16}
-                    onAdd={(o) =>
-                      editRoom(
-                        node.instance_id,
-                        (r) => ({ ...r, objects: [...(r.objects || []), newObjectNode(o.id)] }),
-                        `${o.name} added`
-                      )
-                    }
-                  />
+                  <RoomAddRow>
+                    <SearchAddPicker
+                      options={objects.filter(
+                        // Circulation is what the room has left over, not
+                        // something you put in it — it is the derived row above.
+                        (o) => !linkedIds.has(o.id) && o.id !== circulationDef?.id
+                      )}
+                      placeholder="Search objects..."
+                      title="Add an object to this room"
+                      label="Add an object"
+                      size={16}
+                      onAdd={(o) =>
+                        editRoom(
+                          node.instance_id,
+                          (r) => ({ ...r, objects: [...(r.objects || []), newObjectNode(o.id)] }),
+                          `${o.name} added`
+                        )
+                      }
+                    />
+                  </RoomAddRow>
                 )}
 
                 {/* The General Note every option using this placement will see
@@ -366,6 +405,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
               </RoomBlock>
             )
           })}
+      </div>
 
       {/* Below the rooms, matching the Project tab's pane and each room's own
           object picker: the list is what the pane is for, the picker is what you

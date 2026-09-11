@@ -18,7 +18,7 @@
 // Groups are never added or removed directly; a group appears exactly when a
 // department inside it does.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, { Background, ReactFlowProvider } from 'reactflow'
 import CanvasFrame, { useCanvasInput } from '../canvas/CanvasFrame.jsx'
 import 'reactflow/dist/style.css'
@@ -28,8 +28,8 @@ import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import AddButton from '../primitives/AddButton.jsx'
 import RemoveButton from '../primitives/RemoveButton.jsx'
 import { useReadOnly } from '../../readOnly.jsx'
-import { CanvasBandHeading, CanvasCard, CanvasContainer } from '../canvas/canvasCards.jsx'
-import { CARD_CONTROL } from '../canvas/canvasLayout.js'
+import { CanvasBandHeading, CanvasCard, CanvasContainer, DepartmentCardFace } from '../canvas/canvasCards.jsx'
+import { CARD_CONTROL, PADDING } from '../canvas/canvasLayout.js'
 import { applyMotion, buildLayout, NODE_HEIGHT, NODE_WIDTH } from './departmentGraphLayout.js'
 import { formatArea } from '../map/area.js'
 
@@ -212,9 +212,10 @@ function DepartmentNodeCard({ data }) {
       // A ghost's slot is shorter — see GHOST_NODE_HEIGHT. The layout decides
       // it; the card must not have its own opinion.
       height={data.height ?? NODE_HEIGHT}
-      // A ghost holds one line, so the full inset would not fit inside its
-      // shorter slot — it keeps the side padding and centres that line instead.
-      padding={ghost ? '0 16px' : undefined}
+      // Sides only, ghost or not. The vertical insets belong to the face, so
+      // departmentCardHeight is the whole of a card's height; a ghost's one line
+      // simply centres in its shorter slot.
+      padding={`0 ${PADDING}px`}
       isGhost={ghost}
       ghostBorder={data.ghostInk}
       ghostText={data.ghostInk}
@@ -249,23 +250,36 @@ function DepartmentNodeCard({ data }) {
         )
       }
     >
-      <div
-        title={data.name}
-        style={{
-          fontWeight: 600,
-          marginBottom: ghost ? 0 : 6,
-          fontSize: 13,
-          // Clear of whichever corner control this card has.
-          paddingRight: 20,
-          ...(ghost ? { height: '100%', display: 'flex', alignItems: 'center' } : null),
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {data.name}
-      </div>
-      {!ghost && <div style={{ opacity: 0.75, lineHeight: 1.6 }}>{formatArea(data.areaSqft)} sqft</div>}
+      {/* A GHOST IS ITS NAME AND NOTHING ELSE — no area and no rooms, because it
+          is not in the option yet — and it is drawn in a slot one line tall, so
+          it keeps its own centred line rather than the shared face. */}
+      {ghost ? (
+        <div
+          title={data.name}
+          style={{
+            fontWeight: 600,
+            fontSize: 13,
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            // Clear of the + in the corner.
+            paddingRight: 20,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {data.name}
+        </div>
+      ) : (
+        <DepartmentCardFace
+          name={data.name}
+          areaSqft={data.areaSqft}
+          rooms={data.rooms}
+          expanded={data.roomsExpanded}
+          onToggleRooms={data.onToggleRooms}
+        />
+      )}
     </CanvasCard>
   )
 }
@@ -579,6 +593,19 @@ export default function DepartmentGraph({
     return () => clearTimeout(id)
   }, [frozenOrder])
 
+  // WHICH CARDS HAVE THEIR ROOMS OPEN, by tree node id. Collapsed is the resting
+  // state — a band with every list open is the detail view, not the one you read
+  // a building in. Here rather than in the card because the layout sizes the
+  // stack by each card's height; see buildLayout.
+  const [expandedRooms, setExpandedRooms] = useState(() => new Set())
+  const toggleRooms = useCallback((treeNodeId) => {
+    setExpandedRooms((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(treeNodeId)) next.add(treeNodeId)
+      return next
+    })
+  }, [])
+
   const { nodes: rawNodes, order } = useMemo(
     () =>
       buildLayout({
@@ -623,9 +650,13 @@ export default function DepartmentGraph({
           if (roomCount === 0 && objectCount === 0) handlersRef.current.onRemoveDepartment(instanceId)
           else setConfirmRemove({ instanceId, name, roomCount, objectCount, phase })
         },
+        expandedRooms,
+        onToggleRooms: toggleRooms,
         frozenOrder,
       }),
     [
+      expandedRooms,
+      toggleRooms,
       frozenOrder,
       optionName,
       departmentDefs,

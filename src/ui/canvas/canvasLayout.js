@@ -48,6 +48,56 @@ export const FIGURE_INSET = CARD_CONTROL_INSET + HEADER_GAP + CARD_CONTROL
 export const FIGURE_INSET_NESTED = FIGURE_INSET - PADDING
 const EMPTY_HEIGHT = 36
 
+// --- The department card ----------------------------------------------------
+//
+// ONE CARD, TWO CANVASES. The face is drawn by DepartmentCardFace in
+// canvasCards.jsx and sized by the numbers here, so the Tree tab and the option
+// tab cannot end up describing a department differently. What stays local to
+// each tab is only what it DOES — drag handles and a remove there, ghosts,
+// phases and an add here.
+//
+// A card LISTS THE ROOMS IN IT and grows to hold the list rather than scrolling
+// or truncating it: layoutGroupBox already takes a height per child, which is how
+// the option tab draws a ghost shorter.
+export const ROOM_LINE_HEIGHT = 13
+// The air between the name row and the first room line.
+const ROOM_LIST_TOP = 4
+export const roomListHeight = (count) => (count === 0 ? 0 : ROOM_LIST_TOP + count * ROOM_LINE_HEIGHT)
+
+// A card with nothing listed: one name, centred in it, which is what both tabs
+// drew before there was a list.
+export const DEPT_HEAD_HEIGHT = 60
+// With a list, the card is laid out top-down instead — the same inset above the
+// name and below the last room. The card carries no vertical padding of its own:
+// these are its only two, so departmentCardHeight is the whole sum.
+export const DEPT_HEAD_INSET = 14
+export const DEPT_NAME_ROW = 20
+
+// What a card has to be to hold its list. The card must draw at exactly this
+// height or every card below it in the group stops lining up, so the face and
+// both layouts read the one function.
+export const departmentCardHeight = (roomCount) =>
+  roomCount === 0
+    ? DEPT_HEAD_HEIGHT
+    : DEPT_HEAD_INSET * 2 + DEPT_NAME_ROW + roomListHeight(roomCount)
+
+// How far the name and the area figure stop short of the card's content edge, to
+// clear the × (or +) pinned in the corner — CARD_CONTROL wide at a 4px inset, so
+// this is what is left of it plus a gap. Without it the area figure sits under
+// the button at the exact moment it is longest.
+export const DEPT_CONTROL_INSET = 12
+
+// The disclosure caret's column, RESERVED WHETHER OR NOT A CARD HAS ONE — a
+// department with no rooms would otherwise start its name 18px left of every
+// other card in the group, which reads as a different kind of card rather than
+// as an empty one.
+//
+// The room list is indented by the whole column, so a room name starts exactly
+// under the department's name, and the rule down the list runs through the
+// caret's own centre.
+export const DEPT_CARET = 12
+export const DEPT_CARET_COL = DEPT_CARET + HEADER_GAP
+
 // The air between a building's core section and the band proper. Wider than
 // GAP because it is the only thing saying the core is not one of the sections
 // in the row — at GAP it read as the first of them.

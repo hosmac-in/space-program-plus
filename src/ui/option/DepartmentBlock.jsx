@@ -51,6 +51,7 @@ import {
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import StripBand from '../panel/StripBand.jsx'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
+import { useReorderList } from '../primitives/useReorderList.js'
 import {
   CountField,
   ObjectRow,
@@ -59,6 +60,7 @@ import {
   PanelShell,
   CatalogNote,
   formatPath,
+  RoomAddRow,
   RoomAreaRow,
   RoomBlock,
   RoomBrief,
@@ -127,6 +129,20 @@ export default function DepartmentBlock({
   // sp_questionnaire's `*_path` for the same idea.
   const pathTo = (...tail) =>
     formatPath(placement?.buildingName, placement?.sectionName, placement?.groupName, dept.name, ...tail)
+
+  // DRAG A ROOM UP OR DOWN THE LIST. The array's order is what this panel, the
+  // canvas card and every outline draw, so arranging it is the whole edit —
+  // there is no sort key on a room and nothing else has to be touched.
+  //
+  // A department-level change rather than a room-level one: it is the list that
+  // moved, not anything in a room. `draftOf` stringifies the whole rooms array,
+  // so Save Data notices without being told. No coalesce — one drop is one step.
+  const roomOrder = useReorderList({
+    items: dept.rooms,
+    keyOf: (room) => room.instanceId,
+    enabled: !readOnly,
+    onCommit: (rooms) => onDeptChange?.(dept.instanceId, (d) => ({ ...d, rooms })),
+  })
 
   // Counts live only here: the catalog says an object may be in this room, this
   // option says how many.
@@ -335,7 +351,10 @@ export default function DepartmentBlock({
 
       {dept.rooms.length === 0 && <PanelNote>No rooms yet</PanelNote>}
 
-      {dept.rooms.map((room) => {
+      {/* The wrapper is the drop target, so a drop landing in the 8px gutter
+          between two rooms still counts — see useReorderList. */}
+      <div {...roomOrder.listProps}>
+      {roomOrder.items.map((room) => {
         // This room's own catalog node: what restricts its object picker, and
         // what its schedules are inherited from.
         const catalogRoom = catalogRoomNode(catalogRooms, room.treeRoomNodeId)
@@ -388,6 +407,14 @@ export default function DepartmentBlock({
             }
             control={annotations?.room?.(room, pathTo(shown.name), shown.name)}
             countOverride={annotations?.roomCount?.(room, shown.name)}
+            // This option's own note is drawn when the room has one and offered
+            // as a + when it has not. No size: that is the catalog's, and is
+            // authored on the Tree tab. See RoomExtras.
+            hasNote={!!room.notes}
+            canAddNote={!readOnly}
+            dragHandleProps={roomOrder.handleProps(room.instanceId)}
+            dragProps={roomOrder.itemProps(room.instanceId)}
+            isDragging={roomOrder.draggingKey === room.instanceId}
           >
             {/* What the catalog says about this room's energy, and this
                 option's overrides of it.
@@ -502,7 +529,11 @@ export default function DepartmentBlock({
                 )
               })()}
 
+            {/* The object picker, and a + for a note if this room has not got
+                one. No + for a size here: the suggested size is a catalog fact,
+                authored on the Tree tab. See RoomAddRow. */}
             {!readOnly && (
+            <RoomAddRow>
             <SearchAddPicker
               options={objectDefs.filter((def) => {
                 // Circulation is what the room has left over, not something you
@@ -518,6 +549,7 @@ export default function DepartmentBlock({
               size={16}
               onAdd={(def) => addObjectToRoom(room.instanceId, def)}
             />
+            </RoomAddRow>
             )}
 
             {/* This option's OWN note — a second note, not an override of the
@@ -536,6 +568,7 @@ export default function DepartmentBlock({
           </RoomBlock>
         )
       })}
+      </div>
 
       {/* Below the rooms, not above them: the list is what the pane is for, and
           the picker is what you reach for after reading it — the same order an

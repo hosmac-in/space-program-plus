@@ -4,11 +4,13 @@
 // ui/canvas/canvasLayout.js. Only what's unique to this tab lives here.
 
 import { functionColours } from '../../data/functions.js'
-import { compareSections } from '../../data/tree.js'
+import { catalogRoomLabel, compareSections } from '../../data/tree.js'
 import {
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
   CORE_GAP,
+  departmentCardHeight,
+  DEPT_HEAD_HEIGHT,
   layoutGroupBox,
   layoutRowBox,
   layoutSectionBox,
@@ -18,8 +20,9 @@ import {
 
 export { LABEL_HEIGHT, NODE_WIDTH, PADDING } from '../canvas/canvasLayout.js'
 
-// Shorter than the option canvas's cards, which also carry an area figure.
-export const NODE_HEIGHT = 60
+// A card with nothing listed on it. Shared with the option canvas — the two tabs
+// draw one department card, see DepartmentCardFace.
+export const NODE_HEIGHT = DEPT_HEAD_HEIGHT
 
 export function describeMove(entityName, fromName, toName) {
   if (!fromName && toName) return `Added ${entityName} to ${toName}`
@@ -44,7 +47,10 @@ export function describeMove(entityName, fromName, toName) {
 // sections are the exception, and may be: neither is ever duplicated, so its
 // own row id already identifies exactly one of them.
 export function buildTreeLayout(
-  { sections, groups, departments, buildings = [], functions, canEdit },
+  // `expandedRooms` is which department cards have their room list open, by
+  // instance_id, and cb.onToggleRooms is what toggles one. Above the card rather
+  // than inside it: a card's height is what this stacks its group by.
+  { sections, groups, departments, rooms = [], buildings = [], functions, canEdit, expandedRooms = new Set() },
   selectedDeptInstanceId,
   cb,
   stableSectionWidths,
@@ -56,7 +62,29 @@ export function buildTreeLayout(
 ) {
   const groupById = new Map(groups.map((g) => [g.id, g]))
   const deptById = new Map(departments.map((d) => [d.id, d]))
+  const roomById = new Map(rooms.map((r) => [r.id, r]))
   const nodes = []
+
+  // What a department card lists, in the order the rooms panel arranges them.
+  //
+  // NO COUNT, unlike the option canvas: a catalog room has none, because how
+  // many of a room a facility holds is the size of a program rather than a fact
+  // about the room — see data/tree.js. A room whose definition row is gone is
+  // dropped here rather than drawn nameless; pruneTree removes it from the
+  // document on the next write of the section anyway.
+  const roomsOf = (deptNode) =>
+    (deptNode.rooms || [])
+      .map((node) => {
+        const def = roomById.get(node.room_def_id)
+        return def ? { key: node.instance_id, name: catalogRoomLabel(node) || def.name } : null
+      })
+      .filter(Boolean)
+
+  // A card grows by its list only while that list is OPEN — collapsed is the
+  // resting state. The same measure the option canvas uses, so the two tabs draw
+  // one card.
+  const heightOfEntry = (entry) =>
+    departmentCardHeight(expandedRooms.has(entry.deptNode.instance_id) ? entry.rooms.length : 0)
 
   const items = [...sections]
     .sort(compareSections)
@@ -69,9 +97,13 @@ export function buildTreeLayout(
         .filter((e) => e.groupDef)
         .map(({ groupNode, groupDef }) => {
           const deptEntries = (groupNode.departments || [])
-            .map((deptNode) => ({ deptNode, deptDef: deptById.get(deptNode.department_def_id) }))
+            .map((deptNode) => ({
+              deptNode,
+              deptDef: deptById.get(deptNode.department_def_id),
+              rooms: roomsOf(deptNode),
+            }))
             .filter((e) => e.deptDef)
-          return { groupNode, groupDef, ...layoutGroupBox(deptEntries, NODE_HEIGHT) }
+          return { groupNode, groupDef, ...layoutGroupBox(deptEntries, heightOfEntry) }
         })
       return { section, sectionLayout: layoutSectionBox(groupLayouts) }
     })
@@ -221,7 +253,7 @@ export function buildTreeLayout(
           },
         })
 
-        gb.childPositions.forEach(({ entry, x, y }) => {
+        gb.childPositions.forEach(({ entry, x, y, height }) => {
           const nodeId = entry.deptNode.instance_id
           nodes.push({
             id: nodeId,
@@ -235,13 +267,19 @@ export function buildTreeLayout(
             parentNode: groupBoxId,
             parentId: groupBoxId,
             width: NODE_WIDTH,
-            height: NODE_HEIGHT,
+            height,
             zIndex: 30,
             draggable: canEdit,
             selectable: false,
             data: {
               defId: entry.deptDef.id,
               name: entry.deptDef.name,
+              // The card must draw at exactly the height the layout gave it, or
+              // every card below it in the group stops lining up.
+              height,
+              rooms: entry.rooms,
+              roomsExpanded: expandedRooms.has(nodeId),
+              onToggleRooms: () => cb.onToggleRooms(nodeId),
               groupInstanceId: groupBoxId,
               canEdit,
               colours: functionColours(functions, entry.deptDef.function_id),

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import AddButton from './AddButton.jsx'
+import { BLOCK_GAP } from '../panel/panelLayout.js'
 import { Z } from './zIndex.js'
 
 // A type-to-filter combobox for lists too long to scroll (500+ rooms), kept
@@ -158,7 +159,7 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
   }, [open])
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', marginTop: 8, minWidth: 0 }}>
+    <div ref={wrapRef} style={{ position: 'relative', marginTop: BLOCK_GAP, minWidth: 0 }}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         <AddButton onClick={() => (open ? close() : setOpen(true))} title={title} expanded={open} size={size} />
         {label && <span style={{ fontSize: 12, color: '#888' }}>{label}</span>}

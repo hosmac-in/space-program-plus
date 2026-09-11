@@ -1,6 +1,7 @@
 node_modules
 dist
 scripts
+backups
 .env
 CLAUDE.md
 sql

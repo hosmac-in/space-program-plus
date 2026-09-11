@@ -122,7 +122,24 @@ export default function StripBand({
             Ink inherited from the band, not a fixed grey: the wash is a
             different hue on every room, and a grey that reads on a pale mint
             does not read on a pale navy. */}
-        <span style={{ fontSize: 12, fontWeight: 700, flexShrink: 0, opacity: 0.8 }}>{title}</span>
+        {/* SMALLER WHILE CLOSED. Shut, the band is one line among the room's
+            other lines and a heading at full size out-weighed the rows it was
+            sitting above; open, it is heading a section of its own and takes
+            the size back. The weight never changes, so it is always the heading
+            either way. */}
+        <span
+          style={{
+            fontSize: open ? 12 : 11,
+            fontWeight: 700,
+            flexShrink: 0,
+            opacity: 0.8,
+            // With the caret's turn and the padding's ease, so the whole band
+            // reads as one movement.
+            transition: 'font-size 180ms ease',
+          }}
+        >
+          {title}
+        </span>
       </button>
 
       {/* SLIDES rather than appearing. The band is dense and sits mid-panel, so

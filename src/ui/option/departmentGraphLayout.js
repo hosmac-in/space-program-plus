@@ -7,20 +7,23 @@
 
 import { functionColours } from '../../data/functions.js'
 import { buildingAreaSqft } from '../../data/optionData.js'
-import { compareSections } from '../../data/tree.js'
+import { catalogRoomNode, catalogRoomsForNode, compareSections, resolveRoomLabel } from '../../data/tree.js'
 import {
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
   CORE_GAP,
   layoutGroupBox,
   layoutRowBox,
+  departmentCardHeight,
   layoutSectionBox,
   PADDING,
 } from '../canvas/canvasLayout.js'
 
 export { NODE_WIDTH } from '../canvas/canvasLayout.js'
 
-// Taller than the Tree tab's cards: these also carry an area figure.
+// A PHASED card's height, and the band's top offset. An UNPHASED card is the
+// shared department card — departmentCardHeight — the same one the Tree tab
+// draws; only a card divided into phase strips needs the extra room.
 export const NODE_HEIGHT = 90
 
 // A GHOST IS SHORTER. It carries a name and nothing else — no area, no phase
@@ -175,6 +178,12 @@ export function buildLayout({
   onAddSection,
   onRequestRemoveSection,
   onRequestRemove,
+  // WHICH CARDS HAVE THEIR ROOM LIST OPEN, by tree node id, and what toggles
+  // one. Here rather than in the card, because the height a card draws at is
+  // what this stacks its group by — a card holding its own open/closed state
+  // would grow over the ones below it.
+  expandedRooms = new Set(),
+  onToggleRooms,
   // THE ARRANGEMENT TO HOLD, or null for the real one. An add or a remove
   // changes what is a ghost, and a ghost is partitioned to the end — so the card
   // that changed would grow and move in the same frame, and the move is the part
@@ -191,10 +200,26 @@ export function buildLayout({
   // each is its own programmed thing with its own rooms. A card is one node; its
   // strips are the phases.
   const realByNode = new Map()
+
+  // What one department holds, for the list on its card: the rooms in the order
+  // the panel arranges them, named the way the panel names them.
+  //
+  // resolveRoomLabel, not `r.name` — two placements of one sp_room read "Male
+  // Toilet" and "Female Toilet" on the panel and must not read "Toilet" twice
+  // here. That chain is defined once, in data/tree.js.
+  const roomsOf = (d) => {
+    const catalogRooms = catalogRoomsForNode(sections, d.treeNodeId)
+    return (d.rooms ?? []).map((r) => ({
+      key: r.instanceId,
+      name: resolveRoomLabel(catalogRoomNode(catalogRooms, r.treeRoomNodeId), r, r.name).name,
+      count: r.count ?? 1,
+    }))
+  }
+
   departments.forEach((d, i) => {
     if (!d.treeNodeId) return
     const byPhase = realByNode.get(d.treeNodeId) ?? new Map()
-    byPhase.set(d.phase, { ...perDepartment[i], instanceId: d.instanceId })
+    byPhase.set(d.phase, { ...perDepartment[i], instanceId: d.instanceId, rooms: roomsOf(d) })
     realByNode.set(d.treeNodeId, byPhase)
   })
 
@@ -213,6 +238,10 @@ export function buildLayout({
         roomCount: real?.roomCount ?? 0,
         objectCount: real?.objectCount ?? 0,
         areaSqft: real?.areaSqft ?? 0,
+        // Listed by name on the card — see roomsOf. This object is built field
+        // by field rather than spread, so anything wanted downstream has to be
+        // named here; leaving it out is what made the list draw empty.
+        rooms: real?.rooms ?? [],
       }
     })
 
@@ -232,6 +261,11 @@ export function buildLayout({
       roomCount: real.reduce((sum, p) => sum + p.roomCount, 0),
       objectCount: real.reduce((sum, p) => sum + p.objectCount, 0),
       areaSqft: real.reduce((sum, p) => sum + p.areaSqft, 0),
+      // Drawn only on a ONE-PHASE card, so this is that phase's list. Merging
+      // every phase's rooms would repeat the name of anything programmed in
+      // more than one of them, and the card could not say which phase each
+      // belonged to — a phased card's rooms belong to its strips.
+      rooms: real[0]?.rooms ?? [],
     }
   }
 
@@ -254,7 +288,15 @@ export function buildLayout({
   // cards as an option is filled in, and the same building then reads
   // differently on the two tabs.
   const ghostsLast = (a, b) => (a === b ? 0 : a ? -1 : 1)
-  const heightOfEntry = (entry) => (entry.isReal || phaseCount > 1 ? NODE_HEIGHT : GHOST_NODE_HEIGHT)
+  // A real card is the shared department card, grown by its room list WHEN THAT
+  // LIST IS OPEN — collapsed is the resting state, so most cards are the head
+  // alone. A ghost has no rooms to show, and a phased card's belong to its
+  // strips, so both keep the fixed height they had.
+  const heightOfEntry = (entry) => {
+    if (phaseCount > 1) return NODE_HEIGHT
+    if (!entry.isReal) return GHOST_NODE_HEIGHT
+    return departmentCardHeight(expandedRooms.has(entry.treeNodeId) ? entry.rooms.length : 0)
+  }
 
   // One list, sorted either by where the ghosts belong or by where the cards
   // currently are. Both are stable, so the catalog's order holds underneath.
@@ -556,6 +598,8 @@ export function buildLayout({
               // work in. The section's + is the only way into a ghost section.
               canAdd: !sectionIsGhost,
               isHighlighted: !!entry.treeNodeId && entry.treeNodeId === selectedDeptInstanceId,
+              roomsExpanded: expandedRooms.has(entry.treeNodeId),
+              onToggleRooms: () => onToggleRooms?.(entry.treeNodeId),
               onClick,
               onAdd,
               onRequestRemove,

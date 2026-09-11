@@ -10,16 +10,19 @@
 // No data access, no writes, no knowledge of either data shape: callers resolve
 // their nodes into these props.
 
+import AddButton from '../primitives/AddButton.jsx'
 import RemoveButton from '../primitives/RemoveButton.jsx'
 import { formatArea } from '../map/area.js'
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   AREA_WIDTH,
+  BLOCK_GAP,
   BLOCK_PADDING,
   BLOCK_RADIUS,
   HEADER_PADDING,
   OBJECT_CONTROL,
   ROOM_CONTROL,
+  ROW_PAD,
   SUBTLE_GAP,
   SUBTLE_RULE,
   TRAILING_SLOT,
@@ -470,7 +473,7 @@ export function ObjectRow({
       // paddingBlock, NOT the `padding` shorthand — see the note in
       // EnergyFieldRows: the shorthand resets .spp-row's padding-inline and the
       // row ends up offset by its own negative margin.
-      style={{ display: 'flex', alignItems: 'center', gap: 6, paddingBlock: 4, minWidth: 0 }}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, paddingBlock: ROW_PAD, minWidth: 0 }}
     >
       {/* The type is deliberately NOT drawn. "AHU Machine (mep_equipment)" spent
           most of a narrow row on a word that repeats what the name already
@@ -547,11 +550,11 @@ export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChan
         display: 'flex',
         alignItems: 'center',
         gap: 6,
-        paddingBlock: 4,
+        paddingBlock: ROW_PAD,
         minWidth: 0,
         // The breaker: the room, then what is in it.
         borderBottom: `1px solid ${SUBTLE_RULE}`,
-        marginBottom: 4,
+        marginBottom: ROW_PAD,
       }}
     >
       <span style={{ ...ellipsis, fontSize: 13 }}>{label}</span>
@@ -619,10 +622,38 @@ export function RoomBlock({
   // program and an app that cannot edit it may have something better to say in
   // its place. Null everywhere but that app.
   countOverride = null,
+  // DRAG THIS ROOM SOMEWHERE ELSE IN THE LIST. From useReorderList: the handle's
+  // props, and the row's. Null on both and the grip is not drawn — a read-only
+  // view, the Companion, and any caller whose list has no order to speak of.
+  //
+  // The grip is on the HANDLE and the handle alone. Making the block draggable
+  // would turn selecting text in any of the inputs inside it into a drag.
+  dragHandleProps = null,
+  dragProps = null,
+  isDragging = false,
+  // WHICH OPTIONAL PARTS THIS ROOM ALREADY HAS, and which it may be given. See
+  // RoomExtras: a size and a note are drawn when the room has one and offered as
+  // a + beside the object picker when it has not.
+  //
+  // `canAdd…` is about this PANEL, not this room: the catalog's suggested size is
+  // authored on the Tree tab alone, so the Project tab offers no + for it.
+  hasSize = false,
+  hasNote = false,
+  canAddSize = false,
+  canAddNote = false,
   children,
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  const [asked, setAsked] = useState({ size: false, note: false })
+  const extras = {
+    showSize: hasSize || asked.size,
+    showNote: hasNote || asked.note,
+    canAddSize,
+    canAddNote,
+    revealSize: () => setAsked((a) => ({ ...a, size: true })),
+    revealNote: () => setAsked((a) => ({ ...a, note: true })),
+  }
 
   // What Enter (or leaving the field) does with what was typed.
   //
@@ -640,7 +671,19 @@ export function RoomBlock({
   }
 
   return (
-    <div style={{ border: `1px solid ${colours.border}`, borderRadius: BLOCK_RADIUS, marginTop: 8, minWidth: 0 }}>
+    <div
+      {...dragProps}
+      style={{
+        border: `1px solid ${colours.border}`,
+        borderRadius: BLOCK_RADIUS,
+        marginTop: BLOCK_GAP,
+        minWidth: 0,
+        // The row being carried is faded where it currently sits, so the gap
+        // opening up ahead of it reads as where it is going rather than as a
+        // second copy of it.
+        opacity: isDragging ? 0.4 : 1,
+      }}
+    >
       <div
         // The header, not the whole block: marking the block would reveal every
         // object row's × inside it at once — see RemoveButton.
@@ -657,6 +700,30 @@ export function RoomBlock({
           borderRadius: `${BLOCK_RADIUS - 1}px ${BLOCK_RADIUS - 1}px 0 0`,
         }}
       >
+        {/* NOT hover-revealed, unlike the ×. spp-reveal means "this deletes
+            something" everywhere in this app, and a second meaning would leave
+            it meaning nothing — see CLAUDE.md. It is quiet instead: a grip at
+            half strength, which is also the only hint that the list has an
+            order worth arranging. */}
+        {dragHandleProps && (
+          <span
+            {...dragHandleProps}
+            title={`Drag to move ${name}`}
+            style={{
+              flexShrink: 0,
+              cursor: 'grab',
+              opacity: 0.55,
+              fontSize: 11,
+              lineHeight: 1,
+              // The glyph is two columns of dots and sits high in its em box.
+              marginTop: -1,
+              userSelect: 'none',
+            }}
+          >
+            ⠿
+          </span>
+        )}
+
         {/* Name and count read as one phrase — "Consultation Room ×10" — so the
             count sits immediately after the name rather than being flung to the
             far edge. The name shrinks and ellipsises before the count does; the
@@ -710,7 +777,14 @@ export function RoomBlock({
           />
         ) : (
           <span
-            title={canEdit && onNameCommit ? `${name} — double-click to rename` : name}
+            // THE TYPE IS IN THE TOOLTIP, NOT THE TITLE — the same place
+            // ObjectRow has always kept it. A room's type is a fact about the
+            // definition, not what this placement is called, and spelled out in
+            // brackets after every name it doubled the length of the one line
+            // the header exists to show.
+            title={[type ? `${name} (${type})` : name, canEdit && onNameCommit ? '— double-click to rename' : '']
+              .filter(Boolean)
+              .join(' ')}
             onDoubleClick={
               canEdit && onNameCommit
                 ? (e) => {
@@ -722,7 +796,7 @@ export function RoomBlock({
             }
             style={{ ...ellipsis, flex: '0 1 auto' }}
           >
-            {name} {type ? `(${type})` : ''}
+            {name}
           </span>
         )}
         {count != null &&
@@ -783,7 +857,7 @@ export function RoomBlock({
           borderRadius: `0 0 ${BLOCK_RADIUS - 1}px ${BLOCK_RADIUS - 1}px`,
         }}
       >
-        {children}
+        <RoomExtras.Provider value={extras}>{children}</RoomExtras.Provider>
       </div>
     </div>
   )
@@ -804,7 +878,7 @@ export function CatalogNote({ label, children, title }) {
       style={{
         borderLeft: '2px solid #ddd',
         paddingLeft: 8,
-        marginTop: 6,
+        marginTop: ROW_PAD,
         fontSize: 12,
         color: '#777',
         whiteSpace: 'pre-wrap',
@@ -832,23 +906,29 @@ export function CatalogNote({ label, children, title }) {
 // `children` is whatever else belongs in the same block — the General Note, in
 // both panels. The whole block disappears when there is nothing in it.
 export function RoomBrief({ widthFt, lengthFt, canEdit = false, onWidthCommit, onLengthCommit, children }) {
+  const extras = useRoomExtras()
   const editable = canEdit && !!(onWidthCommit && onLengthCommit)
   const hasSize = widthFt > 0 && lengthFt > 0
-  if (!editable && !hasSize && !children) return null
+  // A room with a size shows it. A room without one shows the empty pair only
+  // once someone has asked for it with the + below — an empty 0 × 0 on every
+  // room was a permanent line inviting input nobody was going to give. Outside a
+  // RoomBlock there is no context and nothing changes.
+  const show = hasSize || (editable && (extras?.showSize ?? true))
+  if (!show && !children) return null
 
   return (
     <div
       style={{ paddingBottom: SUBTLE_GAP, marginBottom: SUBTLE_GAP, borderBottom: `1px solid ${SUBTLE_RULE}` }}
     >
-      {editable ? (
-        // The catalog's own field. Always drawn for an author, even at 0 × 0,
-        // because an empty pair is the invitation to state one.
+      {show && editable ? (
+        // The catalog's own field, empty pair and all: at this point someone has
+        // asked to state a size, so the invitation is the point.
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: 4,
-            marginTop: 6,
+            marginTop: ROW_PAD,
             minWidth: 0,
             fontSize: 12,
             fontStyle: 'italic',
@@ -884,7 +964,7 @@ export function RoomBrief({ widthFt, lengthFt, canEdit = false, onWidthCommit, o
           <span>ft</span>
         </div>
       ) : (
-        hasSize && (
+        show && (
           <CatalogNote label="Generic Room Size is" title="The size this room is usually built to — a suggestion">
             {widthFt} × {lengthFt} ft
           </CatalogNote>
@@ -896,6 +976,56 @@ export function RoomBrief({ widthFt, lengthFt, canEdit = false, onWidthCommit, o
   )
 }
 
+// THE OPTIONAL PARTS OF A ROOM ARE ASKED FOR, not always drawn.
+//
+// A suggested size and a note are things SOME rooms have. Drawn unconditionally,
+// each spent a permanent line — the note a 46px box — on every room that has
+// neither, which is most of them; a panel of twelve rooms was mostly empty
+// fields inviting input nobody was going to give.
+//
+// So a room that has one shows it, and a room that has not offers a + beside its
+// object picker. There is no way to take one away again and there does not need
+// to be: emptying the field is what clears it, and the row goes on its own the
+// next time the panel is drawn.
+//
+// The state belongs to ONE ROOM, which is why it lives in RoomBlock rather than
+// in the panels: a room is rendered inside a `.map`, so a hook per room in the
+// panel would change hook order as rooms are added and removed.
+const RoomExtras = createContext(null)
+
+// Null outside a RoomBlock — the Companion draws rooms, and a caller that has
+// not opted in keeps drawing whatever it always drew.
+function useRoomExtras() {
+  return useContext(RoomExtras)
+}
+
+// The row under a room's object list: its picker, then a + for each part the
+// room has not got yet. One row, because they are the same kind of act — "this
+// room also has a…" — and three separate lines of + would be taller than the
+// fields they are hiding.
+export function RoomAddRow({ children }) {
+  const extras = useRoomExtras()
+  const offers = [
+    extras?.canAddSize && !extras.showSize && { key: 'size', label: 'Add size', onClick: extras.revealSize },
+    extras?.canAddNote && !extras.showNote && { key: 'note', label: 'Add note', onClick: extras.revealNote },
+  ].filter(Boolean)
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', minWidth: 0 }}>
+      {children}
+      {offers.map((offer) => (
+        <span
+          key={offer.key}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: BLOCK_GAP }}
+        >
+          <AddButton onClick={offer.onClick} title={offer.label} />
+          <span style={{ fontSize: 12, color: '#888' }}>{offer.label}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
 // A room's editable note.
 //
 // The catalog's General Note is NOT here — it sits in RoomBrief, above the
@@ -903,13 +1033,15 @@ export function RoomBrief({ widthFt, lengthFt, canEdit = false, onWidthCommit, o
 // and belong together at the top. This is the box someone types in, which stays
 // at the foot where a note is written after reading what is above it.
 //
-// It always draws, since its emptiness is the invitation. On the Tree tab it is
-// the catalog's own note; on the Project tab it is this option's second note.
+// It draws when the room HAS a note, or once one has been asked for with the +
+// beside the object picker — see RoomExtras. On the Tree tab it is the catalog's
+// own note; on the Project tab it is this option's second note.
 //
 // `onChange` reports each keystroke, for the Project tab, where Save Data has to
 // notice; `onCommit` fires on blur, for the Tree tab, where each edit is a
 // write. Callers pass whichever they need, exactly as CountField takes both.
 export function RoomNotes({ note, canEdit = false, onChange, onCommit }) {
+  const extras = useRoomExtras()
   const [draft, setDraft] = useState(note ?? '')
   const [focused, setFocused] = useState(false)
 
@@ -920,6 +1052,9 @@ export function RoomNotes({ note, canEdit = false, onChange, onCommit }) {
   }, [note, focused])
 
   if (!(canEdit && (onChange || onCommit))) return null
+  // The box appears when the room HAS a note, or once someone has asked for one
+  // with the + below. Empty on every room it was the tallest thing in the block.
+  if (!(extras?.showNote ?? true)) return null
 
   return (
     <div style={{ minWidth: 0 }}>
@@ -938,7 +1073,7 @@ export function RoomNotes({ note, canEdit = false, onChange, onCommit }) {
         }}
         style={{
           width: '100%',
-          marginTop: 6,
+          marginTop: BLOCK_GAP,
           boxSizing: 'border-box',
           resize: 'vertical',
           border: '1px solid #ddd',

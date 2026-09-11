@@ -15,9 +15,236 @@ import {
   CORE_GAP,
   FIGURE_INSET_NESTED,
   HEADER_GAP,
+  DEPT_CARET,
+  DEPT_CARET_COL,
+  DEPT_CONTROL_INSET,
+  DEPT_HEAD_INSET,
+  DEPT_NAME_ROW,
   LABEL_HEIGHT,
   PADDING,
+  ROOM_LINE_HEIGHT,
 } from './canvasLayout.js'
+import { formatArea } from '../map/area.js'
+
+// WHAT A DEPARTMENT IS MADE OF, not just how big it is. The figure on a card
+// answers the second question and nothing on either canvas answered the first —
+// a department had to be opened one at a time to read a building.
+//
+// COLLAPSED BY DEFAULT, behind the caret beside the name. A band of cards all
+// showing their rooms is the detail view, not the resting one — the thing being
+// read across a building is which departments it holds and how big they are.
+//
+// INDENTED BY THE CARET'S COLUMN, so a room name starts exactly under the
+// department's name and the rule runs down through the caret itself.
+//
+// Smaller and quieter than the name above it. This is the card's detail, and at
+// the same weight a column of them out-shouts the headings a building band is
+// scanned by.
+//
+// A `count` is written only when there is MORE THAN ONE. "Reception ×1" is
+// "Reception" spelled longer, and a column of ×1s buries the counts worth
+// seeing. The Tree tab passes none at all — a catalog room has no count, since
+// how many of a room a facility holds is the size of a program rather than a
+// fact about the room (see data/tree.js).
+// A RULE DOWN THE LIST WITH A TICK TO EACH ROOM, drawn in the indent rather than
+// beside the text — so the indent says "these belong to the card above" instead
+// of being empty space the eye has to infer the relationship across. It is the
+// same crosshair idea the core section is pinned to the building band with.
+//
+// The rule stops at the LAST room's tick rather than running to the bottom of
+// the list: a line continuing past the last item reads as "and more", which is
+// the one thing this list must never say.
+// Down the caret's centre, so the rule reads as coming out of the control that
+// opened the list.
+const RULE_LEFT = DEPT_CARET / 2
+const TICK_GAP = 3
+const RULE_DOT = 4
+export function CardRoomList({ rooms }) {
+  if (!rooms?.length) return null
+  return (
+    <div
+      style={{
+        marginTop: 4,
+        paddingLeft: DEPT_CARET_COL,
+        fontWeight: 400,
+        opacity: 0.8,
+        minWidth: 0,
+        position: 'relative',
+      }}
+    >
+      {/* The rule and every tick in ONE layer, positioned by index off the fixed
+          line height — not one tick per row. A row is `overflow: hidden` so its
+          name can ellipsise, and anything drawn in the indent from inside it is
+          clipped away by exactly that. */}
+      <span
+        style={{
+          position: 'absolute',
+          left: RULE_LEFT,
+          // Up into the gap above the first line, so the rule reads as coming
+          // down from the name rather than starting on its own.
+          top: -4,
+          // The centre of the last line, where its tick is.
+          bottom: ROOM_LINE_HEIGHT / 2,
+          borderLeft: '1px solid currentColor',
+        }}
+      />
+      {/* A dot where the rule begins. The rule otherwise starts on a cut edge in
+          the middle of the gap, which reads as a line continuing up from
+          somewhere off the card rather than as one that starts here. Centred on
+          the rule's own top point, so it caps it rather than sitting beside it. */}
+      <span
+        style={{
+          position: 'absolute',
+          left: RULE_LEFT + 0.5 - RULE_DOT / 2,
+          top: -4 - RULE_DOT / 2,
+          width: RULE_DOT,
+          height: RULE_DOT,
+          borderRadius: '50%',
+          background: 'currentColor',
+        }}
+      />
+      {rooms.map((room, i) => (
+        <span
+          key={`tick-${room.key}`}
+          style={{
+            position: 'absolute',
+            left: RULE_LEFT,
+            width: DEPT_CARET_COL - RULE_LEFT - TICK_GAP,
+            top: i * ROOM_LINE_HEIGHT + ROOM_LINE_HEIGHT / 2,
+            borderTop: '1px solid currentColor',
+          }}
+        />
+      ))}
+      {rooms.map((room) => (
+        <div
+          key={room.key}
+          title={room.count > 1 ? `${room.count} × ${room.name}` : room.name}
+          style={{
+            fontSize: 10,
+            // Italic, like every other figure this app states rather than lets
+            // you edit: these are the card's contents, not its heading.
+            fontStyle: 'italic',
+            // The layouts sized this card on exactly this line height, which is
+            // also what puts each tick against its own row.
+            lineHeight: `${ROOM_LINE_HEIGHT}px`,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {room.name}
+          {room.count > 1 && <span style={{ opacity: 0.7 }}> ×{room.count}</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// EVERYTHING INSIDE A DEPARTMENT CARD, on BOTH canvases: the name, the area
+// figure beside it, and the rooms under them. Sized by departmentCardHeight.
+//
+// This was written twice, once per tab, and the copies had already drifted — the
+// room list reached one of them and not the other. What is genuinely per-tab is
+// what a card DOES, not what it says: the Tree tab's drag and remove, this tab's
+// ghosts, phases and add. Those stay in their own files, around this.
+//
+// THE AREA SITS TOP-RIGHT, ON THE NAME'S ROW, not on a line of its own. Under
+// the name it pushed the room list down by a whole line and left the card
+// reading as three separate things; beside it, the name and its size are one
+// statement and the list starts directly under them. `DEPT_CONTROL_INSET` is
+// what keeps it clear of the × in the corner, which does not move.
+//
+// With no list open the name simply centres in the card, which is how both tabs
+// drew it before there was one.
+//
+// `expanded` and `onToggleRooms` come from ABOVE THE LAYOUT, not from state in
+// here: the card's height is what the layout stacks the group by, so a card that
+// opened itself would grow over its neighbours. See DepartmentGraph/TreeCanvas.
+export function DepartmentCardFace({ name, areaSqft, rooms, expanded = false, onToggleRooms }) {
+  const hasRooms = rooms?.length > 0
+  const listed = hasRooms && expanded
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minWidth: 0,
+        justifyContent: listed ? 'flex-start' : 'center',
+        // The card itself carries no vertical padding — see departmentCardHeight,
+        // which is this inset, the name row, the list, and this inset again.
+        paddingTop: listed ? DEPT_HEAD_INSET : 0,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: HEADER_GAP,
+          minWidth: 0,
+          height: listed ? DEPT_NAME_ROW : undefined,
+          paddingRight: DEPT_CONTROL_INSET,
+        }}
+      >
+        {/* The column is always here, even with no caret in it — see
+            DEPT_CARET. `nodrag`/`nopan` and the stopped pointerdown are what
+            keep the click from panning the canvas or starting a card drag;
+            stopPropagation keeps it from selecting the department, which is
+            what clicking the card itself means. */}
+        <span
+          className={hasRooms ? 'nodrag nopan' : undefined}
+          onPointerDown={hasRooms ? (e) => e.stopPropagation() : undefined}
+          onClick={
+            hasRooms
+              ? (e) => {
+                  e.stopPropagation()
+                  onToggleRooms?.()
+                }
+              : undefined
+          }
+          title={hasRooms ? (expanded ? 'Hide rooms' : `Show ${rooms.length} rooms`) : undefined}
+          style={{
+            flexShrink: 0,
+            width: DEPT_CARET,
+            // Against the name's baseline row rather than the text baseline —
+            // a glyph aligned to a baseline sits visibly low.
+            alignSelf: 'center',
+            textAlign: 'center',
+            fontSize: 9,
+            lineHeight: 1,
+            opacity: hasRooms ? 0.7 : 0,
+            cursor: hasRooms ? 'pointer' : 'default',
+            userSelect: 'none',
+            transition: 'transform 150ms ease',
+            transform: expanded ? 'rotate(90deg)' : 'none',
+          }}
+        >
+          ▶
+        </span>
+        <span
+          title={name}
+          style={{
+            flex: '1 1 auto',
+            minWidth: 0,
+            fontSize: 13,
+            fontWeight: 600,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {name}
+        </span>
+        {/* The Tree tab passes none: a catalog department has no area of its
+            own until an option sizes its rooms. */}
+        {areaSqft != null && (
+          <span style={{ flexShrink: 0, opacity: 0.75, whiteSpace: 'nowrap' }}>{formatArea(areaSqft)} sqft</span>
+        )}
+      </div>
+      {listed && <CardRoomList rooms={rooms} />}
+    </div>
+  )
+}
 
 // Finer the deeper you go, so nesting reads from the strokes alone. It ran the
 // other way once, which made a department look like it contained its group.

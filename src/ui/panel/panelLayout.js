@@ -68,7 +68,9 @@ export const TRAILING_SLOT = ANNOTATION_SLOT
 // next. Lighter than anything in ui/layout.js, which rules off the regions of
 // the screen; this only groups lines that were running together.
 export const SUBTLE_RULE = '#eee'
-export const SUBTLE_GAP = 10
+// The air EITHER SIDE of such a rule, so it is twice this between two blocks.
+// At 10 a room of four objects was mostly the gaps between its parts.
+export const SUBTLE_GAP = 6
 
 // The column every energy value sits in — a figure, a dropdown or a switch, all
 // right-aligned to the same edge so the eye runs down one line instead of
@@ -96,9 +98,27 @@ export const PAIR_WIDTH = 108
 // that they have. Duplicating them here would be two places to keep in step.
 
 // The room block: header strip, then a body inset by this much.
-export const BLOCK_PADDING = 12
+//
+// A room is a stack of one-line rows and the insets were a third of its height.
+// Every number here is deliberately tight: the block's own border and its
+// coloured header are what separate one room from the next, so the padding does
+// not also have to.
+export const BLOCK_PADDING = 10
 // The horizontal inset matches BLOCK_PADDING so the header's right-hand columns
 // end where the body's do — the areas below have to line up with the area
-// above them.
-export const HEADER_PADDING = '6px 12px'
+// above them. CHANGE THE TWO TOGETHER.
+export const HEADER_PADDING = '5px 10px'
+// The air above a row that opens a new kind of statement — a room block under
+// the one before it, a note under the objects.
+export const BLOCK_GAP = 6
+
+// Above and below ONE LINE of a room: an object, the room's own area, an energy
+// field. A room is a stack of these, so this number more than any other decides
+// how tall a room is — at 4 a six-object room spent 48px on padding alone.
+//
+//   >>> Set it with `paddingBlock`, NEVER the `padding` shorthand. .spp-row's
+//   >>> highlight is padding-inline plus an equal negative margin; the shorthand
+//   >>> resets the inline half and the row lands 4px left of everything it lines
+//   >>> up with.
+export const ROW_PAD = 3
 export const BLOCK_RADIUS = 6

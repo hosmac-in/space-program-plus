@@ -4,7 +4,7 @@
 
 import RemoveButton from '../primitives/RemoveButton.jsx'
 import { functionColours } from '../../data/functions.js'
-import { CanvasBandHeading, CanvasCard, CanvasContainer } from '../canvas/canvasCards.jsx'
+import { CanvasBandHeading, CanvasCard, CanvasContainer, DepartmentCardFace } from '../canvas/canvasCards.jsx'
 import { NODE_HEIGHT, NODE_WIDTH, PADDING } from './treeLayout.js'
 import { CARD_CONTROL } from '../canvas/canvasLayout.js'
 import { BandRow } from '../primitives/Band.jsx'
@@ -64,8 +64,13 @@ function HDepartmentCard({ data }) {
     <CanvasCard
       colours={data.colours}
       width={NODE_WIDTH}
-      height={NODE_HEIGHT}
-      padding={`0 26px 0 ${PADDING}px`}
+      // The layout grew this card by its room list — it must draw at exactly
+      // that height or the cards below it in the group stop lining up.
+      height={data.height ?? NODE_HEIGHT}
+      // Sides only. The vertical insets belong to the face, so that
+      // departmentCardHeight is the whole of a card's height — see
+      // DepartmentCardFace, which also reserves the corner control's column.
+      padding={`0 ${PADDING}px`}
       isHighlighted={data.isHighlighted}
       pulse={data.pulse}
       cursor={data.canEdit ? 'grab' : 'pointer'}
@@ -77,9 +82,15 @@ function HDepartmentCard({ data }) {
         ) : null
       }
     >
-      <span style={{ display: 'flex', alignItems: 'center', height: '100%', minWidth: 0 }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{data.name}</span>
-      </span>
+      {/* THE SAME FACE THE OPTION CANVAS DRAWS. No area: a catalog department
+          has none of its own until an option sizes its rooms, and its rooms
+          carry no count — see DepartmentCardFace. */}
+      <DepartmentCardFace
+        name={data.name}
+        rooms={data.rooms}
+        expanded={data.roomsExpanded}
+        onToggleRooms={data.onToggleRooms}
+      />
     </CanvasCard>
   )
 }
