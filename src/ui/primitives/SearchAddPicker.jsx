@@ -42,6 +42,7 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
   const [at, setAt] = useState(null)
   const wrapRef = useRef(null)
   const popRef = useRef(null)
+  const inputRef = useRef(null)
 
   // An option may be `{ divider: true, label }` instead of a thing to add: a
   // labelled rule between two groups of the list — what is already HERE, then
@@ -105,6 +106,30 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
     if (open) place()
   }, [open, place])
 
+  // THE + PUTS YOU IN THE FIELD. Opening the picker and then having to click the
+  // box is two actions for one intention — you pressed + because you are about
+  // to type a name.
+  //
+  // It cannot be `autoFocus`: the popover renders `visibility: hidden` until it
+  // has been measured (see `place`), and a hidden element is not focusable, so
+  // React's focus-on-mount is dropped on the floor and nothing asks again once
+  // it appears. So it is focused HERE, on the render that makes it visible.
+  //
+  // Once per opening, not on every re-place: `at` changes on scroll and resize
+  // too, and re-focusing then would yank the caret back from wherever the person
+  // had moved it.
+  const focusedRef = useRef(false)
+  useLayoutEffect(() => {
+    if (!open) {
+      focusedRef.current = false
+      return
+    }
+    if (at && !focusedRef.current) {
+      focusedRef.current = true
+      inputRef.current?.focus()
+    }
+  }, [open, at])
+
   // A portal does not move with the panel, so it is re-placed on anything that
   // could move the trigger. Capture phase, because that catches scrolls on the
   // side column itself and not just the window — the column scrolling is the
@@ -164,17 +189,20 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
             }}
           >
             <input
+              ref={inputRef}
               type="text"
-              autoFocus
               value={query}
               placeholder={placeholder}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') close()
                 // Enter takes the only remaining match — the fast path once the
-                // query has narrowed the list to one.
-                if (e.key === 'Enter' && filtered.length === 1) {
-                  onAdd(filtered[0])
+                // query has narrowed the list to one. Counted over the real
+                // rows: a divider riding along with the last match must not be
+                // what stops this firing.
+                const only = filtered.filter((o) => !o.divider)
+                if (e.key === 'Enter' && only.length === 1) {
+                  onAdd(only[0])
                   close()
                 }
               }}
