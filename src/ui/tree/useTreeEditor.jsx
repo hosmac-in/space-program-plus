@@ -15,6 +15,7 @@ import { useCatalog } from '../../data/catalog.jsx'
 import { useToast } from '../primitives/Toast.jsx'
 import {
   cleanObjectNode,
+  cleanEquipmentNode,
   compareSections,
   EMPTY_TREE,
   findDeptContext,
@@ -96,7 +97,7 @@ export function useTreeEditor() {
   // an edit computed against a tree that no longer exists, which is the
   // destruction the check exists to prevent.
   const write = useCallback(async (sectionId, tree) => {
-    const { sections, groups, departments, rooms, objects } = catalogRef.current
+    const { sections, groups, departments, rooms, objects, equipment } = catalogRef.current
     const section = sections.find((s) => s.id === sectionId)
 
     // EVERY WRITE CLEANS ITS SECTION. A definition deleted from the database
@@ -104,7 +105,7 @@ export function useTreeEditor() {
     // Done here rather than on load because this is the moment the column is
     // rewritten anyway: nothing is written for the sake of the prune alone, and
     // a section nobody edits keeps its ids until someone does.
-    const { tree: pruned, removed } = pruneTree(tree, { groups, departments, rooms, objects })
+    const { tree: pruned, removed } = pruneTree(tree, { groups, departments, rooms, objects, equipment })
 
     const { error: message, conflict } = await writeSectionTree(sectionId, pruned, section?.version)
 
@@ -430,7 +431,14 @@ export function useTreeEditor() {
 
     // Normalised on the way to the database: the two ids and a usable count on
     // every object, and nothing hung on the node in memory.
-    const clean = rooms.map((r) => ({ ...r, objects: (r.objects || []).map(cleanObjectNode) }))
+    // `equipment` only when the room has some, so a room with none writes the
+    // key-less shape it always did — the same discipline the option's wire
+    // format keeps. See SCHEMA VERSION 16 in data/optionData.js.
+    const clean = rooms.map((r) => ({
+      ...r,
+      objects: (r.objects || []).map(cleanObjectNode),
+      ...(r.equipment?.length ? { equipment: r.equipment.map(cleanEquipmentNode) } : {}),
+    }))
     const previous = ctx.deptNode.rooms || []
     const section = sections.find((s) => s.id === ctx.sectionId)
     const { tree, found } = updateDeptNode(section.tree || EMPTY_TREE, deptInstanceId, (dept) => ({

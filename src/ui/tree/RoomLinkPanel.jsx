@@ -31,6 +31,8 @@ import {
   roomWithLabel,
   roomWithNotes,
   roomWithObjectCount,
+  roomWithEquipmentCount,
+  newEquipmentNode,
 } from '../../data/tree.js'
 import { functionColours } from '../../data/functions.js'
 import { catalogRoomSchedules, roomWithSchedule } from '../../data/schedules.js'
@@ -65,7 +67,7 @@ import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
 import { useReorderList } from '../primitives/useReorderList.js'
 
 export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
-  const { rooms, objects, sections, groups, departments, functions, schedules } = useCatalog()
+  const { rooms, objects, equipment, sections, groups, departments, functions, schedules } = useCatalog()
   const editor = useTreeEditorContext()
 
   const ctx = selectedDeptInstanceId ? findDeptContext(sections, selectedDeptInstanceId) : null
@@ -171,10 +173,23 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
       {linkedRooms.length === 0
         ? !canEdit && <PanelNote>No rooms linked yet</PanelNote>
         : linkedRooms.map(({ node, def }) => {
-            const linked = (node.objects || [])
-              .map((o) => ({ node: o, def: objects.find((x) => x.id === o.object_def_id) }))
-              .filter((e) => e.def)
-            const linkedIds = new Set(linked.map((e) => e.def.id))
+            // OBJECTS AND EQUIPMENT, ONE LIST. Two arrays in the document, one
+            // question on screen — see the note in data/tree.js. `kind` rides
+            // along on each entry and decides the one thing that differs: which
+            // array a handler rewrites. It is never stored.
+            const linked = [
+              ...(node.objects || [])
+                .map((o) => ({ kind: 'object', node: o, def: objects.find((x) => x.id === o.object_def_id) }))
+                .filter((e) => e.def),
+              ...(node.equipment || [])
+                .map((e) => ({ kind: 'equipment', node: e, def: equipment.find((x) => x.id === e.equipment_def_id) }))
+                .filter((e) => e.def),
+            ]
+            // Per kind: an sp_object and an sp_equipment row could not collide
+            // on a uuid, but one set would still let either table's id suppress
+            // the other's row in the picker if they ever did.
+            const linkedObjectIds = new Set(linked.filter((e) => e.kind === 'object').map((e) => e.def.id))
+            const linkedEquipmentIds = new Set(linked.filter((e) => e.kind === 'equipment').map((e) => e.def.id))
             // Once per room: the block wears it and the schedule band is
             // painted a pale wash of it.
             const roomColours = functionColours(functions, def.function_id)
@@ -189,13 +204,20 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
             // there is one definition of that subtraction and this is not a
             // second. The counts are the catalog's own, which is what an option
             // starts from, so the figure here is the one it will open with.
+            // Both lists go in, under the keys circulationSqft reads, so the
+            // catalog's figure subtracts exactly what the option's will.
             const asRoom = {
               areaSqft,
-              objects: linked.map((e) => ({
-                defId: e.def.id,
-                areaSqft: e.def.area_sqft ?? null,
-                count: catalogObjectCount(e.node),
-              })),
+              objects: linked
+                .filter((e) => e.kind === 'object')
+                .map((e) => ({
+                  defId: e.def.id,
+                  areaSqft: e.def.area_sqft ?? null,
+                  count: catalogObjectCount(e.node),
+                })),
+              equipment: linked
+                .filter((e) => e.kind === 'equipment')
+                .map((e) => ({ areaSqft: e.def.area_sqft ?? null, count: catalogObjectCount(e.node) })),
             }
             const circulation = circulationSqft(asRoom, circulationDef?.id)
 
@@ -334,7 +356,10 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                           count !== catalogObjectCount(entry.node) &&
                           editRoom(
                             node.instance_id,
-                            (r) => roomWithObjectCount(r, entry.node.instance_id, count),
+                            (r) =>
+                              entry.kind === 'equipment'
+                                ? roomWithEquipmentCount(r, entry.node.instance_id, count)
+                                : roomWithObjectCount(r, entry.node.instance_id, count),
                             `${entry.def.name}: ×${count}`
                           )
                         }
@@ -347,10 +372,18 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                         onRemove={() =>
                           editRoom(
                             node.instance_id,
-                            (r) => ({
-                              ...r,
-                              objects: r.objects.filter((o) => o.instance_id !== entry.node.instance_id),
-                            }),
+                            (r) =>
+                              entry.kind === 'equipment'
+                                ? {
+                                    ...r,
+                                    equipment: (r.equipment || []).filter(
+                                      (e) => e.instance_id !== entry.node.instance_id
+                                    ),
+                                  }
+                                : {
+                                    ...r,
+                                    objects: r.objects.filter((o) => o.instance_id !== entry.node.instance_id),
+                                  },
                             `${entry.def.name} removed`
                           )
                         }
@@ -377,20 +410,35 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                     got yet — a suggested size, a note. See RoomAddRow. */}
                 {canEdit && (
                   <RoomAddRow>
+                    {/* One picker, two labelled groups — the same shape the
+                        Project tab offers. SearchAddPicker drops the divider
+                        when filtering leaves nothing under it. */}
                     <SearchAddPicker
-                      options={objects.filter(
-                        // Circulation is what the room has left over, not
-                        // something you put in it — it is the derived row above.
-                        (o) => !linkedIds.has(o.id) && o.id !== circulationDef?.id
-                      )}
-                      placeholder="Search objects..."
-                      title="Add an object to this room"
+                      options={[
+                        ...objects
+                          .filter(
+                            // Circulation is what the room has left over, not
+                            // something you put in it — it is the derived row
+                            // above.
+                            (o) => !linkedObjectIds.has(o.id) && o.id !== circulationDef?.id
+                          )
+                          .map((o) => ({ ...o, kind: 'object' })),
+                        { divider: true, id: 'equipment-divider', label: 'Equipment' },
+                        ...equipment
+                          .filter((e) => !linkedEquipmentIds.has(e.id))
+                          .map((e) => ({ ...e, kind: 'equipment' })),
+                      ]}
+                      placeholder="Search objects and equipment..."
+                      title="Add an object or equipment to this room"
                       label="Add an object"
                       size={16}
                       onAdd={(o) =>
                         editRoom(
                           node.instance_id,
-                          (r) => ({ ...r, objects: [...(r.objects || []), newObjectNode(o.id)] }),
+                          (r) =>
+                            o.kind === 'equipment'
+                              ? { ...r, equipment: [...(r.equipment || []), newEquipmentNode(o.id)] }
+                              : { ...r, objects: [...(r.objects || []), newObjectNode(o.id)] },
                           `${o.name} added`
                         )
                       }

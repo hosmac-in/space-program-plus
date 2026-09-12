@@ -71,6 +71,7 @@ export default function InstanceBuilder({
     departments: departmentDefs,
     rooms: roomDefs,
     objects: objectDefs,
+    equipment: equipmentDefs,
     groups: groupDefs,
     sections,
     functions,
@@ -378,8 +379,15 @@ export default function InstanceBuilder({
         const loaded = loadInstanceData(row.data, departmentDefs, roomDefs, objectDefs, {
           sections,
           buildings: buildingDefs,
+          equipment: equipmentDefs,
         })
-        const { unanchored, departments: goneDepts, rooms: goneRooms, objects: goneObjects } = loaded.dropped
+        const {
+          unanchored,
+          departments: goneDepts,
+          rooms: goneRooms,
+          objects: goneObjects,
+          equipment: goneEquipment,
+        } = loaded.dropped
         if (unanchored > 0) {
           onToast?.(
             `${unanchored} department${unanchored === 1 ? '' : 's'} couldn't be loaded: they aren't anchored to a place in the tree. Re-add them from the map.`,
@@ -389,10 +397,16 @@ export default function InstanceBuilder({
         // Pruned, not failed to load: their definition rows are gone from the
         // database, so there is nothing left for them to be. Said here because
         // the next save writes the option without them — see loadInstanceData.
-        if (goneDepts + goneRooms + goneObjects > 0) {
-          const part = (n, word) => (n > 0 ? [`${n} ${word}${n === 1 ? '' : 's'}`] : [])
+        if (goneDepts + goneRooms + goneObjects + goneEquipment > 0) {
+          const part = (n, word, plural) => (n > 0 ? [`${n} ${n === 1 ? word : (plural ?? `${word}s`)}`] : [])
           onToast?.(
-            `Removed ${[...part(goneDepts, 'department'), ...part(goneRooms, 'room'), ...part(goneObjects, 'object')].join(', ')} — deleted from the catalog.`,
+            `Removed ${[
+              ...part(goneDepts, 'department'),
+              ...part(goneRooms, 'room'),
+              ...part(goneObjects, 'object'),
+              // No 's': the word is already a plural.
+              ...part(goneEquipment, 'piece of equipment', 'pieces of equipment'),
+            ].join(', ')} — deleted from the catalog.`,
             'error'
           )
         }
@@ -445,6 +459,9 @@ export default function InstanceBuilder({
       ...r,
       instanceId: crypto.randomUUID(),
       objects: r.objects.map((o) => ({ ...o, instanceId: crypto.randomUUID() })),
+      // Fresh ids here too, or the copy and its source would share them and an
+      // edit to one would land on both.
+      equipment: (r.equipment ?? []).map((e) => ({ ...e, instanceId: crypto.randomUUID() })),
     }))
   }
 
@@ -628,6 +645,24 @@ export default function InstanceBuilder({
     })
   }
 
+  // The same copy for the catalog room's equipment. No circulation exclusion:
+  // that row is an sp_object and has no counterpart in sp_equipment.
+  function seedEquipmentFrom(catalogRoom) {
+    return (catalogRoom?.equipment ?? []).flatMap((node) => {
+      const def = equipmentDefs.find((e) => e.id === node.equipment_def_id)
+      if (!def) return []
+      return [
+        {
+          instanceId: crypto.randomUUID(),
+          defId: def.id,
+          name: def.name,
+          areaSqft: def.area_sqft ?? null,
+          count: catalogObjectCount(node),
+        },
+      ]
+    })
+  }
+
   // `pick` is one row from the room picker: { def, node }, where `node` is the
   // CATALOG PLACEMENT chosen — null only in the unrestricted case, where the
   // department's catalog node lists no rooms and there is no placement to point
@@ -675,6 +710,7 @@ export default function InstanceBuilder({
               // seeded: the catalog's note is shown beside it, not copied.
               notes: '',
               objects: seedObjectsFrom(node),
+              equipment: seedEquipmentFrom(node),
             },
           ],
         }
@@ -905,6 +941,7 @@ export default function InstanceBuilder({
           sections={sections}
           groupDefs={groupDefs}
           objectDefs={objectDefs}
+          equipmentDefs={equipmentDefs}
           functions={functions}
           schedules={schedules}
           buildingFactors={buildingFactors}

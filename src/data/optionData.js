@@ -32,7 +32,8 @@
 //         "schedules": { "occupancy": "..." },  <- overrides, absent = inherit
 //         "loads": { "people": 6 },     <- overrides, absent = inherit
 //         "hvac": { "conditioned": true },      <- overrides, absent = inherit
-//         "objects": [{ "instance_id": "...", "object_def_id": "...", "count": 1 }]
+//         "objects": [{ "instance_id": "...", "object_def_id": "...", "count": 1 }],
+//         "equipment": [{ "instance_id": "...", "equipment_def_id": "...", "count": 1 }]
 //       }]
 //     }]
 //   }
@@ -130,6 +131,15 @@
 // SCHEMA VERSIONS. Every older row still loads, and absence always means the
 // behaviour that version had, so none of these needs a migration.
 //
+// 16  a room may carry `equipment`, the same shape as `objects` against
+//     sp_equipment. Absent: none, which is what every older row means. A
+//     separate list rather than a wider `objects` because the def-id KEY is what
+//     says which table a node resolves against — see data/tree.js, which carries
+//     the same pair. The panels draw the two as one list.
+//
+//     WRITTEN ONLY WHEN THERE IS SOME, so an option nobody has put equipment in
+//     stores exactly the payload it always did.
+//
 // 15  a room may carry `label`: what this option calls that placement,
 //     overriding the catalog placement's own label and the sp_room name beneath
 //     it. Absent: whatever the catalog says, and failing that the definition's
@@ -195,7 +205,7 @@ import {
 } from './factors.js'
 import { deptNodeIndex } from './tree.js'
 
-export const SCHEMA_VERSION = 15
+export const SCHEMA_VERSION = 16
 
 // Re-exported because this is where every other option figure is imported from.
 export {
@@ -288,6 +298,18 @@ export function buildInstanceData(
           object_def_id: o.defId,
           count: o.count,
         })),
+        // Unlike `objects`, omitted when empty — see v16 above. A room in
+        // memory always HAS the array (loadInstanceData normalises it, so the
+        // panel never has to test for it); the wire keeps absence meaning none.
+        ...(r.equipment?.length
+          ? {
+              equipment: r.equipment.map((e) => ({
+                instance_id: e.instanceId,
+                equipment_def_id: e.defId,
+                count: e.count,
+              })),
+            }
+          : {}),
       })),
     })),
   }
@@ -302,12 +324,24 @@ export function buildInstanceData(
 // `sectionIds` and `buildingIds` come back null, not [], for a row saved before
 // those keys existed — the caller can then tell "no key" (derive it) from "the
 // user removed every one", which is legitimate.
+// `catalog.equipment` rather than a sixth positional definition list: the four
+// that are positional are the ones every caller has always had to pass, and a
+// fifth would be one more place to get the order silently wrong. Absent means
+// the table was not supplied, which is NOT the same as "no equipment exists" —
+// see the prune below.
 export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, catalog = {}) {
+  const equipmentDefs = catalog.equipment ?? null
   const rows = (data?.departments ?? []).filter((d) => d.tree_node_id)
   // Counted so the caller can say what went, and kept apart: an UNANCHORED
   // department lost its place in the tree and could be re-added, a PRUNED one
   // lost the definition it displays as and cannot exist at all.
-  const dropped = { unanchored: (data?.departments ?? []).length - rows.length, departments: 0, rooms: 0, objects: 0 }
+  const dropped = {
+    unanchored: (data?.departments ?? []).length - rows.length,
+    departments: 0,
+    rooms: 0,
+    objects: 0,
+    equipment: 0,
+  }
 
   // Number.isInteger, not truthiness, so 0 and the stale uuid an early v4 row
   // may carry in phase_id are all rejected without a special case.
@@ -406,6 +440,28 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
                     count: o.count,
                   }
                 }),
+              // ALWAYS AN ARRAY in memory, even when the wire has no key, so the
+              // panel that draws objects and equipment as one list never has to
+              // test for it. Safe for the dirty check, which compares the draft
+              // against memory and not against the wire — buildInstanceData is
+              // what keeps absence absent.
+              //
+              // Pruned by definition id like the rest, but ONLY when the table
+              // was supplied: a caller that has not been updated to pass it
+              // would otherwise drop every piece of equipment in the option on
+              // load and write it out gone on the next save.
+              equipment: (r.equipment ?? [])
+                .filter((e) => !equipmentDefs || keep(equipmentDefs, e.equipment_def_id, 'equipment'))
+                .map((e) => {
+                  const equipmentDef = equipmentDefs?.find((x) => x.id === e.equipment_def_id)
+                  return {
+                    instanceId: e.instance_id ?? crypto.randomUUID(),
+                    defId: e.equipment_def_id,
+                    name: equipmentDef?.name,
+                    areaSqft: equipmentDef?.area_sqft ?? null,
+                    count: e.count,
+                  }
+                }),
             }
           }),
       }
@@ -441,17 +497,24 @@ export function findCirculationDef(objectDefs = []) {
   return objectDefs.find((o) => o.name?.trim().toLowerCase() === CIRCULATION_OBJECT_NAME) ?? null
 }
 
-// What a room's objects leave over, per ONE of the room. Negative when they do
-// not fit, which is reported rather than clamped.
+// What the things standing in a room leave over, per ONE of the room. Negative
+// when they do not fit, which is reported rather than clamped.
+//
+// EQUIPMENT COUNTS AGAINST IT TOO, because it takes up floor the same way an
+// object does and the panel lists the two together — a piece of equipment that
+// did not subtract would make the circulation figure disagree with the list
+// directly above it.
 //
 // `circulationDefId` is excluded from the sum: an explicitly placed circulation
 // object would be counted against itself, and the figure would fall by its own
-// value every time it was recomputed.
+// value every time it was recomputed. It is an sp_object id, so it is never
+// tested against equipment — no equivalent row exists in sp_equipment.
 export function circulationSqft(room, circulationDefId = null) {
   const objects = (room?.objects ?? [])
     .filter((o) => !circulationDefId || o.defId !== circulationDefId)
     .reduce((sum, o) => sum + o.count * (o.areaSqft ?? 0), 0)
-  return (room?.areaSqft ?? DEFAULT_ROOM_AREA_SQFT) - objects
+  const equipment = (room?.equipment ?? []).reduce((sum, e) => sum + e.count * (e.areaSqft ?? 0), 0)
+  return (room?.areaSqft ?? DEFAULT_ROOM_AREA_SQFT) - objects - equipment
 }
 
 // What one department comes to — the `dept` step of the chain at the top of
@@ -527,7 +590,11 @@ export function summarize(departments = [], { sections, buildings, buildingFacto
       // Twelve of a room is twelve rooms. The count does not reach the objects:
       // theirs are per room, and say what is inside one of them.
       dRoomCount += r.count ?? DEFAULT_ROOM_COUNT
-      ;(r.objects ?? []).forEach((o) => {
+      // Equipment is counted in the same tally rather than a second one: the
+      // HUD's "objects" is how many things stand in this program, and the two
+      // are one list everywhere a person sees them. Splitting the figure would
+      // mean a number on screen that matches neither the list nor the total.
+      ;[...(r.objects ?? []), ...(r.equipment ?? [])].forEach((o) => {
         dObjectCount += o.count
       })
     })

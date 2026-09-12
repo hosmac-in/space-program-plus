@@ -74,6 +74,9 @@ export default function DepartmentBlock({
   sections,
   groupDefs,
   objectDefs,
+  // Defaulted, so a caller that has not been updated draws the objects it always
+  // did rather than throwing on `.filter` of undefined.
+  equipmentDefs = [],
   functions,
   schedules = [],
   departmentFunctionId,
@@ -144,19 +147,44 @@ export default function DepartmentBlock({
     onCommit: (rooms) => onDeptChange?.(dept.instanceId, (d) => ({ ...d, rooms })),
   })
 
+  // OBJECTS AND EQUIPMENT ARE ONE LIST ON SCREEN AND TWO IN THE DOCUMENT. To the
+  // person filling in a room they are one question — what stands in it — so they
+  // are drawn, counted, searched and totalled together. They are stored apart
+  // because the def-id key is what says which table a node resolves against; see
+  // data/tree.js.
+  //
+  // `kind` is what carries that across the boundary: the picker stamps it on
+  // every row it offers, and it decides the one thing that differs — which array
+  // a handler touches. It is never stored.
+  const listOf = (kind) => (kind === 'equipment' ? 'equipment' : 'objects')
+
+  // Both arrays, tagged and concatenated, in one pass — the order is objects
+  // then equipment rather than interleaved, because a room is read as what it is
+  // furnished with and then what it is fitted with.
+  function itemsOf(room) {
+    return [
+      ...room.objects.map((o) => ({ ...o, kind: 'object' })),
+      ...(room.equipment ?? []).map((e) => ({ ...e, kind: 'equipment' })),
+    ]
+  }
+
   // Counts live only here: the catalog says an object may be in this room, this
   // option says how many.
-  function addObjectToRoom(roomInstanceId, def) {
+  function addToRoom(roomInstanceId, def) {
+    const key = listOf(def.kind)
     onRoomChange(roomInstanceId, (room) => {
-      if (room.objects.some((o) => o.defId === def.id)) return room
+      const list = room[key] ?? []
+      if (list.some((o) => o.defId === def.id)) return room
       return {
         ...room,
-        objects: [
-          ...room.objects,
+        [key]: [
+          ...list,
           {
             instanceId: crypto.randomUUID(),
             defId: def.id,
             name: def.name,
+            // sp_equipment has no `type` column. undefined rather than a
+            // stand-in: ObjectRow already draws a row without one.
             type: def.type,
             areaSqft: def.area_sqft,
             count: DEFAULT_OBJECT_COUNT,
@@ -359,6 +387,7 @@ export default function DepartmentBlock({
         // what its schedules are inherited from.
         const catalogRoom = catalogRoomNode(catalogRooms, room.treeRoomNodeId)
         const catalogObjects = catalogRoom?.objects ?? null
+        const catalogEquipment = catalogRoom?.equipment ?? null
         // Once per room: the block wears it and the schedule band is painted a
         // pale wash of it.
         const roomColours = functionColours(functions, roomDefs.find((d) => d.id === room.defId)?.function_id)
@@ -402,7 +431,9 @@ export default function DepartmentBlock({
               setConfirmTarget({
                 roomInstanceId: room.instanceId,
                 roomName: shown.name,
-                objectCount: room.objects.reduce((s, o) => s + o.count, 0),
+                // Everything standing in the room, so the confirmation says what
+                // removing it actually takes with it.
+                objectCount: itemsOf(room).reduce((s, o) => s + o.count, 0),
               })
             }
             control={annotations?.room?.(room, pathTo(shown.name), shown.name)}
@@ -482,7 +513,11 @@ export default function DepartmentBlock({
               }
             />
 
-            {room.objects.map((obj) => (
+            {/* One list, both arrays — see itemsOf. `instanceId` keys it: it is
+                a uuid, so it is unique across the two without a composite key. */}
+            {itemsOf(room).map((obj) => {
+              const key = listOf(obj.kind)
+              return (
               <ObjectRow
                 key={obj.instanceId}
                 name={obj.name}
@@ -495,7 +530,7 @@ export default function DepartmentBlock({
                     room.instanceId,
                     (r) => ({
                       ...r,
-                      objects: r.objects.map((o) => (o.instanceId === obj.instanceId ? { ...o, count } : o)),
+                      [key]: (r[key] ?? []).map((o) => (o.instanceId === obj.instanceId ? { ...o, count } : o)),
                     }),
                     // Typing a number is one undo step, however many keystrokes.
                     { coalesce: `count:${obj.instanceId}` }
@@ -504,11 +539,12 @@ export default function DepartmentBlock({
                 onRemove={() =>
                   onRoomChange(room.instanceId, (r) => ({
                     ...r,
-                    objects: r.objects.filter((o) => o.instanceId !== obj.instanceId),
+                    [key]: (r[key] ?? []).filter((o) => o.instanceId !== obj.instanceId),
                   }))
                 }
               />
-            ))}
+              )
+            })}
 
             {/* Not an object, drawn as one: what the room's area leaves over
                 once its objects are taken out. Derived on every render from the
@@ -534,20 +570,40 @@ export default function DepartmentBlock({
                 authored on the Tree tab. See RoomAddRow. */}
             {!readOnly && (
             <RoomAddRow>
+            {/* ONE PICKER FOR BOTH, in two labelled groups. Two + buttons side
+                by side would ask which of them a thing is before you can look
+                for it, and for most of this catalog that is not obvious. The
+                divider drops itself when filtering leaves nothing under it, so
+                typing a name that only matches equipment shows one group. */}
             <SearchAddPicker
-              options={objectDefs.filter((def) => {
-                // Circulation is what the room has left over, not something you
-                // put in it — it is already on the row above, derived.
-                if (circulationDef && def.id === circulationDef.id) return false
-                if (room.objects.some((o) => o.defId === def.id)) return false
-                if (!catalogObjects || catalogObjects.length === 0) return true
-                return catalogObjects.some((o) => o.object_def_id === def.id)
-              })}
-              placeholder="Search objects..."
-              title="Add an object to this room"
+              options={[
+                ...objectDefs
+                  .filter((def) => {
+                    // Circulation is what the room has left over, not something
+                    // you put in it — it is already on the row above, derived.
+                    if (circulationDef && def.id === circulationDef.id) return false
+                    if (room.objects.some((o) => o.defId === def.id)) return false
+                    if (!catalogObjects || catalogObjects.length === 0) return true
+                    return catalogObjects.some((o) => o.object_def_id === def.id)
+                  })
+                  .map((def) => ({ ...def, kind: 'object' })),
+                { divider: true, id: 'equipment-divider', label: 'Equipment' },
+                ...equipmentDefs
+                  .filter((def) => {
+                    if ((room.equipment ?? []).some((e) => e.defId === def.id)) return false
+                    // Restricted to the catalog placement's equipment the same
+                    // way objects are, and unrestricted for the same reason: a
+                    // room the catalog says nothing about may hold anything.
+                    if (!catalogEquipment || catalogEquipment.length === 0) return true
+                    return catalogEquipment.some((e) => e.equipment_def_id === def.id)
+                  })
+                  .map((def) => ({ ...def, kind: 'equipment' })),
+              ]}
+              placeholder="Search objects and equipment..."
+              title="Add an object or equipment to this room"
               label="Add an object"
               size={16}
-              onAdd={(def) => addObjectToRoom(room.instanceId, def)}
+              onAdd={(def) => addToRoom(room.instanceId, def)}
             />
             </RoomAddRow>
             )}

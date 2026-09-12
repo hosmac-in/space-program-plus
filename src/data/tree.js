@@ -29,6 +29,11 @@
 //             "instance_id": "...",
 //             "object_def_id": "...",  <- which sp_object row
 //             "count": 2               <- how many, see COUNTS below
+//           }],
+//           "equipment": [{            <- optional, same shape against sp_equipment
+//             "instance_id": "...",
+//             "equipment_def_id": "...",
+//             "count": 2
 //           }]
 //         }]
 //       }]
@@ -58,6 +63,21 @@
 // room. That is a fact about the room's COMPOSITION: an ICU bay has one bed,
 // two monitors and a sink wherever it is built, and saying so once in the
 // catalog is the point of having a catalog.
+//
+// EQUIPMENT IS THE SAME KIND OF THING, IN A LIST OF ITS OWN
+//
+// `equipment` holds the same shape against sp_equipment, and everything said
+// here about an object is true of it. The panels draw the two as ONE list,
+// because to the person filling in a room they are one question — what stands
+// in it.
+//
+//   >>> Two arrays, not one, and the reason is the def id: a node has to say
+//   >>> which table its id points at, and in a shared array it could not. The
+//   >>> key is what carries that, so nothing has to store a "kind" beside the
+//   >>> id and keep the two in step.
+//
+// Absent means no equipment, exactly as an absent `objects` does. Every room
+// written before the table existed has no key and needs no migration.
 //
 // A room node carries NO count, and must not. How many ICU bays a facility has
 // is the size of that particular program, not a property of the room — it is
@@ -164,7 +184,10 @@ import { supabase } from './supabase.js'
 // in loadInstanceData on why a dangling tree_node_id is left alone.
 //
 // Pure, and returns the count it removed so a caller can say so.
-export function pruneTree(tree, { groups = [], departments = [], rooms = [], objects = [] }) {
+// `equipment` defaults to [] like the rest, and that is safe rather than
+// destructive HERE only because of the guard below: a caller that forgets to
+// pass the table would otherwise prune every equipment node in the section.
+export function pruneTree(tree, { groups = [], departments = [], rooms = [], objects = [], equipment = null }) {
   const has = (list, id) => list.some((x) => x.id === id)
   let removed = 0
   const drop = (n) => {
@@ -185,6 +208,20 @@ export function pruneTree(tree, { groups = [], departments = [], rooms = [], obj
             .map((r) => ({
               ...r,
               objects: (r.objects || []).filter((o) => has(objects, o.object_def_id) || drop(1)),
+              // NOT PRUNED WHEN THE TABLE WAS NOT PASSED. Every other list here
+              // is required, so an empty one means "nothing is defined" and
+              // dropping the placements is right. Equipment arrived later, and
+              // a caller written before it exists would hand over nothing and
+              // silently wipe a room's equipment on the next save of the
+              // section. Null is "did not ask", [] is "asked, and there are
+              // none" — the same distinction the override rule draws.
+              ...(r.equipment
+                ? {
+                    equipment: equipment
+                      ? r.equipment.filter((e) => has(equipment, e.equipment_def_id) || drop(1))
+                      : r.equipment,
+                  }
+                : {}),
             })),
         })),
     }))
@@ -472,6 +509,45 @@ export function cleanObjectNode(objectNode) {
 export function catalogObjectCount(objectNode) {
   const stated = objectNode?.count
   return Number.isInteger(stated) && stated > 0 ? stated : DEFAULT_CATALOG_OBJECT_COUNT
+}
+
+// --- Equipment ---------------------------------------------------------------
+//
+// The same three functions against sp_equipment. Written out rather than shared
+// behind a `kind` argument: the def-id KEY is what says which table a node
+// points at (see the header), and a parameterised version would have to take
+// that key as a string and would read worse at every call site than two names do.
+//
+// `count` behaves exactly as an object's — always some number of them, floor 1 —
+// so the object's constant is reused rather than a second one that could drift.
+
+export function newEquipmentNode(equipmentDefId) {
+  return {
+    instance_id: crypto.randomUUID(),
+    equipment_def_id: equipmentDefId,
+    count: DEFAULT_CATALOG_OBJECT_COUNT,
+  }
+}
+
+export function cleanEquipmentNode(equipmentNode) {
+  return {
+    instance_id: equipmentNode.instance_id,
+    equipment_def_id: equipmentNode.equipment_def_id,
+    count: catalogObjectCount(equipmentNode),
+  }
+}
+
+// The key is omitted, never written empty, when a room has no equipment: absence
+// is what every room saved before this table existed already says, and one
+// meaning is better than two.
+export function roomWithEquipmentCount(room, equipmentInstanceId, count) {
+  if (!room.equipment) return room
+  return {
+    ...room,
+    equipment: room.equipment.map((e) =>
+      e.instance_id === equipmentInstanceId ? { ...e, count: Math.max(1, Math.round(count) || 1) } : e
+    ),
+  }
 }
 
 // Set an object's count on a room node. Never removes the key: unlike an area

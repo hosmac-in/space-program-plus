@@ -298,7 +298,7 @@ function SignedInApp({ session }) {
               />
             )
           }
-          optionCanvas={<OptionCanvas workspace={workspace} onSelectDepartment={handleSelectDepartment} />}
+          optionCanvas={<OptionCanvas workspace={workspace} onSelectDepartment={handleSelectDepartment} diagram />}
           optionChooser={
             selectedProjectId ? (
               <OptionChooser
