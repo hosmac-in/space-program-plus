@@ -60,6 +60,7 @@ import {
   RoomNotes,
 } from '../panel/panelParts.jsx'
 import RoomEnergyStrip, { SCHEDULES_GROUP } from '../panel/RoomEnergyStrip.jsx'
+import StripBand from '../panel/StripBand.jsx'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
 import { useReorderList } from '../primitives/useReorderList.js'
 
@@ -129,33 +130,40 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
           data/factors.js. Written immediately, like everything else here.
 
           Shown even to a non-admin: what an option will inherit is worth
-          knowing whether or not you can change it. */}
-      {DEPARTMENT_FACTORS.map((factor) => {
-        const set = Number.isFinite(ctx.deptNode[factor.treeKey]) ? ctx.deptNode[factor.treeKey] : null
-        return (
-          <div
-            key={factor.key}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, minWidth: 0, fontSize: 13 }}
-          >
-            <span style={{ minWidth: 0, opacity: 0.85 }}>{factor.label}</span>
-            <CountField
-              value={set ?? factor.fallback}
-              canEdit={canEdit}
-              min={factor.min}
-              step={0.05}
-              decimals={2}
-              prefix="×"
-              colour="inherit"
-              title={factor.describe(deptDef?.name ?? 'this department')}
-              onChange={(value) =>
-                editor.setDeptFactor(selectedDeptInstanceId, factor, value, {
-                  message: `${deptDef?.name ?? 'Department'}: ${factor.label.toLowerCase()} set`,
-                })
-              }
-            />
-          </div>
-        )
-      })}
+          knowing whether or not you can change it.
+
+          IN THE SAME BAND THE OPTION DRAWS THEM IN, and for the same reason —
+          the same factors, the same rows, so the same component. The Project
+          tab adds only what it alone has: the muted/overridden treatment and a
+          reset, because nothing sits below the catalog. */}
+      <StripBand title="Department Parameters" colours={colours} pad={16} top={12} plain>
+        {DEPARTMENT_FACTORS.map((factor) => {
+          const set = Number.isFinite(ctx.deptNode[factor.treeKey]) ? ctx.deptNode[factor.treeKey] : null
+          return (
+            <div
+              key={factor.key}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0', minWidth: 0, fontSize: 12 }}
+            >
+              <span style={{ color: '#555', minWidth: 0 }}>{factor.label}</span>
+              <CountField
+                value={set ?? factor.fallback}
+                canEdit={canEdit}
+                min={factor.min}
+                step={0.05}
+                decimals={2}
+                prefix="×"
+                colour="#555"
+                title={factor.describe(deptDef?.name ?? 'this department')}
+                onChange={(value) =>
+                  editor.setDeptFactor(selectedDeptInstanceId, factor, value, {
+                    message: `${deptDef?.name ?? 'Department'}: ${factor.label.toLowerCase()} set`,
+                  })
+                }
+              />
+            </div>
+          )
+        })}
+      </StripBand>
 
       {/* The wrapper is the drop target, so a drop landing in the gutter between
           two rooms still counts — see useReorderList. */}

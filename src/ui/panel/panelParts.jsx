@@ -653,6 +653,12 @@ export function RoomBlock({
     canAddNote,
     revealSize: () => setAsked((a) => ({ ...a, size: true })),
     revealNote: () => setAsked((a) => ({ ...a, note: true })),
+    // The × on the part itself: it clears the stored value AND takes back the
+    // asking, or a row emptied by its own × would sit there still asked for.
+    // Un-asking alone would be worse — the value would stay stored and come
+    // back on the next draw.
+    hideSize: () => setAsked((a) => ({ ...a, size: false })),
+    hideNote: () => setAsked((a) => ({ ...a, note: false })),
   }
 
   // What Enter (or leaving the field) does with what was typed.
@@ -924,6 +930,10 @@ export function RoomBrief({ widthFt, lengthFt, canEdit = false, onWidthCommit, o
         // The catalog's own field, empty pair and all: at this point someone has
         // asked to state a size, so the invitation is the point.
         <div
+          // The × waits for the pointer, like every other remove in the app.
+          // Mark this row and not the block, or the note's × below appears with
+          // it — see REMOVE_BUTTON_STYLE.
+          className="spp-hover-reveal"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -962,6 +972,23 @@ export function RoomBrief({ widthFt, lengthFt, canEdit = false, onWidthCommit, o
             onCommit={onLengthCommit}
           />
           <span>ft</span>
+          {/* Takes the size away: both halves cleared — either one at 0 is what
+              makes the row stop rendering anyway — and the asking withdrawn.
+              Nothing is lost that the catalog does not hold, and it is one undo
+              step per half, as typing them was. */}
+          {/* Hard right, not against the "ft": the fields grow with their digits
+              and a × trailing them would sit at a different place on every room.
+              The note's × below is on the same edge. */}
+          <span style={{ flex: 1 }} />
+          <RemoveButton
+            size={OBJECT_CONTROL}
+            title="Remove the suggested size"
+            onRemove={() => {
+              onWidthCommit(0)
+              onLengthCommit(0)
+              extras?.hideSize()
+            }}
+          />
         </div>
       ) : (
         show && (
@@ -1018,7 +1045,9 @@ export function RoomAddRow({ children }) {
           key={offer.key}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: BLOCK_GAP }}
         >
-          <AddButton onClick={offer.onClick} title={offer.label} />
+          {/* The object picker's size, not AddButton's default: these sit on
+              one row with it and act on the same tier — one part of a room. */}
+          <AddButton onClick={offer.onClick} title={offer.label} size={OBJECT_CONTROL} />
           <span style={{ fontSize: 12, color: '#888' }}>{offer.label}</span>
         </span>
       ))}
@@ -1057,7 +1086,9 @@ export function RoomNotes({ note, canEdit = false, onChange, onCommit }) {
   if (!(extras?.showNote ?? true)) return null
 
   return (
-    <div style={{ minWidth: 0 }}>
+    // The × sits beside the box rather than over it: a textarea is resizable
+    // from its own bottom-right corner and anything floated inside fights it.
+    <div className="spp-hover-reveal" style={{ display: 'flex', alignItems: 'flex-start', gap: 4, minWidth: 0 }}>
       <textarea
         value={draft}
         rows={2}
@@ -1085,6 +1116,22 @@ export function RoomNotes({ note, canEdit = false, onChange, onCommit }) {
           background: '#fff',
         }}
       />
+      {/* Empties the note and withdraws the asking. Both reports fire: the
+          Project tab is listening to onChange for Save Data, the Tree tab to
+          onCommit for its write, and this is the one edit that happens without
+          the field being touched. */}
+      <span style={{ marginTop: BLOCK_GAP + 2 }}>
+        <RemoveButton
+          size={OBJECT_CONTROL}
+          title="Remove this note"
+          onRemove={() => {
+            setDraft('')
+            onChange?.('')
+            onCommit?.('')
+            extras?.hideNote()
+          }}
+        />
+      </span>
     </div>
   )
 }

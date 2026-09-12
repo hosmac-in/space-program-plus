@@ -78,6 +78,25 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
     return out
   }, [options, query])
 
+  // The rows the arrows actually move between: dividers are headings and must
+  // not take a turn in the sequence.
+  const only = useMemo(() => filtered.filter((o) => !o.divider), [filtered])
+
+  // WHICH ROW THE ARROWS ARE ON, as an index into `only` — -1 is "still in the
+  // field", which is where every opening and every keystroke puts it back.
+  // Anchoring to an id instead would keep a highlight on a row the query has
+  // just filtered out from under it.
+  const [active, setActive] = useState(-1)
+  useEffect(() => setActive(-1), [query, open])
+
+  // Keeps the highlighted row in the 220px window while arrowing past its end.
+  // `block: 'nearest'` scrolls only when it has to, so the list does not jump
+  // on every press.
+  const rowRefs = useRef([])
+  useEffect(() => {
+    if (active >= 0) rowRefs.current[active]?.scrollIntoView({ block: 'nearest' })
+  }, [active])
+
   const close = () => {
     setOpen(false)
     setQuery('')
@@ -197,13 +216,31 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') close()
-                // Enter takes the only remaining match — the fast path once the
-                // query has narrowed the list to one. Counted over the real
-                // rows: a divider riding along with the last match must not be
-                // what stops this firing.
-                const only = filtered.filter((o) => !o.divider)
-                if (e.key === 'Enter' && only.length === 1) {
-                  onAdd(only[0])
+                // DOWN WALKS INTO THE LIST without leaving the field: the caret
+                // stays where it is, so the query can still be corrected at any
+                // point. preventDefault because both arrows otherwise move the
+                // caret to an end of the text instead.
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  if (only.length === 0) return
+                  setActive((i) =>
+                    e.key === 'ArrowDown'
+                      ? Math.min(i + 1, only.length - 1)
+                      // Up off the first row returns to the field rather than
+                      // wrapping to the bottom — the list is a short one you
+                      // stepped into, not a carousel.
+                      : Math.max(i - 1, -1)
+                  )
+                  return
+                }
+                if (e.key !== 'Enter') return
+                // Enter takes the row the arrows are on; failing that, the only
+                // remaining match — the fast path once the query has narrowed
+                // the list to one. Counted over the real rows: a divider riding
+                // along with the last match must not be what stops this firing.
+                const pick = active >= 0 ? only[active] : only.length === 1 ? only[0] : null
+                if (pick) {
+                  onAdd(pick)
                   close()
                 }
               }}
@@ -221,7 +258,13 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
               {filtered.length === 0 ? (
                 <div style={{ padding: '6px 10px', fontSize: 12, color: '#999' }}>No matches</div>
               ) : (
-                filtered.map((opt) => (
+                filtered.map((opt, i) => {
+                  // Its place among the ROWS, which is what `active` counts —
+                  // the dividers in between would otherwise shift every index
+                  // below them by one.
+                  const row = opt.divider ? -1 : filtered.slice(0, i).filter((o) => !o.divider).length
+                  const isActive = row >= 0 && row === active
+                  return (
                   opt.divider ? (
                     <div
                       key={opt.id}
@@ -246,14 +289,23 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                   ) : (
                   <div
                     key={opt.id}
+                    ref={(el) => (rowRefs.current[row] = el)}
                     onMouseDown={(e) => {
                       e.preventDefault()
                       onAdd(opt)
                       close()
                     }}
-                    style={{ padding: '6px 10px', fontSize: 13, cursor: 'pointer' }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = '#f2f7ff')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = '#fff')}
+                    // The highlight is a style, not a mutation on the element:
+                    // the keyboard's row is decided by state, and setting
+                    // background by hand on hover would be wiped by the next
+                    // render and fight it.
+                    style={{
+                      padding: '6px 10px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      background: isActive ? '#f2f7ff' : '#fff',
+                    }}
+                    onMouseEnter={() => setActive(row)}
                   >
                     <div>{opt.name}</div>
                     {opt.path && (
@@ -261,7 +313,8 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                     )}
                   </div>
                   )
-                ))
+                  )
+                })
               )}
             </div>
           </div>,
