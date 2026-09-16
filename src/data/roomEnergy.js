@@ -102,7 +102,7 @@ export const ROOM_LOADS = [
     label: 'Lighting',
     short: 'LPD',
     type: 'number',
-    unit: 'W/sqft',
+    unit: 'W/ft²',
     fallback: 0,
     decimals: 2,
     step: 0.05,
@@ -116,7 +116,7 @@ export const ROOM_LOADS = [
     // Beside lighting and in the same unit: the two are the room's plug and
     // fixture loads and are almost always entered together. A ward's is a bed
     // and a monitor; an imaging room's is the scanner.
-    unit: 'W/sqft',
+    unit: 'W/ft²',
     fallback: 0,
     decimals: 2,
     step: 0.05,

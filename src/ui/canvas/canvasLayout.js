@@ -9,11 +9,34 @@
 
 export const NODE_WIDTH = 200
 export const GAP = 16
+
+// THE AIR BETWEEN TWO DEPARTMENT CARDS, half what separates two boxes. A card is
+// a row — one name and a figure — and cards inside a group are a list, which
+// reads as one thing at close spacing and as a stack of separate objects at the
+// box gap. A GROUP keeps the full GAP: the gap is what says where one box ends
+// and the next begins, and halving that ran two groups together.
+//
+// Derived, not typed: the two are a pair, and the relation between them is what
+// makes the nesting legible.
+export const CARD_GAP = GAP / 2
 // One inset used on all four sides at every nesting level, and exported so card
 // headers pad by the same amount — that's what lines a header's text up with
 // the left edge of the cards beneath it.
 export const PADDING = 16
-export const LABEL_HEIGHT = 30
+
+// ONE ROW HEIGHT FOR EVERYTHING SHUT, and every such height is derived from it
+// rather than typed again:
+//
+//   a section or group header          LABEL_HEIGHT
+//   a group box with its cards hidden  its header, so this
+//   a department card with no list     DEPT_HEAD_HEIGHT
+//
+// They are read down one column, stacked in the same boxes, and three numbers
+// that were each "about thirty" made a shut group and the card under it two
+// slightly different bars — which reads as a mistake, not as a difference. A
+// card with its rooms open grows by the list and nothing else.
+export const ROW_HEIGHT = 30
+export const LABEL_HEIGHT = ROW_HEIGHT
 
 // The × (or +) in a card header, and the column reserved for it WHETHER OR NOT
 // there is one — a section has a ×, the group inside it does not, and without a
@@ -29,23 +52,6 @@ export const CARD_CONTROL_INSET = (LABEL_HEIGHT - CARD_CONTROL) / 2
 // The gap between a header's parts. Named because the sums below depend on it.
 export const HEADER_GAP = 6
 
-// HOW FAR A HEADER'S AREA FIGURE SITS FROM ITS CARD'S RIGHT EDGE, at each of
-// the two levels — and the two are chosen so the figures land in ONE COLUMN
-// down the nesting, not so each is tidy within its own box.
-//
-// A card that reserves the control column pays for the column and the gap
-// before it; one that does not is inset by PADDING inside its parent instead,
-// and pays that back. So:
-//
-//     section:  CARD_CONTROL_INSET + HEADER_GAP + CARD_CONTROL
-//     group:    the same, less the PADDING it is already inset by
-//
-//   >>> These two are a PAIR. Change the control size, the gap or PADDING and
-//   >>> the figures stagger again — which is exactly what "nearly aligned"
-//   >>> looked like, and it is only a few pixels, so it reads as a mistake
-//   >>> rather than as a difference.
-export const FIGURE_INSET = CARD_CONTROL_INSET + HEADER_GAP + CARD_CONTROL
-export const FIGURE_INSET_NESTED = FIGURE_INSET - PADDING
 const EMPTY_HEIGHT = 36
 
 // --- The department card ----------------------------------------------------
@@ -60,18 +66,23 @@ const EMPTY_HEIGHT = 36
 // or truncating it: layoutGroupBox already takes a height per child, which is how
 // the option tab draws a ghost shorter.
 export const ROOM_LINE_HEIGHT = 13
-// The air between the name row and the first room line.
-const ROOM_LIST_TOP = 4
+// The air between the name row and the first room line. Exported because the
+// tree measures each room's branch from it — see branchToRoom.
+export const ROOM_LIST_TOP = 4
 export const roomListHeight = (count) => (count === 0 ? 0 : ROOM_LIST_TOP + count * ROOM_LINE_HEIGHT)
 
-// A card with nothing listed: one name, centred in it, which is what both tabs
-// drew before there was a list.
-export const DEPT_HEAD_HEIGHT = 60
-// With a list, the card is laid out top-down instead — the same inset above the
-// name and below the last room. The card carries no vertical padding of its own:
-// these are its only two, so departmentCardHeight is the whole sum.
-export const DEPT_HEAD_INSET = 14
+// A card with nothing listed: one name, centred in it — THE SAME ROW A SHUT
+// GROUP IS, since both are one name and a figure with nothing under them. It was
+// 60, which made a card twice the bar above it and a group of them a column of
+// slabs; the list is what a card grows for.
+export const DEPT_HEAD_HEIGHT = ROW_HEIGHT
 export const DEPT_NAME_ROW = 20
+// With a list, the card is laid out top-down instead — the same inset above the
+// name and below the last room, and DERIVED so that the head of an open card is
+// exactly the row a shut one is: opening one adds the list and moves nothing
+// else. The card carries no vertical padding of its own, so departmentCardHeight
+// is the whole sum.
+export const DEPT_HEAD_INSET = (ROW_HEIGHT - DEPT_NAME_ROW) / 2
 
 // What a card has to be to hold its list. The card must draw at exactly this
 // height or every card below it in the group stops lining up, so the face and
@@ -81,22 +92,170 @@ export const departmentCardHeight = (roomCount) =>
     ? DEPT_HEAD_HEIGHT
     : DEPT_HEAD_INSET * 2 + DEPT_NAME_ROW + roomListHeight(roomCount)
 
-// How far the name and the area figure stop short of the card's content edge, to
-// clear the × (or +) pinned in the corner — CARD_CONTROL wide at a 4px inset, so
-// this is what is left of it plus a gap. Without it the area figure sits under
-// the button at the exact moment it is longest.
-export const DEPT_CONTROL_INSET = 12
-
-// The disclosure caret's column, RESERVED WHETHER OR NOT A CARD HAS ONE — a
-// department with no rooms would otherwise start its name 18px left of every
-// other card in the group, which reads as a different kind of card rather than
-// as an empty one.
+// The disclosure caret's column, RESERVED WHETHER OR NOT A ROW HAS ONE — a
+// department with no rooms, or a group with no cards, would otherwise start its
+// name 18px left of every other row beside it, which reads as a different kind
+// of row rather than as an empty one.
 //
 // The room list is indented by the whole column, so a room name starts exactly
 // under the department's name, and the rule down the list runs through the
 // caret's own centre.
 export const DEPT_CARET = 12
 export const DEPT_CARET_COL = DEPT_CARET + HEADER_GAP
+
+// --- THE ROW GRID, AND THE DATUM EVERY AREA FIGURE ENDS ON -------------------
+//
+// EVERY ROW ON EITHER CANVAS IS THE SAME FOUR COLUMNS — a section header, a
+// group header, a department card, a phased card's heading:
+//
+//     [indent] [caret] [name ................] [figure] [control]
+//
+// NESTING ONLY MOVES THE LEFT EDGE. A child box is inset `NEST_LEFT`, which is
+// PADDING plus the caret column — so a child's box starts exactly under its
+// parent's NAME, and the tree (CanvasGuides.jsx) has a column of its own to be
+// drawn in. That is what makes the nesting read as a tree rather than as boxes
+// that happen to sit inside each other.
+//
+// THE RIGHT IS A DATUM. A box steps in by `NEST_RIGHT` per level so three
+// borders don't stack on one line, and each level's control inset PAYS THAT STEP
+// BACK — so every area figure, at every depth, on both canvases, ends on one
+// vertical line.
+//
+//   >>> This replaces three constants that each meant "about right at my own
+//   >>> level" (FIGURE_INSET, FIGURE_INSET_NESTED, DEPT_CONTROL_INSET), which is
+//   >>> why the figures drifted apart every time any level changed. A new level
+//   >>> DERIVES its inset from `controlInset`; it never types one. Nothing may
+//   >>> right-pad one of these rows by hand.
+export const DEPTH = { section: 0, group: 1, card: 2 }
+const MAX_DEPTH = 2
+
+// Where a row's own content starts. Tighter than PADDING, which is what the
+// boxes are spaced by vertically: the row's left inset is paid TWICE over at
+// every level — once by the box and once by the step past it — so at PADDING the
+// nesting marched across the card and left the names in a diagonal.
+export const ROW_INSET = 8
+
+// ONE STEP, EVERY LEVEL. A child box steps right by this, and so does a room
+// inside a card — a tree whose branches are three lengths is three trees.
+//
+// The floor is the parent's caret ring plus air: a child box drawn any closer
+// would be drawn over the ring the tree ends on, because the tree is a layer
+// above the boxes.
+export const INDENT = 26
+export const NEST_LEFT = INDENT
+
+// A ROOM STEPS LESS. It is a line of text, not a box: it has no edge of its own
+// to clear, so the step only has to get past the card's caret ring — and at a
+// box's full INDENT the names ended up further in than their own department's.
+export const ROOM_STEP = 20
+// And a hair in on the right, so the right edges step without stacking.
+export const NEST_RIGHT = 6
+
+// >>> A SWITCH, kept so the call can be made by looking rather than by arguing.
+// Groups and department cards carry no outline at all — the nesting and the tree
+// already say what contains what. A section is the outermost box on bare canvas,
+// which is the one place a fill alone may not say where the box ends. Flip this
+// to false to see it without.
+export const SECTION_BORDER = false
+
+// The other half of the same question, and INDEPENDENT of it: a section is
+// lifted off the canvas rather than outlined on it. Set to null for neither. An
+// edge and a lift say the same thing two ways, so these are separate switches —
+// try either, both or neither.
+export const SECTION_SHADOW = '0 1px 3px rgba(0,0,0,0.30)'
+
+// What a row pads on the right, BY DEPTH — the control column's own inset plus
+// however much of the nesting this level has not yet paid for. Combined with the
+// control column and the gap before it, this is what puts the figure on the
+// datum.
+export const controlInset = (depth) => CARD_CONTROL_INSET + (MAX_DEPTH - depth) * NEST_RIGHT
+
+// --- THE TREE ----------------------------------------------------------------
+//
+// The line that says what contains what: down the caret column of each row,
+// across to each child, ending in that child's caret or in a dot where it has
+// none. No branch ends in air.
+//
+// IT IS ONE DRAWING, over the whole canvas — CanvasGuides.jsx. It was drawn in
+// pieces once, each box painting the part inside itself in that box's own ink,
+// with the pieces overlapping exactly on every border. The geometry met and it
+// still read as four separate drawings, because a line that changes colour at
+// every wall is not one line. What is here is only where it attaches.
+export const GUIDE_X = ROW_INSET + DEPT_CARET / 2
+// The connector at a branch that has no caret to point at — a room, or a box
+// with nothing under it to open. Small: it is a full stop on a hairline, and a
+// column of them beside a room list out-weighs the names at anything bigger.
+export const GUIDE_DOT = 4
+// Solid black, everywhere, whatever it crosses. The tree is one object and it is
+// drawn in one ink; legibility over a dark group body is the halo's job, not a
+// second colour's.
+export const GUIDE_INK = '#000'
+
+// THE RING AROUND A CARET, which is what the tree actually lands on. The arrow
+// turns inside it, so the point a branch meets never moves — a branch that
+// stopped short of the glyph itself shifted its meeting point every time the
+// glyph rotated, and read as coming loose.
+export const CARET_RING = 14
+
+// The + that adds a ghost, which stands at the end of its own branch rather than
+// off in a corner of the card: the thing the tree is pointing at IS the thing
+// you press. Smaller than the 27 it is elsewhere — here it is one terminator
+// among many and has to sit in the caret's column.
+export const ADD_ENDPOINT = 18
+
+// WHAT A BRANCH ENDS ON, as the radius it has to stop short by. A dot is drawn
+// by the tree itself and so needs no clearance; a ring and a + are drawn around
+// the point, and a line run to their centre would strike through them.
+export const ENDPOINT = { dot: 0, caret: CARET_RING / 2, add: ADD_ENDPOINT / 2 }
+// The air between a connector and the thing it points at, where the branch ends
+// at TEXT rather than at a box with a caret to aim for. Without it the dot sits
+// under the first letter of the room it is pointing to.
+export const GUIDE_GAP = 3
+
+// --- WHERE THE TREE ATTACHES ------------------------------------------------
+//
+// Both canvases hand the same three measurements to the guide layer
+// (CanvasGuides.jsx), which is the only thing that draws it. They are here
+// because they are geometry, and because a second copy of them in the other
+// layout is exactly how the two canvases drifted before.
+//
+// Every one is measured from a box's OUTER top-left, which is what the layouts
+// place boxes by.
+
+// A row's caret: the point a branch leaves its parent at, and lands on its
+// child at.
+export const caretAt = (x, y) => ({ x: x + GUIDE_X, y: y + ROW_HEIGHT / 2 })
+
+// Where a branch leaves its parent — the bottom tip of the caret glyph, so the
+// line comes out of the control that opened the thing rather than through it. A
+// row with no caret has the line start at its centre and take a dot instead.
+export const branchFrom = (x, y, clear = ENDPOINT.dot) => {
+  const c = caretAt(x, y)
+  return { x: c.x, y0: c.y + clear, originDot: clear === ENDPOINT.dot }
+}
+
+// Where a branch lands — see ENDPOINT for what `clear` is.
+export const branchTo = (x, y, clear = ENDPOINT.dot) => {
+  const c = caretAt(x, y)
+  return { x: c.x - clear, y: c.y, dot: clear === ENDPOINT.dot }
+}
+
+// And a room, which is a line of text rather than a box: the branch takes the
+// shorter ROOM_STEP and is capped with a dot, with the name starting past it.
+// ROOM_INDENT is the same measurement read from the list's own left edge.
+export const branchToRoom = (cardX, cardY, i) => ({
+  x: cardX + GUIDE_X + ROOM_STEP,
+  y: cardY + ROW_HEIGHT + ROOM_LIST_TOP + i * ROOM_LINE_HEIGHT + ROOM_LINE_HEIGHT / 2,
+  dot: true,
+})
+
+// Where a room's NAME starts inside the list, which is itself inset by ROW_INSET
+// like every other row: the step, then the dot, then the air before the text.
+export const ROOM_INDENT = DEPT_CARET / 2 + ROOM_STEP + GUIDE_DOT / 2 + GUIDE_GAP
+// One alpha for every segment. The ink is already a PAIRED colour, so it has
+// contrast in hand: 0.35 threw most of it away and the section level all but
+// disappeared, 1 made a hairline out-shout the names it sits under.
+export const GUIDE_ALPHA = 0.55
 
 // The air between a building's core section and the band proper. Wider than
 // GAP because it is the only thing saying the core is not one of the sections
@@ -114,51 +273,77 @@ export const BUILDING_LABEL_HEIGHT = 52
 export const BUILDING_GAP = 88
 
 // Content starts PADDING below the header and ends PADDING above the bottom
-// edge, matching the PADDING used left and right — so a card is inset by the
-// same amount on all four sides of its container.
+// edge. The SIDES are not PADDING and no longer can be: they are the nesting
+// steps, NEST_LEFT and NEST_RIGHT, which is what the figure datum is built on.
 const CONTENT_TOP = LABEL_HEIGHT + PADDING
 
-// A group box: a header, then cards stacked down it.
+// A group box: a header, then cards stacked down it, CARD_GAP apart — closer
+// than the GAP between the group boxes themselves.
 //
 // `childHeight` is a number when every card is the same — the Tree tab — or a
 // function of the child when they differ, which is how the option canvas draws a
 // ghost shorter than a card carrying figures. The stack is walked cumulatively
 // either way rather than stepping by a pitch.
-export function layoutGroupBox(children, childHeight) {
+//
+// COLLAPSED, the box is its header and nothing else, and it places no children
+// at all — both canvases then emit no department nodes for it. Which groups are
+// collapsed lives above this, in the canvas, for the same reason an open room
+// list does: a group's height is what its section stacks the next group by, so a
+// box that closed itself would climb over its neighbours.
+export function layoutGroupBox(children, childHeight, { collapsed = false } = {}) {
   const heightOf = typeof childHeight === 'function' ? childHeight : () => childHeight
+
+  const width = NODE_WIDTH + NEST_LEFT + NEST_RIGHT
+
+  if (collapsed) {
+    return {
+      width,
+      height: LABEL_HEIGHT,
+      childPositions: [],
+      isEmpty: children.length === 0,
+      collapsed: true,
+    }
+  }
 
   const childPositions = []
   let y = CONTENT_TOP
   children.forEach((entry) => {
-    childPositions.push({ entry, x: PADDING, y, height: heightOf(entry) })
-    y += heightOf(entry) + GAP
+    childPositions.push({ entry, x: NEST_LEFT, y, height: heightOf(entry) })
+    y += heightOf(entry) + CARD_GAP
   })
 
-  const bodyHeight = children.length === 0 ? EMPTY_HEIGHT : y - GAP - CONTENT_TOP
+  const bodyHeight = children.length === 0 ? EMPTY_HEIGHT : y - CARD_GAP - CONTENT_TOP
 
   return {
-    width: NODE_WIDTH + PADDING * 2,
+    width,
     height: CONTENT_TOP + bodyHeight + PADDING,
     childPositions,
     isEmpty: children.length === 0,
+    collapsed: false,
   }
 }
 
 // A section box: a header, then group boxes, which vary in height and so can't
 // use the fixed pitch above.
 export function layoutSectionBox(groupBoxes) {
+  const inner = NODE_WIDTH + NEST_LEFT + NEST_RIGHT
   const width =
-    PADDING * 2 + Math.max(NODE_WIDTH + PADDING * 2, ...(groupBoxes.length ? groupBoxes.map((gb) => gb.width) : [0]))
+    NEST_LEFT + NEST_RIGHT + Math.max(inner, ...(groupBoxes.length ? groupBoxes.map((gb) => gb.width) : [0]))
 
   let runningY = CONTENT_TOP
   const placed = groupBoxes.map((gb) => {
     const y = runningY
     runningY += gb.height + GAP
-    return { ...gb, x: PADDING, y }
+    return { ...gb, x: NEST_LEFT, y }
   })
 
   const contentBottom = groupBoxes.length === 0 ? CONTENT_TOP + EMPTY_HEIGHT : runningY - GAP
-  return { width, height: contentBottom + PADDING, placed, isEmpty: groupBoxes.length === 0 }
+  return {
+    width,
+    height: contentBottom + PADDING,
+    placed,
+    isEmpty: groupBoxes.length === 0,
+  }
 }
 
 // A building band: a heading, then section boxes side by side beneath it.

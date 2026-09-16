@@ -6,6 +6,11 @@
 import { functionColours } from '../../data/functions.js'
 import { catalogRoomLabel, compareSections } from '../../data/tree.js'
 import {
+  branchFrom,
+  branchTo,
+  branchToRoom,
+  caretAt,
+  ENDPOINT,
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
   CORE_GAP,
@@ -17,6 +22,7 @@ import {
   NODE_WIDTH,
   PADDING,
 } from '../canvas/canvasLayout.js'
+import { guideNode } from '../canvas/CanvasGuides.jsx'
 
 export { LABEL_HEIGHT, NODE_WIDTH, PADDING } from '../canvas/canvasLayout.js'
 
@@ -50,7 +56,21 @@ export function buildTreeLayout(
   // `expandedRooms` is which department cards have their room list open, by
   // instance_id, and cb.onToggleRooms is what toggles one. Above the card rather
   // than inside it: a card's height is what this stacks its group by.
-  { sections, groups, departments, rooms = [], buildings = [], functions, canEdit, expandedRooms = new Set() },
+  // `expandedGroups` is which group boxes are OPEN, by the group node's
+  // instance_id — shut is the resting state, so the set is empty on arrival and
+  // a whole building reads as its sections and their groups. A shut group is
+  // drawn as its header alone and emits none of its department nodes.
+  {
+    sections,
+    groups,
+    departments,
+    rooms = [],
+    buildings = [],
+    functions,
+    canEdit,
+    expandedRooms = new Set(),
+    expandedGroups = new Set(),
+  },
   selectedDeptInstanceId,
   cb,
   stableSectionWidths,
@@ -64,6 +84,12 @@ export function buildTreeLayout(
   const deptById = new Map(departments.map((d) => [d.id, d]))
   const roomById = new Map(rooms.map((r) => [r.id, r]))
   const nodes = []
+  // Every branch of the tree, and every caret on it, in absolute canvas
+  // coordinates — see CanvasGuides.jsx. It is ONE drawing, so it is collected
+  // once here rather than handed to the boxes to draw their own piece of; the
+  // boxes keep only the click.
+  const branches = []
+  const carets = []
 
   // What a department card lists, in the order the rooms panel arranges them.
   //
@@ -103,7 +129,17 @@ export function buildTreeLayout(
               rooms: roomsOf(deptNode),
             }))
             .filter((e) => e.deptDef)
-          return { groupNode, groupDef, ...layoutGroupBox(deptEntries, heightOfEntry) }
+          return {
+            groupNode,
+            groupDef,
+            // What is IN it, which is not childPositions: a shut group places no
+            // children, and the prompt before removing one still has to say how
+            // many departments are going with it.
+            deptCount: deptEntries.length,
+            ...layoutGroupBox(deptEntries, heightOfEntry, {
+              collapsed: !expandedGroups.has(groupNode.instance_id),
+            }),
+          }
         })
       return { section, sectionLayout: layoutSectionBox(groupLayouts) }
     })
@@ -229,8 +265,44 @@ export function buildTreeLayout(
         },
       })
 
+      // THE TREE, one branch per box that has anything under it. Collected as
+      // the boxes are placed, because this is the only place their absolute
+      // positions exist; drawn as one object by the guide layer.
+      if (sectionLayout.placed.length > 0) {
+        branches.push({
+          // A section never collapses, so it has no caret for the line to leave
+          // from — it takes a dot, and is where the tree starts.
+          ...branchFrom(sectionX, sectionY, ENDPOINT.dot),
+          children: sectionLayout.placed.map((gb) => {
+            // A caret exists whenever there is something to open, open or shut.
+            // The branch lands on its ring either way.
+            if (!gb.isEmpty) {
+              carets.push({ ...caretAt(sectionX + gb.x, sectionY + gb.y), expanded: !gb.collapsed })
+            }
+            return branchTo(sectionX + gb.x, sectionY + gb.y, gb.isEmpty ? ENDPOINT.dot : ENDPOINT.caret)
+          }),
+        })
+      }
+
       sectionLayout.placed.forEach((gb) => {
         const groupBoxId = gb.groupNode.instance_id
+        if (gb.childPositions.length > 0) {
+          branches.push({
+            ...branchFrom(sectionX + gb.x, sectionY + gb.y, ENDPOINT.caret),
+            children: gb.childPositions.map((cp) => {
+              const cx = sectionX + gb.x + cp.x
+              const cy = sectionY + gb.y + cp.y
+              const hasRooms = cp.entry.rooms.length > 0
+              if (hasRooms) {
+                carets.push({
+                  ...caretAt(cx, cy),
+                  expanded: expandedRooms.has(cp.entry.deptNode.instance_id),
+                })
+              }
+              return branchTo(cx, cy, hasRooms ? ENDPOINT.caret : ENDPOINT.dot)
+            }),
+          })
+        }
         nodes.push({
           id: groupBoxId,
           type: 'tGroupBox',
@@ -248,13 +320,29 @@ export function buildTreeLayout(
             isEmpty: gb.isEmpty,
             sectionId: section.id,
             canEdit,
+            // A group with nothing in it still reserves the caret's column, so
+            // every group name in a section starts at the same x.
+            isCollapsed: gb.collapsed,
+            onToggleCollapse: gb.isEmpty ? null : () => cb.onToggleGroup(groupBoxId),
             colours: functionColours(functions, gb.groupDef.function_id),
-            onRemove: canEdit ? () => cb.onRemoveGroup(groupBoxId) : null,
+            // The name and what is inside it travel with the id: removal asks
+            // first, and the prompt has to be able to say what is going.
+            onRemove: canEdit ? () => cb.onRemoveGroup(groupBoxId, gb.groupDef.name, gb.deptCount) : null,
           },
         })
 
         gb.childPositions.forEach(({ entry, x, y, height }) => {
           const nodeId = entry.deptNode.instance_id
+          const cardX = sectionX + gb.x + x
+          const cardY = sectionY + gb.y + y
+          // A card's rooms are the last level of the tree, and only while the
+          // list is open — a shut card is a leaf.
+          if (expandedRooms.has(nodeId) && entry.rooms.length > 0) {
+            branches.push({
+              ...branchFrom(cardX, cardY, ENDPOINT.caret),
+              children: entry.rooms.map((_, i) => branchToRoom(cardX, cardY, i)),
+            })
+          }
           nodes.push({
             id: nodeId,
             type: 'tDepartment',
@@ -287,7 +375,9 @@ export function buildTreeLayout(
               // Selecting stays available to everyone — that's how a read-only
               // viewer browses a department's rooms.
               onSelect: () => cb.onSelectDepartment(entry.deptDef.id, nodeId),
-              onRemove: canEdit ? () => cb.onRemoveDepartment(nodeId) : null,
+              onRemove: canEdit
+                ? () => cb.onRemoveDepartment(nodeId, entry.deptDef.name, entry.rooms.length)
+                : null,
             },
           })
         })
@@ -299,6 +389,11 @@ export function buildTreeLayout(
 
     runningY += height + BUILDING_GAP
   })
+
+  // Last, so it is the topmost node of the same zIndex family and nothing it
+  // covers can matter — it takes no pointer.
+  const guides = guideNode(branches, carets)
+  if (guides) nodes.push(guides)
 
   return { nodes, sectionWidths, buildingHeights }
 }

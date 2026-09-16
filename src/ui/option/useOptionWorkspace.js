@@ -15,7 +15,7 @@
 // the version-checked write — lives in InstanceBuilder and reaches here through
 // `onExposeActions`. See CLAUDE.md, Saving.
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 // The shape before InstanceBuilder has mounted and reported. Everything a
 // consumer might call is present as a no-op, so a canvas rendered in the same
@@ -73,9 +73,11 @@ export function useOptionWorkspace({ onSelect } = {}) {
   // project all replace what you were editing. Every one of them goes through
   // here, and none proceeds until you have said save or discard.
   //
-  // Switching TAB deliberately does not. The option panel is hidden rather than
-  // unmounted off the Project tab, so a tab change loses nothing and a prompt
-  // over it would be asking about a loss that isn't happening.
+  // SWITCHING TAB DOES TOO, because leaving the Project tab now CLOSES the
+  // option — see closeOption below and `changeView` in App.jsx. It did not when
+  // the panel was merely hidden off that tab: nothing was lost, so there was
+  // nothing to ask about. Now the builder unmounts and the edits go with it, so
+  // the same prompt every other departure gets applies here.
   //
   // Structural edits write themselves, so `dirty` only ever means rooms,
   // objects and counts.
@@ -83,6 +85,23 @@ export function useOptionWorkspace({ onSelect } = {}) {
   // The pending action is held as `{ run }` rather than bare, because a bare
   // function passed to setState is taken as an updater and called immediately.
   const [pending, setPending] = useState(null)
+
+  // NO OPTION IS OPEN ANY MORE. Called when the option leaves the address bar,
+  // which is the one thing that unmounts InstanceBuilder — and the builder is
+  // where the option actually lives, so without this the workspace would hold
+  // its last-reported figures for ever and the HUD would go on reporting an
+  // option nothing is editing.
+  //
+  // It WRITES NOTHING, deliberately. Whatever was unsaved was settled by the
+  // guard before the navigation ran; a save from here would be an automatic
+  // write nobody asked for — see CLAUDE.md, Saving.
+  const closeOption = useCallback(() => {
+    setBuilderState(NOT_LOADED)
+    setSelection(null)
+    setHighlightedDepartmentId(null)
+    setSelectedDeptInstanceId(null)
+    setSelectedPhase(1)
+  }, [])
 
   function guard(run) {
     if (builderState.dirty) setPending({ run })
@@ -122,6 +141,7 @@ export function useOptionWorkspace({ onSelect } = {}) {
     pending,
     setPending,
     guard,
+    closeOption,
     selectDepartment,
   }
 }

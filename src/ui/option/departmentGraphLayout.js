@@ -9,6 +9,11 @@ import { functionColours } from '../../data/functions.js'
 import { buildingAreaSqft } from '../../data/optionData.js'
 import { catalogRoomNode, catalogRoomsForNode, compareSections, resolveRoomLabel } from '../../data/tree.js'
 import {
+  branchFrom,
+  branchTo,
+  branchToRoom,
+  caretAt,
+  ENDPOINT,
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
   CORE_GAP,
@@ -18,6 +23,7 @@ import {
   layoutSectionBox,
   PADDING,
 } from '../canvas/canvasLayout.js'
+import { guideNode } from '../canvas/CanvasGuides.jsx'
 
 export { NODE_WIDTH } from '../canvas/canvasLayout.js'
 
@@ -184,6 +190,13 @@ export function buildLayout({
   // would grow over the ones below it.
   expandedRooms = new Set(),
   onToggleRooms,
+  // WHICH GROUPS ARE OPEN, by the group node's instance_id, and what toggles
+  // one. Here for the same reason as expandedRooms: a group's height is what its
+  // section stacks the next group by. SHUT IS THE RESTING STATE — a shut group
+  // is its header alone and emits none of its department nodes, and keeps its
+  // area figure, which is what a section is read by.
+  expandedGroups = new Set(),
+  onToggleGroup,
   // THE ARRANGEMENT TO HOLD, or null for the real one. An add or a remove
   // changes what is a ghost, and a ghost is partitioned to the end — so the card
   // that changed would grow and move in the same frame, and the move is the part
@@ -327,7 +340,14 @@ export function buildLayout({
             })
             .filter(Boolean)
           const ordered = arrange(entries, (e) => deptKey(groupNode, e), (e) => e.isReal)
-          return { groupNode, group, entries: ordered, ...layoutGroupBox(ordered, heightOfEntry) }
+          return {
+            groupNode,
+            group,
+            entries: ordered,
+            ...layoutGroupBox(ordered, heightOfEntry, {
+              collapsed: !expandedGroups.has(groupNode.instance_id),
+            }),
+          }
         })
         .filter(Boolean)
       // A group is a ghost when nothing in it has been added.
@@ -407,6 +427,11 @@ export function buildLayout({
   const CONTENT_TOP = BUILDING_LABEL_HEIGHT + PADDING
 
   const nodes = []
+  // Every branch of the tree, and every caret on it, in absolute canvas
+  // coordinates — see CanvasGuides.jsx. One drawing, collected once, never a
+  // piece per box; the boxes keep only the click.
+  const branches = []
+  const carets = []
 
   // Buildings stack DOWN the canvas; sections run across inside each one. A
   // building is therefore a full-width band, and reading top to bottom is
@@ -529,10 +554,59 @@ export function buildLayout({
         },
       })
 
+      // THE TREE, collected as the boxes are placed — the only place their
+      // absolute positions exist. See CanvasGuides.jsx.
+      if (item.sectionLayout.placed.length > 0) {
+        branches.push({
+          // A section has no caret to leave from — it does not collapse — so the
+          // branch starts on a dot. It is where the tree starts.
+          //
+          // A GHOST SECTION LEAVES FROM ITS +, not from a dot: the + already
+          // stands in that column, and a dot drawn at the same point was drawn
+          // on top of it.
+          ...branchFrom(sectionX, sectionY, sectionIsGhost ? ENDPOINT.add : ENDPOINT.dot),
+          children: item.sectionLayout.placed.map((gb) => {
+            if (gb.entries.length > 0) {
+              carets.push({ ...caretAt(sectionX + gb.x, sectionY + gb.y), expanded: !gb.collapsed })
+            }
+            return branchTo(
+              sectionX + gb.x,
+              sectionY + gb.y,
+              gb.entries.length > 0 ? ENDPOINT.caret : ENDPOINT.dot
+            )
+          }),
+        })
+      }
+
       item.sectionLayout.placed.forEach((gb) => {
         const groupGhosts = ghostsOf(gb.entries)
         const groupX = sectionX + gb.x
         const groupY = sectionY + gb.y
+
+        if (gb.childPositions.length > 0) {
+          branches.push({
+            ...branchFrom(groupX, groupY, ENDPOINT.caret),
+            children: gb.childPositions.map((cp) => {
+              // A GHOST ENDS ON ITS +, which stands in the same column a caret
+              // or a dot would — the thing the tree points at is the thing you
+              // press. A phased card's rooms belong to its strips, so it has no
+              // caret either and ends on a dot.
+              const hasCaret = phaseCount === 1 && cp.entry.isReal && cp.entry.rooms.length > 0
+              if (hasCaret) {
+                carets.push({
+                  ...caretAt(groupX + cp.x, groupY + cp.y),
+                  expanded: expandedRooms.has(cp.entry.treeNodeId),
+                })
+              }
+              const clear = hasCaret
+                ? ENDPOINT.caret
+                : !cp.entry.isReal && !sectionIsGhost
+                  ? ENDPOINT.add
+                  : ENDPOINT.dot
+              return branchTo(groupX + cp.x, groupY + cp.y, clear)
+            }),
+          })
+        }
         const groupColours = functionColours(functions, gb.group.function_id)
         const groupIsGhost = groupGhosts.length === gb.entries.length
         const deptGhostInk = ghostInkFor({ sectionIsGhost, groupIsGhost, sectionColours, groupColours })
@@ -561,6 +635,12 @@ export function buildLayout({
             // takes the same treatment its own ghost departments do.
             ghostInk: sectionIsGhost ? undefined : sectionColours.inverted.color,
             totalAreaSqft: realAreaOf(gb.entries),
+            // The column is reserved on every group, so a group with no cards
+            // in it does not start its name left of its neighbours.
+            isCollapsed: gb.collapsed,
+            onToggleCollapse: gb.entries.length
+              ? () => onToggleGroup?.(gb.groupNode.instance_id)
+              : null,
             // No add-all on a group: its cards are all visible at once, so the
             // button earned nothing. Sections keep theirs — see the section node
             // above, and the note at the top of DepartmentGraph.jsx.
@@ -568,6 +648,19 @@ export function buildLayout({
         })
 
         gb.childPositions.forEach(({ entry, x, y, height }) => {
+          // The last level of the tree, and only while the list is open — a shut
+          // card, a ghost and a phased card are all leaves.
+          if (
+            phaseCount === 1 &&
+            entry.isReal &&
+            expandedRooms.has(entry.treeNodeId) &&
+            entry.rooms.length > 0
+          ) {
+            branches.push({
+              ...branchFrom(groupX + x, groupY + y, ENDPOINT.caret),
+              children: entry.rooms.map((_, i) => branchToRoom(groupX + x, groupY + y, i)),
+            })
+          }
           nodes.push({
             // KEYED BY THE PLACEMENT, not by where it happens to sit. These ids
             // were a running counter, which meant a card's id changed the moment
@@ -622,6 +715,11 @@ export function buildLayout({
 
     runningY += bandHeight + BUILDING_GAP
   })
+
+  // Last, and it carries no orderKey, so applyMotion leaves it alone: the tree
+  // is redrawn from the new positions rather than travelling with the cards.
+  const guides = guideNode(branches, carets)
+  if (guides) nodes.push(guides)
 
   return { nodes, order }
 }

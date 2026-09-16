@@ -86,8 +86,30 @@ function SignedInApp({ session }) {
     pending,
     setPending,
     guard,
+    closeOption,
     selectDepartment: handleSelectDepartment,
   } = workspace
+
+  // AN OPTION IS OPEN, OR IT IS NOT, and the address bar is what says so. The
+  // option lives in InstanceBuilder, which is mounted only while `o=` names one
+  // — so dropping it from the URL is what closes an option: the builder
+  // unmounts, its undo history and its unsaved edits go with it, and this puts
+  // the workspace back to the shape it has before anything is loaded.
+  //
+  // Here rather than in the builder's own unmount: the workspace is the thing
+  // holding the stale figures, and it must be cleared even if the builder never
+  // mounted (an `o=` that names a row nobody can read).
+  //
+  // An option is open only ON the Project tab, so the two conditions are one
+  // state. A hand-typed `#/tree?o=…` is not an error, just a link that predates
+  // this — the option is closed and the parameter dropped in place, without a
+  // history entry, so the address bar never claims an option that isn't loaded.
+  const optionOpen = view === 'project' && !!selectedOptionId
+  useEffect(() => {
+    if (optionOpen) return
+    closeOption()
+    if (selectedOptionId) navigate({ optionId: null }, { replace: true })
+  }, [optionOpen, selectedOptionId, closeOption, navigate])
 
   // How many of the open option's departments sit in each building, resolved
   // live from the tree. The building list dialog uses it to say what unticking
@@ -154,6 +176,25 @@ function SignedInApp({ session }) {
   const [selectedQuestionId, setSelectedQuestionId] = useState(null)
 
   const leaveOption = (next) => guard(() => navigate(next))
+
+  // LEAVING THE PROJECT TAB CLOSES THE OPTION. The Tree, Questions and UHDP
+  // screens are not the option — the catalog they show is shared by every option
+  // there is — so an option held open behind them was a program still being
+  // reported on by the HUD while nothing on screen belonged to it.
+  //
+  // Guarded like every other departure, and it is a real departure now: the
+  // builder unmounts, so save / discard / cancel is the whole of the question.
+  //
+  // Closed and FORGOTTEN — `o=` is dropped, not remembered — so coming back to
+  // the Project tab lands on the option chooser and the option is opened
+  // deliberately, the same way it was the first time.
+  const changeView = (next) => leaveOption({ view: next, optionId: null })
+
+  // OPENING ONE IS THE OTHER HALF OF IT. An option is open only on its own tab,
+  // so picking one from the band or the chooser goes there — the two are one
+  // state, and an option named in the address bar while some other screen is up
+  // is the thing this is preventing.
+  const openOption = (optionId) => leaveOption({ view: 'project', optionId })
 
   function handleSelectTreeBuilding(buildingId) {
     setSelectedTreeBuildingId(buildingId)
@@ -257,9 +298,10 @@ function SignedInApp({ session }) {
           onSelectQuestionBuilding={(id) => navigate({ buildingId: id })}
           selectedQuestionId={selectedQuestionId}
           onSelectQuestion={setSelectedQuestionId}
-          // The way back out, and back to whatever you were doing: the Tree tab
-          // is a toggle for the same reason.
-          onLeaveQuestions={() => navigate({ view: selectedOptionId ? 'project' : 'map' })}
+          // The way back out. It can no longer return you to the option you
+          // left — leaving closed it — so it goes to the project's chooser when
+          // there is a project, and to the map when there isn't.
+          onLeaveQuestions={() => changeView(selectedProjectId ? 'project' : 'map')}
           view={view}
           isAdmin={isAdmin}
           projects={projects}
@@ -282,7 +324,7 @@ function SignedInApp({ session }) {
                 drawnSiteGeometry={drawnSiteGeometry}
                 optionsRefreshKey={optionsRefreshKey}
                 selectedOptionId={selectedOptionId}
-                onSelectOption={(optionId) => leaveOption({ optionId })}
+                onSelectOption={openOption}
                 openBuildingIds={builderState.buildingIds}
                 openPhaseCount={builderState.phaseCount}
                 // One guarded action, not two: the dialog sets both with one
@@ -304,7 +346,7 @@ function SignedInApp({ session }) {
               <OptionChooser
                 projectId={selectedProjectId}
                 refreshKey={optionsRefreshKey}
-                onSelectOption={(optionId) => leaveOption({ optionId })}
+                onSelectOption={openOption}
               />
             ) : (
               <PanelNote pad>Select a project to begin.</PanelNote>
@@ -349,10 +391,13 @@ function SignedInApp({ session }) {
             </div>
           )}
 
-          {/* Hidden rather than unmounted off the Project tab, so switching
-              tabs doesn't discard unsaved option edits. */}
+          {/* MOUNTED ONLY WHILE AN OPTION IS OPEN, which is only on this tab.
+              It used to be hidden rather than unmounted, so that switching tab
+              kept unsaved edits alive behind the other screens; leaving now
+              closes the option instead, and the guard has already asked about
+              those edits by the time this goes. */}
           <div style={{ display: view === 'project' ? 'block' : 'none', padding: 16, minWidth: 0 }}>
-            {selectedOptionId && (
+            {optionOpen && (
               <OptionPanel
                 workspace={workspace}
                 optionId={selectedOptionId}
@@ -379,6 +424,13 @@ function SignedInApp({ session }) {
           )}
         </div>
 
+        {/* IT CLOSES WITH THE OPTION. The HUD reports what the open option
+            programs against the site; with none open every figure in it is a
+            zero, and a row of zeros on the Tree tab reads as a measurement of
+            the catalog rather than as nothing being measured. Side takes the
+            whole column back — the 7:1 split is what an open option costs it,
+            not a permanent feature of the layout. */}
+        {optionOpen && (
         <Hud
           projectName={projects.find((p) => p.id === selectedProjectId)?.name}
           siteGeojson={projects.find((p) => p.id === selectedProjectId)?.site_geojson}
@@ -387,6 +439,7 @@ function SignedInApp({ session }) {
           buildingFactors={builderState.buildingFactors}
           phaseCount={builderState.phaseCount}
         />
+        )}
         </div>
       </div>
 
@@ -394,7 +447,7 @@ function SignedInApp({ session }) {
         view={view}
         canEdit={isAdmin}
         builder={builderState}
-        onViewChange={(next) => navigate({ view: next })}
+        onViewChange={changeView}
       />
 
       {pending && (

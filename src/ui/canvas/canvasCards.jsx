@@ -10,21 +10,24 @@
 
 import {
   BUILDING_LABEL_HEIGHT,
-  CARD_CONTROL,
-  CARD_CONTROL_INSET,
+  CARET_RING,
+  controlInset,
   CORE_GAP,
-  FIGURE_INSET_NESTED,
+  DEPTH,
   HEADER_GAP,
   DEPT_CARET,
-  DEPT_CARET_COL,
-  DEPT_CONTROL_INSET,
   DEPT_HEAD_INSET,
   DEPT_NAME_ROW,
-  LABEL_HEIGHT,
-  PADDING,
+  ROOM_INDENT,
   ROOM_LINE_HEIGHT,
+  ROOM_LIST_TOP,
+  ROW_HEIGHT,
+  ROW_INSET,
+  SECTION_BORDER,
+  SECTION_SHADOW,
 } from './canvasLayout.js'
-import { formatArea } from '../map/area.js'
+import { AREA_UNIT, formatArea } from '../map/area.js'
+import DisclosureCaret from '../primitives/DisclosureCaret.jsx'
 
 // WHAT A DEPARTMENT IS MADE OF, not just how big it is. The figure on a card
 // answers the second question and nothing on either canvas answered the first —
@@ -56,71 +59,163 @@ import { formatArea } from '../map/area.js'
 // the one thing this list must never say.
 // Down the caret's centre, so the rule reads as coming out of the control that
 // opened the list.
-const RULE_LEFT = DEPT_CARET / 2
-const TICK_GAP = 3
-const RULE_DOT = 4
+// THE AREA FIGURE, ONE TYPE AT EVERY LEVEL. A section's, a group's and a card's
+// are read DOWN one column — that is what the datum in canvasLayout.js is for —
+// and three sizes down a column reads as three kinds of number rather than one
+// measurement at three scales. They were 11 bold, 12 at three-quarter ink and
+// 10 regular.
+//
+// Not dimmed: it is the answer the row is reporting, read against the rows above
+// and below it, and at 75% it was the quietest thing on a card whose name is
+// already bold.
+//
+// The building band is deliberately NOT this. It is a heading over a rule rather
+// than a row in the column, and its figure is set against 30px type.
+const FIGURE_SIZE = 11
+export function CanvasFigure({ areaSqft }) {
+  if (areaSqft == null) return null
+  return (
+    <span style={{ flexShrink: 0, fontSize: FIGURE_SIZE, fontWeight: 700, whiteSpace: 'nowrap' }}>
+      {formatArea(areaSqft)} {AREA_UNIT}
+    </span>
+  )
+}
+
+// A ROW, AT EVERY LEVEL AND ON BOTH CANVASES: a section header, a group header,
+// a department card's head. Three columns — see the row grid in canvasLayout.js:
+//
+//     [endpoint] [name ................] [figure]
+//
+// THE FIGURE IS THE LAST THING ON THE ROW. There was a control column after it
+// once, holding a × — every row paid for that column whether or not it had one,
+// and the areas were read against a right edge that was mostly empty. Removal is
+// a right-click on the endpoint now, so the column went and the figures moved
+// out to the datum. `controlInset(depth)` is still the only thing that may set
+// the right padding: it is what keeps a card's figure on the same line as the
+// section two levels above it.
+//
+// THE ROW DRAWS NO PART OF THE TREE. It did once — a stub through its own left
+// edge, a dot, a drop piece — each in its own box's ink, and four inks meeting at
+// four walls never read as one line however exactly they met. The tree is one
+// drawing over the whole canvas now (CanvasGuides.jsx).
+//
+// WHAT THE ROW OWES IT IS THE ENDPOINT COLUMN: the place every branch lands, and
+// the only thing in the row that answers a pointer there. It holds the toggle,
+// or a ghost's +, and it carries the right-click that removes the thing — which
+// is why it is reserved at every level whether or not this row has any of them.
+export function CanvasRow({
+  depth,
+  // What stands at the end of this row's branch: a blank DisclosureCaret (the
+  // tree draws the ring), an AddButton on a ghost, or nothing at all.
+  caret = null,
+  // RIGHT-CLICK ON THE ENDPOINT REMOVES, and always through a prompt — nothing
+  // on either canvas is removed by a single gesture. It is on the COLUMN rather
+  // than on what stands in it, so it works the same where the tree ends in a
+  // caret, in a dot, or in nothing at all.
+  //
+  // A dwell-to-arm version of this was tried — rest on the endpoint and it
+  // became a × to click — and it put a destructive control under the pointer
+  // every time you paused anywhere near one.
+  onRemove,
+  removeTitle,
+  name,
+  // THE NAME'S TYPE, never the row's. A row carries the size its box sets, and
+  // the figure beside the name is read at THAT size — put the name's 13px on the
+  // row instead and every area figure goes up a size and gains the name's weight
+  // with it. The container levels set their size on the row deliberately,
+  // because there the name IS the row's type.
+  nameStyle,
+  title,
+  figure = null,
+  height = ROW_HEIGHT,
+  className,
+  style,
+}) {
+  return (
+    <div
+      className={className}
+      style={{
+        height,
+        boxSizing: 'border-box',
+        display: 'flex',
+        alignItems: 'center',
+        gap: HEADER_GAP,
+        minWidth: 0,
+        paddingLeft: ROW_INSET,
+        paddingRight: controlInset(depth),
+        ...style,
+      }}
+    >
+      {/* THE ENDPOINT. `preventDefault` is what keeps the browser's own menu off
+          the right-click; `stopPropagation` keeps it from reaching the card,
+          which would select what you were removing. */}
+      <span
+        onContextMenu={
+          onRemove
+            ? (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onRemove()
+              }
+            : undefined
+        }
+        title={onRemove ? removeTitle : undefined}
+        className={onRemove ? 'nodrag nopan' : undefined}
+        style={{
+          flexShrink: 0,
+          width: DEPT_CARET,
+          alignSelf: 'stretch',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {caret}
+      </span>
+      <span
+        title={title ?? name}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          ...nameStyle,
+        }}
+      >
+        {name}
+      </span>
+      {figure}
+    </div>
+  )
+}
 export function CardRoomList({ rooms }) {
   if (!rooms?.length) return null
   return (
     <div
       style={{
-        marginTop: 4,
-        paddingLeft: DEPT_CARET_COL,
+        marginTop: ROOM_LIST_TOP,
+        // One INDENT past the card's caret, the same step a child box takes —
+        // see ROOM_INDENT, which branchToRoom is measured against.
+        paddingLeft: ROOM_INDENT,
         fontWeight: 400,
-        opacity: 0.8,
         minWidth: 0,
         position: 'relative',
       }}
     >
-      {/* The rule and every tick in ONE layer, positioned by index off the fixed
-          line height — not one tick per row. A row is `overflow: hidden` so its
-          name can ellipsise, and anything drawn in the indent from inside it is
-          clipped away by exactly that. */}
-      <span
-        style={{
-          position: 'absolute',
-          left: RULE_LEFT,
-          // Up into the gap above the first line, so the rule reads as coming
-          // down from the name rather than starting on its own.
-          top: -4,
-          // The centre of the last line, where its tick is.
-          bottom: ROOM_LINE_HEIGHT / 2,
-          borderLeft: '1px solid currentColor',
-        }}
-      />
-      {/* A dot where the rule begins. The rule otherwise starts on a cut edge in
-          the middle of the gap, which reads as a line continuing up from
-          somewhere off the card rather than as one that starts here. Centred on
-          the rule's own top point, so it caps it rather than sitting beside it. */}
-      <span
-        style={{
-          position: 'absolute',
-          left: RULE_LEFT + 0.5 - RULE_DOT / 2,
-          top: -4 - RULE_DOT / 2,
-          width: RULE_DOT,
-          height: RULE_DOT,
-          borderRadius: '50%',
-          background: 'currentColor',
-        }}
-      />
-      {rooms.map((room, i) => (
-        <span
-          key={`tick-${room.key}`}
-          style={{
-            position: 'absolute',
-            left: RULE_LEFT,
-            width: DEPT_CARET_COL - RULE_LEFT - TICK_GAP,
-            top: i * ROOM_LINE_HEIGHT + ROOM_LINE_HEIGHT / 2,
-            borderTop: '1px solid currentColor',
-          }}
-        />
-      ))}
+      {/* The branch to each room is drawn by the canvas's guide layer, not here
+          — one tree, one drawing. All this list owes it is the indent it leaves
+          and the line height it keeps, which is what branchToRoom measures. */}
       {rooms.map((room) => (
         <div
           key={room.key}
           title={room.count > 1 ? `${room.count} × ${room.name}` : room.name}
           style={{
             fontSize: 10,
+            // On the TEXT, not the wrapper: on the wrapper it compounded with
+            // the guide's own alpha and the tree came out quieter here than at
+            // every other level.
+            opacity: 0.8,
             // Italic, like every other figure this app states rather than lets
             // you edit: these are the card's contents, not its heading.
             fontStyle: 'italic',
@@ -148,100 +243,70 @@ export function CardRoomList({ rooms }) {
 // what a card DOES, not what it says: the Tree tab's drag and remove, this tab's
 // ghosts, phases and add. Those stay in their own files, around this.
 //
-// THE AREA SITS TOP-RIGHT, ON THE NAME'S ROW, not on a line of its own. Under
-// the name it pushed the room list down by a whole line and left the card
-// reading as three separate things; beside it, the name and its size are one
-// statement and the list starts directly under them. `DEPT_CONTROL_INSET` is
-// what keeps it clear of the × in the corner, which does not move.
+// THE AREA SITS ON THE NAME'S ROW, in the same column as every other figure on
+// the canvas — a card is a CanvasRow like a section header is, two levels in.
+// Under the name it pushed the room list down a whole line and left the card
+// reading as three separate things.
 //
-// With no list open the name simply centres in the card, which is how both tabs
-// drew it before there was one.
+// `add` is a ghost's +, which stands at the END OF ITS OWN BRANCH in the
+// endpoint column — the thing the tree points at is the thing you press. It
+// floated in the card's corner once, as the × did, and both are gone from there:
+// a floating control is what forced the area figure to stop short of the datum
+// by a number nothing else knew about. Removal is `onRemove`, a right-click on
+// that same endpoint.
 //
 // `expanded` and `onToggleRooms` come from ABOVE THE LAYOUT, not from state in
 // here: the card's height is what the layout stacks the group by, so a card that
 // opened itself would grow over its neighbours. See DepartmentGraph/TreeCanvas.
-export function DepartmentCardFace({ name, areaSqft, rooms, expanded = false, onToggleRooms }) {
+export function DepartmentCardFace({
+  name,
+  areaSqft,
+  rooms,
+  expanded = false,
+  onToggleRooms,
+  add = null,
+  onRemove,
+  removeTitle,
+}) {
   const hasRooms = rooms?.length > 0
   const listed = hasRooms && expanded
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        minWidth: 0,
-        justifyContent: listed ? 'flex-start' : 'center',
-        // The card itself carries no vertical padding — see departmentCardHeight,
-        // which is this inset, the name row, the list, and this inset again.
-        paddingTop: listed ? DEPT_HEAD_INSET : 0,
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          gap: HEADER_GAP,
-          minWidth: 0,
-          height: listed ? DEPT_NAME_ROW : undefined,
-          paddingRight: DEPT_CONTROL_INSET,
-        }}
-      >
-        {/* The column is always here, even with no caret in it — see
-            DEPT_CARET. `nodrag`/`nopan` and the stopped pointerdown are what
-            keep the click from panning the canvas or starting a card drag;
-            stopPropagation keeps it from selecting the department, which is
-            what clicking the card itself means. */}
-        <span
-          className={hasRooms ? 'nodrag nopan' : undefined}
-          onPointerDown={hasRooms ? (e) => e.stopPropagation() : undefined}
-          onClick={
-            hasRooms
-              ? (e) => {
-                  e.stopPropagation()
-                  onToggleRooms?.()
-                }
-              : undefined
-          }
-          title={hasRooms ? (expanded ? 'Hide rooms' : `Show ${rooms.length} rooms`) : undefined}
-          style={{
-            flexShrink: 0,
-            width: DEPT_CARET,
-            // Against the name's baseline row rather than the text baseline —
-            // a glyph aligned to a baseline sits visibly low.
-            alignSelf: 'center',
-            textAlign: 'center',
-            fontSize: 9,
-            lineHeight: 1,
-            opacity: hasRooms ? 0.7 : 0,
-            cursor: hasRooms ? 'pointer' : 'default',
-            userSelect: 'none',
-            transition: 'transform 150ms ease',
-            transform: expanded ? 'rotate(90deg)' : 'none',
-          }}
-        >
-          ▶
-        </span>
-        <span
-          title={name}
-          style={{
-            flex: '1 1 auto',
-            minWidth: 0,
-            fontSize: 13,
-            fontWeight: 600,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {name}
-        </span>
-        {/* The Tree tab passes none: a catalog department has no area of its
-            own until an option sizes its rooms. */}
-        {areaSqft != null && (
-          <span style={{ flexShrink: 0, opacity: 0.75, whiteSpace: 'nowrap' }}>{formatArea(areaSqft)} sqft</span>
-        )}
-      </div>
-      {listed && <CardRoomList rooms={rooms} />}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
+      <CanvasRow
+        depth={DEPTH.card}
+        // Open, the head is the name row with the list under it; shut, it is the
+        // whole card. Both come to ROW_HEIGHT — see departmentCardHeight.
+        height={listed ? DEPT_HEAD_INSET * 2 + DEPT_NAME_ROW : '100%'}
+        // The NAME is 13; the row keeps the card's own 12, which is the size the
+        // area figure beside it has always been read at.
+        nameStyle={{ fontSize: 13, fontWeight: 600 }}
+        // WHAT STANDS AT THE END OF THE BRANCH: a ghost's +, else the toggle
+        // where there are rooms to show, else nothing — and the tree draws a dot
+        // in the empty column, which is what a leaf ends in.
+        caret={
+          add ??
+          (hasRooms ? (
+            <DisclosureCaret
+              blank
+              expanded={expanded}
+              onToggle={() => onToggleRooms?.()}
+              title={expanded ? 'Hide rooms' : `Show ${rooms.length} rooms`}
+              size={CARET_RING}
+            />
+          ) : null)
+        }
+        onRemove={onRemove}
+        removeTitle={removeTitle}
+        name={name}
+        // The Tree tab passes none: a catalog department has no area of its own
+        // until an option sizes its rooms.
+        figure={<CanvasFigure areaSqft={areaSqft} />}
+      />
+      {listed && (
+        <div style={{ paddingLeft: ROW_INSET, paddingRight: controlInset(DEPTH.card), minWidth: 0 }}>
+          <CardRoomList rooms={rooms} />
+        </div>
+      )}
     </div>
   )
 }
@@ -273,35 +338,57 @@ export function CanvasContainer({
   ghostText = '#999',
   pulse = false,
   headerClassName,
-  // A ghost section's single + goes on the left, where it reads as "add this"
-  // against the name it would add.
-  headerLeft,
-  headerRight,
-  // The header's ONE control — a × on a section, nothing on a group. It gets a
-  // column of its own so that `headerRight` (the area figure) ends at the same
-  // x on every card at this level whether or not that particular card can be
-  // removed: a ghost section has no × and a real one does, and packing the
-  // button into headerRight put their figures in two different places.
-  headerControl = null,
-  // Whether to hold that column open at all. A LEVEL decides it, never a card —
-  // sections reserve it, groups do not.
+  // THE BOX'S OWN DISCLOSURE, in front of everything else in the header — a
+  // group's cards can run to a screenful, and the thing being read across a
+  // section is which groups it holds and how big they are.
   //
-  // A group reclaiming the space is what lines its figure up with the section's
-  // one level out: a group box is inset by PADDING, and PADDING is the width of
-  // the control column, so the two cancel and the figures land in one column
-  // down the nesting.
-  reserveControl = true,
+  // A LEVEL decides it, never a box: sections do not collapse, groups do. The
+  // caret's COLUMN is reserved either way — it is part of the row grid — so a
+  // level without one simply leaves it empty rather than shifting its name.
+  collapsible = false,
+  isCollapsed = false,
+  onToggleCollapse,
+  // A ghost section's single +, which stands at the end of its own branch in the
+  // endpoint column — the thing the tree points at is the thing you press.
+  add = null,
+  headerRight,
+  // Right-click on that endpoint. There is no × anywhere on these rows now: the
+  // column it needed was paid for by every row that had none, and the area
+  // figures were read against a right edge that was mostly empty.
+  onRemove,
+  removeTitle,
+  // WHICH LEVEL THIS IS — the one thing that decides the row's right padding,
+  // and so where its area figure ends. See the row grid in canvasLayout.js.
+  depth = DEPTH.section,
   children,
 }) {
+  // OPAQUE, never a tint: a transparent fill lets the canvas's dotted background
+  // through and the box reads as a screen laid over it rather than as a surface.
+  // `wash` takes how far toward white, which is 1 - the alpha it replaces.
   const body = isGhost
     ? ghostBg
     : isDropTarget
       ? fill === 'solid'
         ? colours.emphasis
-        : colours.tint(tintAlpha * 2.8)
+        : colours.wash(1 - tintAlpha * 2.8)
       : fill === 'solid'
         ? colours.background
-        : colours.tint(tintAlpha)
+        : colours.wash(1 - tintAlpha)
+
+  // ONLY A SECTION IS OUTLINED, and only while SECTION_BORDER says so — the one
+  // switch, in canvasLayout.js with the rest of the geometry. Three concentric
+  // strokes around every card said what the nesting and the tree already say, so
+  // the group and the card lost theirs. A stroke otherwise appears only where it
+  // MEANS something: the dashes on a ghost and on a drop target.
+  const isSection = depth === DEPTH.section
+  const outlined = SECTION_BORDER && isSection
+  const edge = isDropTarget
+    ? 2
+    : isGhost
+      ? GHOST_DASH[fill === 'solid' ? 'group' : 'section']
+      : outlined
+        ? borderWidth
+        : 0
 
   return (
     <div
@@ -311,73 +398,80 @@ export function CanvasContainer({
         width: '100%',
         height: '100%',
         border: isDropTarget
-          ? `2px dashed ${colours.border}`
+          ? `${edge}px dashed ${colours.border}`
           : isGhost
-            ? `${GHOST_DASH[fill === 'solid' ? 'group' : 'section']}px dashed ${ghostBorder}`
-            : `${borderWidth}px solid ${colours.border}`,
+            ? `${edge}px dashed ${ghostBorder}`
+            : outlined
+              ? `${edge}px solid ${colours.border}`
+              : 'none',
         borderRadius: radius,
         background: body,
         boxSizing: 'border-box',
         pointerEvents: 'auto',
+        // A SECTION ALONE IS LIFTED, and barely — it is the outermost box, and a
+        // hairline of shadow says it sits on the canvas where the groups and
+        // cards inside it sit on IT. Everything nested stays flat: a shadow at
+        // every level is three shadows under every card.
+        //
+        // Independent of SECTION_BORDER, deliberately: an edge and a lift are two
+        // ways of saying the same thing, and the switch is there to try either,
+        // both or neither. Hanging this off it meant turning the border off took
+        // the shadow with it.
+        boxShadow: isSection ? SECTION_SHADOW : undefined,
       }}
     >
-      <div
+      <CanvasRow
         // Both classes go on the HEADER, not the container. :hover matches every
         // ancestor, so tinting the box would light up a section, its group and
         // its card together whenever the pointer was over any one of them; and a
         // section holds cards with × buttons of their own, which marking the box
         // would reveal all at once.
         className={`spp-hover-tint spp-hover-reveal${headerClassName ? ` ${headerClassName}` : ''}`}
+        depth={depth}
+        // WHAT STANDS AT THE END OF THIS BOX'S BRANCH: a ghost's +, else the
+        // toggle where there is something to open. The TREE draws the ring and
+        // the arrow — this is the click and nothing more (`blank`) — and where
+        // there is neither, the branch is capped with a dot. See CanvasGuides.
+        caret={
+          add ??
+          (collapsible && onToggleCollapse ? (
+            <DisclosureCaret
+              blank
+              expanded={!isCollapsed}
+              onToggle={onToggleCollapse}
+              title={isCollapsed ? `Show what is in ${name}` : `Collapse ${name}`}
+              size={CARET_RING}
+            />
+          ) : null)
+        }
+        onRemove={onRemove}
+        removeTitle={removeTitle}
+        name={name}
+        title={title ?? name}
+        figure={headerRight}
         style={{
-          height: LABEL_HEIGHT,
-          // Left: the same inset as the cards below, so the two left edges line
-          // up.
-          //
-          // Right: with a control column, what that control needs to sit equally
-          // off all three of its edges. Without one, the whole of what the
-          // column and its gap would have cost, LESS the PADDING this card is
-          // already inset by inside its parent — which is what puts its figure
-          // in the same column as its parent's. See FIGURE_INSET.
-          paddingLeft: PADDING,
-          paddingRight: reserveControl ? CARD_CONTROL_INSET : FIGURE_INSET_NESTED,
-          boxSizing: 'border-box',
-          display: 'flex',
-          alignItems: 'center',
-          gap: HEADER_GAP,
           fontSize,
           fontWeight,
           // A solid body already carries the colour; painting the header again
           // only draws a seam across it.
           background: isGhost || fill === 'solid' ? 'transparent' : colours.background,
-          color: isGhost ? ghostText : fill === 'solid' ? colours.color : colours.color,
-          borderRadius: fill === 'solid' ? undefined : `${radius - 1}px ${radius - 1}px 0 0`,
+          color: isGhost ? ghostText : colours.color,
+          // Collapsed, the header IS the box, so it rounds on all four corners
+          // rather than sitting on a body that is no longer there.
+          borderRadius:
+            fill === 'solid' && !isCollapsed
+              ? undefined
+              : isCollapsed
+                ? radius - 1
+                : `${radius - 1}px ${radius - 1}px 0 0`,
           cursor: headerClassName ? 'grab' : undefined,
           pointerEvents: 'auto',
+          position: 'relative',
         }}
-      >
-        {headerLeft}
-        <span
-          title={title ?? name}
-          style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-        >
-          {name}
-        </span>
-        {headerRight}
-        {reserveControl && (
-          <span
-            style={{
-              width: CARD_CONTROL,
-              flexShrink: 0,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {headerControl}
-          </span>
-        )}
-      </div>
-      {children}
+      />
+      {/* The layout gave a collapsed box exactly its header's height, so
+          anything below it would hang out past the border. */}
+      {!isCollapsed && children}
     </div>
   )
 }
@@ -509,7 +603,10 @@ export function CanvasCard({
   colours,
   width,
   height,
-  padding = PADDING,
+  // NONE by default: a card's insets belong to its row, which is what puts its
+  // figure on the canvas datum — see CanvasRow. A caller that pads the card as
+  // well moves that figure off it.
+  padding = 0,
   isGhost = false,
   // A ghost sits on its group's fill, so the caller passes the one colour known
   // to read against it — the group's text colour. These greys are a fallback;
@@ -526,7 +623,6 @@ export function CanvasCard({
   isDraggable = false,
   onClick,
   title,
-  corner,
   children,
 }) {
   return (
@@ -542,18 +638,17 @@ export function CanvasCard({
         '--pulse-ring': colours.ring,
         width,
         height,
-        border: isGhost ? `${GHOST_DASH.card}px dashed ${ghostBorder}` : `1px solid ${colours.inverted.border}`,
+        // No border and no shadow at rest — see the note on `edge` in
+        // CanvasContainer. The fill says where the card is; the tree says what
+        // it belongs to. A ghost keeps its dashes, which mean something.
+        border: isGhost ? `${GHOST_DASH.card}px dashed ${ghostBorder}` : 'none',
         borderRadius: 8,
         padding,
         background: isGhost ? 'rgba(0,0,0,0.02)' : colours.inverted.background,
         color: isGhost ? ghostText : colours.inverted.color,
-        // Selection stays blue: the fill carries function meaning, so it cannot
-        // also signal which card you are editing.
-        boxShadow: isGhost
-          ? 'none'
-          : isHighlighted
-            ? '0 0 0 2px #1a73e8, 0 1px 3px rgba(0,0,0,0.15)'
-            : '0 1px 3px rgba(0,0,0,0.15)',
+        // Selection stays blue, and is now the ONLY thing a card wears: the fill
+        // carries function meaning, so it cannot also signal which card is open.
+        boxShadow: !isGhost && isHighlighted ? '0 0 0 2px #1a73e8' : 'none',
         // High enough that a ghost's ink keeps its colour: the dashed edge and
         // flat fill are what mark it as not-yet-added, not fading.
         opacity: isGhost ? 0.9 : 1,
@@ -565,7 +660,6 @@ export function CanvasCard({
         pointerEvents: 'auto',
       }}
     >
-      {corner}
       {children}
     </div>
   )

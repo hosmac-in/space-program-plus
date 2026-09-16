@@ -28,10 +28,23 @@ import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import AddButton from '../primitives/AddButton.jsx'
 import RemoveButton from '../primitives/RemoveButton.jsx'
 import { useReadOnly } from '../../readOnly.jsx'
-import { CanvasBandHeading, CanvasCard, CanvasContainer, DepartmentCardFace } from '../canvas/canvasCards.jsx'
-import { CARD_CONTROL, PADDING } from '../canvas/canvasLayout.js'
+import {
+  CanvasBandHeading,
+  CanvasCard,
+  CanvasContainer,
+  CanvasFigure,
+  CanvasRow,
+  DepartmentCardFace,
+} from '../canvas/canvasCards.jsx'
+import { ADD_ENDPOINT, DEPTH } from '../canvas/canvasLayout.js'
+import { guideNodeTypes } from '../canvas/CanvasGuides.jsx'
+
+// What a phased card's strips are inset by, inside a card whose heading row pads
+// itself. Tighter than a row's own padding: the strips are the card's content
+// and need the width more than the air.
+const PHASE_INSET = 10
 import { applyMotion, buildLayout, NODE_HEIGHT, NODE_WIDTH } from './departmentGraphLayout.js'
-import { formatArea } from '../map/area.js'
+import { AREA_UNIT, formatArea } from '../map/area.js'
 
 // Stable identity so React Flow doesn't see a new edge array every render.
 // Containment is drawn by nesting boxes and by stacking buildings down the
@@ -212,10 +225,6 @@ function DepartmentNodeCard({ data }) {
       // A ghost's slot is shorter — see GHOST_NODE_HEIGHT. The layout decides
       // it; the card must not have its own opinion.
       height={data.height ?? NODE_HEIGHT}
-      // Sides only, ghost or not. The vertical insets belong to the face, so
-      // departmentCardHeight is the whole of a card's height; a ghost's one line
-      // simply centres in its shorter slot.
-      padding={`0 ${PADDING}px`}
       isGhost={ghost}
       ghostBorder={data.ghostInk}
       ghostText={data.ghostInk}
@@ -226,60 +235,36 @@ function DepartmentNodeCard({ data }) {
       cursor={ghost ? 'default' : 'pointer'}
       onClick={ghost ? undefined : () => data.onClick(data.defId, data.treeNodeId, 1)}
       title={addable ? `Add ${data.name} with the +` : undefined}
-      // The + takes the corner the × has on a real card: one control, one place,
-      // and the card no longer has to be tall enough to hold it under the name.
-      corner={
-        addable ? (
-          // AddButton has no corner mode of its own — RemoveButton pins itself,
-          // this is pinned to the same 4px inset so the two land in one place.
-          <span style={{ position: 'absolute', top: 4, right: 4, lineHeight: 0 }}>
+    >
+      {/* GHOST OR REAL, IT IS THE SAME ROW — the + stands at the end of the
+          card's own branch, where a real card's toggle or dot is. Both it and
+          the × floated in the card's corner once, which is what stopped a card's
+          area figure short of the datum every other figure on the canvas ends
+          on. A ghost still says nothing but its name: it has no area and no
+          rooms until it is in the option. */}
+      <DepartmentCardFace
+        name={data.name}
+        areaSqft={ghost ? null : data.areaSqft}
+        rooms={ghost ? null : data.rooms}
+        expanded={data.roomsExpanded}
+        onToggleRooms={data.onToggleRooms}
+        add={
+          addable ? (
             <AddButton
               onClick={() => data.onAdd(data.defId, data.treeNodeId, 1)}
               title={`Add ${data.name} to this option`}
-              size={18}
+              size={ADD_ENDPOINT}
               stopPointerDown
             />
-          </span>
-        ) : ghost || !data.onRequestRemove ? null : (
-          <RemoveButton
-            onRemove={() => data.onRequestRemove(data.instanceId, data.name, data.roomCount, data.objectCount)}
-            title="Remove department"
-            corner
-            stopPointerDown
-          />
-        )
-      }
-    >
-      {/* A GHOST IS ITS NAME AND NOTHING ELSE — no area and no rooms, because it
-          is not in the option yet — and it is drawn in a slot one line tall, so
-          it keeps its own centred line rather than the shared face. */}
-      {ghost ? (
-        <div
-          title={data.name}
-          style={{
-            fontWeight: 600,
-            fontSize: 13,
-            height: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            // Clear of the + in the corner.
-            paddingRight: 20,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {data.name}
-        </div>
-      ) : (
-        <DepartmentCardFace
-          name={data.name}
-          areaSqft={data.areaSqft}
-          rooms={data.rooms}
-          expanded={data.roomsExpanded}
-          onToggleRooms={data.onToggleRooms}
-        />
-      )}
+          ) : null
+        }
+        onRemove={
+          ghost || !data.onRequestRemove
+            ? null
+            : () => data.onRequestRemove(data.instanceId, data.name, data.roomCount, data.objectCount)
+        }
+        removeTitle="Right-click to remove this department"
+      />
     </CanvasCard>
   )
 }
@@ -304,7 +289,6 @@ function PhasedDepartmentCard({ data }) {
       colours={data.colours}
       width={NODE_WIDTH}
       height={NODE_HEIGHT}
-      padding={10}
       isGhost={ghost}
       ghostBorder={data.ghostInk}
       ghostText={data.ghostInk}
@@ -314,32 +298,20 @@ function PhasedDepartmentCard({ data }) {
       isHighlighted={false}
       cursor="default"
     >
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-          <span
-            title={data.name}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontWeight: 600,
-              fontSize: 13,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {data.name}
-          </span>
-          {/* The total across every phase, which is what the figures above this
-              card add up. Each strip carries its own share below. */}
-          {!ghost && (
-            <span style={{ fontSize: 10, fontWeight: 400, opacity: 0.75, whiteSpace: 'nowrap' }}>
-              {formatArea(data.areaSqft)} sqft
-            </span>
-          )}
-        </div>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* The same row every other thing on the canvas draws, so this card's
+            total lands on the datum too — see CanvasRow. It carries no control:
+            a × on a phased card would have to guess which phase it meant. */}
+        <CanvasRow
+          depth={DEPTH.card}
+          name={data.name}
+          nameStyle={{ fontWeight: 600, fontSize: 13 }}
+          // The total across every phase, which is what the figures above this
+          // card add up. Each strip carries its own share below.
+          figure={<CanvasFigure areaSqft={ghost ? null : data.areaSqft} />}
+        />
 
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 2 }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 2, padding: `0 ${PHASE_INSET}px ${PHASE_INSET}px` }}>
           {data.phases.map((entry) => (
             <PhaseStrip key={entry.phase} data={data} entry={entry} addable={addable} />
           ))}
@@ -370,7 +342,19 @@ function RootNodeCard({ data }) {
   )
 }
 
-function ContainerNode({ data, fill, radius, borderWidth, fontSize, fontWeight, reserveControl = true }) {
+function ContainerNode({
+  data,
+  fill,
+  radius,
+  borderWidth,
+  fontSize,
+  fontWeight,
+  // Which level this is — it decides the row's right padding and so where the
+  // area figure ends. See the row grid in canvasLayout.js.
+  depth,
+  // Groups only — see the node types below.
+  collapsible = false,
+}) {
   return (
     // Clicking the box selects it, which is what side reads to decide whether
     // to show a group's or a section's contents. The buttons inside stop their
@@ -397,50 +381,35 @@ function ContainerNode({ data, fill, radius, borderWidth, fontSize, fontWeight, 
         fontSize={fontSize}
         fontWeight={fontWeight}
         isGhost={data.isGhost}
-        reserveControl={reserveControl}
+        depth={depth}
+        collapsible={collapsible}
+        isCollapsed={data.isCollapsed}
+        onToggleCollapse={data.onToggleCollapse}
         // Undefined on a ghost with nothing painted above it, which leaves
         // CanvasContainer's own grey — see ghostInkFor in the layout.
         ghostBorder={data.ghostInk}
         ghostText={data.ghostInk}
-        // A ghost section's ONE control, in front of the name it would add.
+        // A ghost section's ONE control, at the end of its own branch.
         //
         // The whole section used to be an invitation: a floating "Add section"
         // above the box AND a + on every ghost department inside it. That is
         // one section offering a dozen ways in, when there is only one way in —
         // the section has to be in the option before anything can go in it.
         // Everything inside a ghost section is inert until this is pressed.
-        headerLeft={
+        add={
           data.onAdd ? (
             <AddButton
               onClick={data.onAdd}
               title={`Add ${data.name} to this option`}
-              size={16}
+              size={ADD_ENDPOINT}
               stopPointerDown
             />
           ) : null
         }
-        // The figure, then the control column — never both in `headerRight`, or
-        // a card with no × pushes its area out to where the next card's isn't.
-        //
-        // Bold, and no longer dimmed: it is the answer the card is reporting,
-        // read down a stack of nested boxes against the ones above and below it,
-        // and at 400 and 75% it was the quietest thing on a card whose name is
-        // already bold.
-        headerRight={
-          <span style={{ flexShrink: 0, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>
-            {formatArea(data.totalAreaSqft)} sqft
-          </span>
-        }
-        headerControl={
-          data.onRemove ? (
-            <RemoveButton
-              onRemove={data.onRemove}
-              title={`Remove ${data.name} from this option`}
-              size={CARD_CONTROL}
-              stopPointerDown
-            />
-          ) : null
-        }
+        onRemove={data.onRemove}
+        removeTitle={`Right-click to remove ${data.name} from this option`}
+        // The same figure a card carries, at the same size — see CanvasFigure.
+        headerRight={<CanvasFigure areaSqft={data.totalAreaSqft} />}
       />
     </div>
   )
@@ -468,7 +437,7 @@ function BuildingNode({ data }) {
       gutter={data.gutter}
       right={
         <span style={{ fontWeight: 400, fontSize: 13, whiteSpace: 'nowrap', opacity: 0.75, flexShrink: 0 }}>
-          {formatArea(data.totalAreaSqft)} sqft
+          {formatArea(data.totalAreaSqft)} {AREA_UNIT}
         </span>
       }
     />
@@ -478,14 +447,23 @@ function BuildingNode({ data }) {
 // Sections and groups are the same component; only the chrome grows as the
 // nesting gets shallower. Buildings are not — they have no box at all.
 const nodeTypes = {
+  // The tree itself, as one drawing over the boxes — see CanvasGuides.jsx.
+  ...guideNodeTypes,
   department: DepartmentNodeCard,
   root: RootNodeCard,
   // A group is never removed from this canvas — that is the Tree tab's job — so
-  // it reserves no control column, and its area figure takes that space instead.
-  // The group box's own PADDING inset is the same width, so its figure lands in
-  // the same column as the section's one level out.
-  groupBox: (props) => <ContainerNode {...props} fill="solid" radius={8} borderWidth={1} reserveControl={false} />,
-  sectionBox: (props) => <ContainerNode {...props} radius={10} borderWidth={1.5} fontSize={13} fontWeight={700} />,
+  // its control column stands empty. It is still reserved: the column is the
+  // grid's, and a level that reclaimed it would take its own figure off the
+  // datum. It DOES collapse: a group's cards can run past a screen, and shutting one
+  // leaves its name and its area — which is what a section is read by. Sections
+  // do not, so they draw no caret; the column is reserved at every level either
+  // way, which is what the row grid is.
+  groupBox: (props) => (
+    <ContainerNode {...props} fill="solid" radius={8} borderWidth={1} depth={DEPTH.group} collapsible />
+  ),
+  sectionBox: (props) => (
+    <ContainerNode {...props} radius={10} borderWidth={1.5} fontSize={13} fontWeight={700} depth={DEPTH.section} />
+  ),
   buildingBox: BuildingNode,
 }
 
@@ -606,6 +584,19 @@ export default function DepartmentGraph({
     })
   }, [])
 
+  // WHICH GROUPS ARE OPEN, by group node id. SHUT IS THE RESTING STATE, the
+  // same rule the room lists follow: a canvas with every group open is the
+  // detail view, not the one a building is read in. Here rather than in the box
+  // for the reason expandedRooms is.
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set())
+  const toggleGroup = useCallback((instanceId) => {
+    setExpandedGroups((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(instanceId)) next.add(instanceId)
+      return next
+    })
+  }, [])
+
   const { nodes: rawNodes, order } = useMemo(
     () =>
       buildLayout({
@@ -639,24 +630,28 @@ export default function DepartmentGraph({
               if (def) handlersRef.current.onAddDepartments([{ def, treeNodeId, phase }])
             },
         onAddSection: readOnly ? null : (sectionId) => handlersRef.current.onAddSection(sectionId),
-        onRequestRemoveSection: readOnly ? null : (sectionId, name, departmentCount) => {
-          // An empty section holds nothing to lose, so it just goes. One with
-          // departments in it takes them with it, which needs saying first.
-          if (departmentCount === 0) handlersRef.current.onRemoveSection(sectionId)
-          else setConfirmRemoveSection({ sectionId, name, departmentCount })
-        },
-        onRequestRemove: readOnly ? null : (instanceId, name, roomCount, objectCount, phase) => {
-          // Nothing to lose in an empty department, so skip the confirmation.
-          if (roomCount === 0 && objectCount === 0) handlersRef.current.onRemoveDepartment(instanceId)
-          else setConfirmRemove({ instanceId, name, roomCount, objectCount, phase })
-        },
+        onRequestRemoveSection: readOnly
+          ? null
+          : (sectionId, name, departmentCount) => setConfirmRemoveSection({ sectionId, name, departmentCount }),
+        // ALWAYS ASKS, even for an empty department. It used to go straight
+        // through when there was nothing to lose, which was fine while removal
+        // was a × you had to aim at — a right-click is easy to do by accident,
+        // and "did I just delete something?" is a worse question than one click.
+        onRequestRemove: readOnly
+          ? null
+          : (instanceId, name, roomCount, objectCount, phase) =>
+              setConfirmRemove({ instanceId, name, roomCount, objectCount, phase }),
         expandedRooms,
         onToggleRooms: toggleRooms,
+        expandedGroups,
+        onToggleGroup: toggleGroup,
         frozenOrder,
       }),
     [
       expandedRooms,
       toggleRooms,
+      expandedGroups,
+      toggleGroup,
       frozenOrder,
       optionName,
       departmentDefs,
@@ -745,10 +740,19 @@ export default function DepartmentGraph({
           onCancel={() => setConfirmRemove(null)}
         >
           Remove "{confirmRemove.name}"
-          {confirmRemove.phase != null && phaseCount > 1 ? ` from phase ${confirmRemove.phase}` : ''} and everything
-          inside it ({confirmRemove.roomCount} room
-          {confirmRemove.roomCount === 1 ? '' : 's'}, {confirmRemove.objectCount} object
-          {confirmRemove.objectCount === 1 ? '' : 's'})? You can undo this after.
+          {confirmRemove.phase != null && phaseCount > 1 ? ` from phase ${confirmRemove.phase}` : ''}
+          {/* An empty one is still asked about — see onRequestRemove — so it has
+              to read as something other than "and everything inside it (0)". */}
+          {confirmRemove.roomCount === 0 && confirmRemove.objectCount === 0 ? (
+            <>? Nothing has been programmed in it yet. You can undo this after.</>
+          ) : (
+            <>
+              {' '}
+              and everything inside it ({confirmRemove.roomCount} room
+              {confirmRemove.roomCount === 1 ? '' : 's'}, {confirmRemove.objectCount} object
+              {confirmRemove.objectCount === 1 ? '' : 's'})? You can undo this after.
+            </>
+          )}
         </ConfirmModal>
       )}
 
@@ -761,10 +765,19 @@ export default function DepartmentGraph({
           }}
           onCancel={() => setConfirmRemoveSection(null)}
         >
-          "{confirmRemoveSection.name}" still has {confirmRemoveSection.departmentCount} department
-          {confirmRemoveSection.departmentCount === 1 ? '' : 's'} in this option. Removing the section removes
-          {confirmRemoveSection.departmentCount === 1 ? ' it' : ' them'} too, with their rooms and objects. You can
-          undo this after.
+          {confirmRemoveSection.departmentCount === 0 ? (
+            <>
+              Remove "{confirmRemoveSection.name}" from this option? Nothing has been added to it yet. You can undo
+              this after.
+            </>
+          ) : (
+            <>
+              "{confirmRemoveSection.name}" still has {confirmRemoveSection.departmentCount} department
+              {confirmRemoveSection.departmentCount === 1 ? '' : 's'} in this option. Removing the section removes
+              {confirmRemoveSection.departmentCount === 1 ? ' it' : ' them'} too, with their rooms and objects. You
+              can undo this after.
+            </>
+          )}
         </ConfirmModal>
       )}
 

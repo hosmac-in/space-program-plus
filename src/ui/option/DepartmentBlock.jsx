@@ -37,7 +37,7 @@ import {
 } from '../../data/optionData.js'
 import { resolveFactors, withFactor } from '../../data/factors.js'
 import ResetButton from '../primitives/ResetButton.jsx'
-import { formatArea } from '../map/area.js'
+import { AREA_UNIT, formatArea } from '../map/area.js'
 import { functionColours } from '../../data/functions.js'
 import { resolveRoomSchedules, roomWithSchedule } from '../../data/schedules.js'
 import {
@@ -238,18 +238,18 @@ export default function DepartmentBlock({
                 style={{ fontSize: 13, fontStyle: 'italic', color: '#555', marginBottom: 4 }}
               >
                 <span style={{ fontStyle: 'normal' }}>department area </span>
-                {formatArea(deptArea)} sqft
+                {formatArea(deptArea)} {AREA_UNIT}
               </div>
               <div
                 title="Net area × the building's built-area grossing factor"
                 style={{ fontSize: 13, fontStyle: 'italic', color: '#999' }}
               >
                 <span style={{ fontStyle: 'normal' }}>built area </span>
-                {formatArea(departmentBuiltAreaSqft(dept, buildingRow, buildingOverrides))} sqft
+                {formatArea(departmentBuiltAreaSqft(dept, buildingRow, buildingOverrides))} {AREA_UNIT}
               </div>
               <div title="The rooms alone, before any grossing" style={{ fontSize: 13, fontStyle: 'italic', color: '#999' }}>
                 <span style={{ fontStyle: 'normal' }}>net area </span>
-                {formatArea(departmentNetAreaSqft(dept))} sqft
+                {formatArea(departmentNetAreaSqft(dept))} {AREA_UNIT}
               </div>
             </div>
           }

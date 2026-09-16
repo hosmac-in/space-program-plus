@@ -16,7 +16,7 @@
 
 import { phaseRows, summarize } from '../data/optionData.js'
 import { useCatalog } from '../data/catalog.jsx'
-import { siteAreas, formatArea } from './map/area.js'
+import { AREA_UNIT, siteAreas, formatArea } from './map/area.js'
 import { RULE } from './layout.js'
 
 function Figure({ label, value, unit, muted = false }) {
@@ -103,11 +103,11 @@ export default function Hud({
       {/* Wraps rather than scrolls sideways: side is narrow, and a figure half
           off the edge is worse than one on a second row. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', minWidth: 0 }}>
-        <Figure label="Programmed" value={formatArea(areaSqft)} unit="sqft" muted={areaSqft === 0} />
+        <Figure label="Programmed" value={formatArea(areaSqft)} unit={AREA_UNIT} muted={areaSqft === 0} />
         <Figure
           label="Site"
           value={site ? formatArea(site.sqft) : '—'}
-          unit={site ? 'sqft' : undefined}
+          unit={site ? AREA_UNIT : undefined}
           muted={!site}
         />
         <Figure
@@ -123,7 +123,7 @@ export default function Hud({
             key={key}
             label={label}
             value={formatArea(totals.areaSqft)}
-            unit="sqft"
+            unit={AREA_UNIT}
             // A phase nothing is staged in yet reads as a quiet zero rather
             // than as a figure among the ones that matter.
             muted={totals.departmentCount === 0}

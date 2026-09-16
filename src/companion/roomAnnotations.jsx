@@ -11,7 +11,7 @@
 // model.
 
 import { useMemo } from 'react'
-import { formatArea } from '../ui/map/area.js'
+import { AREA_UNIT, formatArea } from '../ui/map/area.js'
 import { ROOM_CONTROL } from '../ui/panel/panelLayout.js'
 import LinkButton, { LINK_MET, LINK_OVER, linkState } from './LinkButton.jsx'
 import LinkedCount from './LinkedCount.jsx'
@@ -46,8 +46,8 @@ function departmentHeld(census, dept) {
 // nothing — a ring stuck at empty over three tagged objects means UNMEASURED,
 // not unlinked, and nothing else would tell those two apart.
 function title(name, linked, total, objects) {
-  const has = `${formatArea(linked)} sqft`
-  const asks = `${formatArea(total)} sqft`
+  const has = `${formatArea(linked)} ${AREA_UNIT}`
+  const asks = `${formatArea(total)} ${AREA_UNIT}`
   const from = objects > 0 ? ` (${objects} object${objects === 1 ? '' : 's'})` : ''
   if (!(total > 0) && linked <= 0) return `Tag the selected Rhino objects as ${name}`
   // Through linkState, never its own comparison: the tooltip must call a room

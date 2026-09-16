@@ -18,7 +18,7 @@ import { CountField } from '../panel/panelParts.jsx'
 import ResetButton from '../primitives/ResetButton.jsx'
 import { useReadOnly } from '../../readOnly.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
-import { formatArea } from '../map/area.js'
+import { AREA_UNIT, formatArea } from '../map/area.js'
 
 // Deliberately NOT a local sum. This file kept its own — objects added up
 // across a department's rooms — and it went silently wrong the day area became
@@ -47,7 +47,7 @@ function buildingTotalOf(entries, building, overrides) {
 function summaryOf(entries, area = null) {
   const n = entries.length
   const sqft = area == null ? totalAreaOf(entries) : area
-  return `${n} department${n === 1 ? '' : 's'} · ${formatArea(sqft)} sqft`
+  return `${n} department${n === 1 ? '' : 's'} · ${formatArea(sqft)} ${AREA_UNIT}`
 }
 
 // A group or section heading inside a larger outline, with its own subtotal.
@@ -56,7 +56,7 @@ function SubHeading({ name, entries }) {
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
       <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: '#555' }}>{name}</div>
       <span style={{ fontSize: 11, color: '#777', whiteSpace: 'nowrap' }}>
-        {formatArea(totalAreaOf(entries))} sqft
+        {formatArea(totalAreaOf(entries))} {AREA_UNIT}
       </span>
     </div>
   )
@@ -223,7 +223,7 @@ function DepartmentEntry({
           </span>
         )}
         <span style={{ fontSize: 11, opacity: 0.8, whiteSpace: 'nowrap' }}>
-          {formatArea(departmentAreaSqft(dept, node, building, overrides))} sqft
+          {formatArea(departmentAreaSqft(dept, node, building, overrides))} {AREA_UNIT}
         </span>
       </div>
 

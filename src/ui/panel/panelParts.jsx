@@ -12,7 +12,7 @@
 
 import AddButton from '../primitives/AddButton.jsx'
 import RemoveButton from '../primitives/RemoveButton.jsx'
-import { formatArea } from '../map/area.js'
+import { AREA_UNIT, formatArea } from '../map/area.js'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   AREA_WIDTH,
@@ -514,7 +514,7 @@ export function ObjectRow({
           what is in it. */}
       {area !== undefined && (
         <span style={{ ...AREA_FIGURE, color: tone === 'warn' ? '#c11' : '#555' }}>
-          {area != null ? `${formatArea(area)} sqft` : 'no area'}
+          {area != null ? `${formatArea(area)} ${AREA_UNIT}` : 'no area'}
         </span>
       )}
 
@@ -567,7 +567,7 @@ export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChan
         // this floors at zero.
         min={0}
         prefix=""
-        suffix="sqft"
+        suffix={AREA_UNIT}
         // Typed, never nudged — a measurement read off a drawing.
         steppers={false}
         width={AREA_WIDTH}
@@ -828,7 +828,7 @@ export function RoomBlock({
             title={count != null ? `${count} × the area of one ${name}` : `Area of ${name}`}
             style={{ ...AREA_FIGURE, color: 'inherit' }}
           >
-            {formatArea(totalAreaSqft)} sqft
+            {formatArea(totalAreaSqft)} {AREA_UNIT}
           </span>
         )}
 

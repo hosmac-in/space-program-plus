@@ -11,7 +11,7 @@
 import { phaseRows, summarize } from '../../data/optionData.js'
 import { useCatalog } from '../../data/catalog.jsx'
 import { Stat, StatCard } from '../primitives/Stat.jsx'
-import { formatArea } from '../map/area.js'
+import { AREA_UNIT, formatArea } from '../map/area.js'
 
 export default function OptionStats({
   name,
@@ -44,9 +44,9 @@ export default function OptionStats({
       <Stat label={phaseCount > 1 ? 'Departments (all phases)' : 'Departments'} value={departmentCount} />
       <Stat label="Rooms" value={roomCount} />
       <Stat label="Objects" value={objectCount} />
-      <Stat label="Programmed area" value={formatArea(areaSqft)} unit="sqft" />
+      <Stat label="Programmed area" value={formatArea(areaSqft)} unit={AREA_UNIT} />
       {phases.map(({ key, label, totals }) => (
-        <Stat key={key} label={label} value={formatArea(totals.areaSqft)} unit="sqft" />
+        <Stat key={key} label={label} value={formatArea(totals.areaSqft)} unit={AREA_UNIT} />
       ))}
       {coverage != null && <Stat label="Of site area" value={formatArea(coverage, 1)} unit="%" />}
     </StatCard>

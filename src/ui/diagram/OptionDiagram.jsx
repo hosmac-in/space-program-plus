@@ -18,7 +18,7 @@ import { Edges, Line, OrbitControls, Text } from '@react-three/drei'
 import { useCatalog } from '../../data/catalog.jsx'
 import { summarize } from '../../data/optionData.js'
 import { functionColours } from '../../data/functions.js'
-import { formatArea } from '../map/area.js'
+import { AREA_UNIT, formatArea } from '../map/area.js'
 import { sectionBoxes, wallHeightFor } from './diagramLayout.js'
 
 // THE VIEWING ANGLE, as the two numbers it actually is — turn about the vertical
@@ -286,7 +286,7 @@ export default function OptionDiagram({ departments, sectionIds, buildingFactors
                   }}
                 />
                 <span>{box.section.name}</span>
-                <span style={{ color: '#888', marginLeft: 'auto', paddingLeft: 12 }}>{formatArea(box.areaSqft)} sqft</span>
+                <span style={{ color: '#888', marginLeft: 'auto', paddingLeft: 12 }}>{formatArea(box.areaSqft)} {AREA_UNIT}</span>
               </div>
             )
           })}

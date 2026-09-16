@@ -56,6 +56,15 @@ export function functionColours(functions, functionId) {
     color: `rgb(${text})`,
     border: shade(bg, 0.75),
     tint: (alpha) => `rgba(${bg},${alpha})`,
+    // The same idea OPAQUE: the hue mixed toward white rather than laid over
+    // whatever is behind at part alpha. `amount` is how far toward white, so it
+    // runs the other way from tint's alpha — wash(1 - a) is tint(a) over white.
+    //
+    // A canvas box takes this, not tint: a transparent fill picks up the dotted
+    // background through it and reads as a screen rather than as a surface.
+    // `lighten` already returns a complete rgb() — wrapping it again is invalid
+    // CSS, which a browser drops silently, and the box goes transparent.
+    wash: (amount) => lighten(bg, amount),
     // For a card that is a drop target. Which way it shifts depends on its own
     // lightness: darkening 'corridor' (near-white) or lightening 'staircase'
     // (navy) would both be invisible, so each moves away from where it is.

@@ -11,10 +11,11 @@ import CanvasFrame, { useCanvasInput } from '../canvas/CanvasFrame.jsx'
 import 'reactflow/dist/style.css'
 import { useCatalog } from '../../data/catalog.jsx'
 import { buildTreeLayout, NODE_HEIGHT, NODE_WIDTH } from './treeLayout.js'
-import { GAP } from '../canvas/canvasLayout.js'
-import { CANVAS_STYLE, CarouselRow, nodeTypes } from './treeNodes.jsx'
+import { CARD_GAP, GAP } from '../canvas/canvasLayout.js'
+import { CANVAS_STYLE, COLLAPSE_MS, CarouselRow, nodeTypes } from './treeNodes.jsx'
 import { useTreeEditorContext } from './useTreeEditor.jsx'
 import { Band } from '../primitives/Band.jsx'
+import ConfirmModal from '../primitives/ConfirmModal.jsx'
 
 // Stable identity so React Flow doesn't see a new edge array every render. The
 // tree draws containment by nesting boxes, so it has no edges at all.
@@ -60,8 +61,19 @@ function TreeCanvasInner({
     nodesRef.current = nodes
   }, [nodes])
 
-  const onCardRemoveDept = useCallback((id) => editor.removeDept(id), [editor.removeDept])
-  const onCardRemoveGroup = useCallback((id) => editor.removeGroup(id), [editor.removeGroup])
+  // REMOVAL ALWAYS ASKS, and asks before anything is written. It used to go
+  // straight through — there was a × to aim at, and the footer's undo was the
+  // safety net. A right-click is easy to do by accident, and this edits the
+  // SHARED catalog for everyone the moment it lands.
+  const [confirmRemove, setConfirmRemove] = useState(null)
+  const onCardRemoveDept = useCallback(
+    (id, name, roomCount) => setConfirmRemove({ kind: 'department', id, name, count: roomCount }),
+    []
+  )
+  const onCardRemoveGroup = useCallback(
+    (id, name, deptCount) => setConfirmRemove({ kind: 'group', id, name, count: deptCount }),
+    []
+  )
 
   // WHICH CARDS HAVE THEIR ROOMS OPEN, by placement instance_id. Collapsed is the
   // resting state, and it lives here rather than in the card because the layout
@@ -75,10 +87,58 @@ function TreeCanvasInner({
     })
   }, [])
 
+  // WHICH GROUPS ARE OPEN, by the group node's instance_id. SHUT IS THE RESTING
+  // STATE — the whole catalog is on this canvas at once, and every group open is
+  // a wall of cards rather than the shape of a building.
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set())
+
+  // A COLLAPSE IS NOT A DROP, and must not be eased like one. The canvas settles
+  // after a drag on an overshoot spring — a card released from the pointer sails
+  // a little past its slot — and applied to a box that is changing SIZE, with
+  // everything below it moving at once, that overshoot reads as a jerk. So the
+  // wrapper wears this class for the length of the move and the nodes ease out
+  // instead, the same curve the option canvas uses. Cleared afterwards so a drag
+  // gets its spring back.
+  const [collapsing, setCollapsing] = useState(false)
+
+  // A CARD DROPPED INTO A SHUT GROUP OPENS IT. Shut is the resting state, so
+  // without this every placement disappeared the instant it was made and the
+  // canvas answered a drop by showing nothing — which is how this first shipped.
+  // Placing something is also the one moment you certainly want to see what is
+  // in there.
+  const openForDrop = useCallback((groupInstanceId) => {
+    setExpandedGroups((cur) => (cur.has(groupInstanceId) ? cur : new Set(cur).add(groupInstanceId)))
+  }, [])
+
+  const onToggleGroup = useCallback((id) => {
+    setCollapsing(true)
+    setExpandedGroups((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!collapsing) return
+    const t = setTimeout(() => setCollapsing(false), COLLAPSE_MS)
+    return () => clearTimeout(t)
+  }, [collapsing, expandedGroups])
+
   const computed = useMemo(
     () =>
       buildTreeLayout(
-        { sections, groups, departments, rooms, buildings, functions, canEdit, expandedRooms },
+        {
+          sections,
+          groups,
+          departments,
+          rooms,
+          buildings,
+          functions,
+          canEdit,
+          expandedRooms,
+          expandedGroups,
+        },
         selectedDeptInstanceId,
         {
           onSelectDepartment,
@@ -86,6 +146,7 @@ function TreeCanvasInner({
           onRemoveDepartment: onCardRemoveDept,
           onRemoveGroup: onCardRemoveGroup,
           onToggleRooms,
+          onToggleGroup,
         },
         stableSectionWidthsRef.current,
         stableBuildingHeightsRef.current,
@@ -100,6 +161,8 @@ function TreeCanvasInner({
       functions,
       canEdit,
       expandedRooms,
+      expandedGroups,
+      onToggleGroup,
       selectedDeptInstanceId,
       selectedBuildingId,
       onSelectDepartment,
@@ -218,6 +281,10 @@ function TreeCanvasInner({
       // every card a drag passed step aside by the wrong amount, and the gap
       // opened in the wrong place.
       size: (n) => n.height ?? NODE_HEIGHT,
+      // Cards sit closer than boxes do — see CARD_GAP. The shuffle has to step
+      // by the same gap the layout stacked them with, or every card a drag
+      // passes moves aside by the wrong amount.
+      gap: CARD_GAP,
       items: all
         .filter((n) => n.type === 'tDepartment' && n.parentNode === containerId)
         .sort((a, b) => a.position.y - b.position.y),
@@ -237,7 +304,7 @@ function TreeCanvasInner({
   // `index` null closes the gap instead: that is the home container of a card
   // now hovering somewhere else.
   const slotPositions = useCallback((node, containerId, index) => {
-    const { axis, size, items } = childrenOf(node, containerId)
+    const { axis, size, items, gap = GAP } = childrenOf(node, containerId)
     if (items.length === 0) return []
 
     const origin = Math.min(...items.map((n) => n.position[axis]))
@@ -248,7 +315,7 @@ function TreeCanvasInner({
     let at = origin
     order.forEach((n) => {
       if (n.id !== node.id) out.push({ id: n.id, axis, value: at })
-      at += size(n) + GAP
+      at += size(n) + gap
     })
     return out
   }, [childrenOf])
@@ -350,6 +417,10 @@ function TreeCanvasInner({
       }
       const wantType = node.type === 'tDepartment' ? 'tGroupBox' : node.type === 'tGroupBox' ? 'tSectionBox' : null
       if (!wantType) return null
+      // A COLLAPSED GROUP STILL TAKES A DROP, and opens to show what landed —
+      // see openForDrop. Refusing one was the first cut at this and it made
+      // every group in the catalog refuse departments, because shut is the
+      // resting state: there was nothing to drop into anywhere.
       return getIntersectingNodes(node).filter((n) => n.type === wantType && n.id !== node.id)[0] ?? null
     },
     [getIntersectingNodes]
@@ -489,6 +560,8 @@ function TreeCanvasInner({
       const index = dropIndex(event, absolute ? items.map((n) => ({ ...n, position: absolute(n) })) : items, axis)
 
       pulseTarget(target.id)
+      // The group it is landing in, so the card is visible where it lands.
+      if (isDept) openForDrop(to)
       const moved = isDept
         ? await editor.moveDept(node.id, from, to, { index })
         : await editor.moveGroup(node.id, from, to, { index })
@@ -502,6 +575,7 @@ function TreeCanvasInner({
       endDragStyling,
       childrenOf,
       dropIndex,
+      openForDrop,
       editor.moveDept,
       editor.moveGroup,
       editor.moveSection,
@@ -562,9 +636,14 @@ function TreeCanvasInner({
       if (!hit) return
 
       if (payload.kind === 'group') editor.placeGroup(hit.data.sectionId, payload.id)
-      else editor.placeDept(hit.id, payload.id)
+      else {
+        // Dropped from the carousel into a group that is probably shut — see
+        // openForDrop.
+        openForDrop(hit.id)
+        editor.placeDept(hit.id, payload.id)
+      }
     },
-    [hitTestCarouselTarget, setDropTarget, editor.placeGroup, editor.placeDept]
+    [hitTestCarouselTarget, setDropTarget, openForDrop, editor.placeGroup, editor.placeDept]
   )
 
   const onItemDragStart = useCallback((kind, id) => {
@@ -603,6 +682,8 @@ function TreeCanvasInner({
       )}
 
       <div
+        // Only while a group is opening or shutting — see COLLAPSE_MS.
+        className={collapsing ? 'tree-collapsing' : undefined}
         style={{ flex: 1, minHeight: 0, position: 'relative' }}
         onDragOver={canEdit ? onCanvasDragOver : undefined}
         onDragLeave={
@@ -632,6 +713,33 @@ function TreeCanvasInner({
         </CanvasFrame>
       </div>
 
+      {/* THE CATALOG IS SHARED, so this is not "your" card going away — it is
+          the placement going away for everyone, and its rooms with it. The undo
+          in the footer can put it back, which is what the last line says. */}
+      {confirmRemove && (
+        <ConfirmModal
+          title={confirmRemove.kind === 'group' ? 'Remove group?' : 'Remove department?'}
+          onConfirm={() => {
+            if (confirmRemove.kind === 'group') editor.removeGroup(confirmRemove.id)
+            else editor.removeDept(confirmRemove.id)
+            setConfirmRemove(null)
+          }}
+          onCancel={() => setConfirmRemove(null)}
+        >
+          Remove "{confirmRemove.name}" from the catalog
+          {confirmRemove.count > 0 ? (
+            <>
+              {' '}
+              and the {confirmRemove.count}{' '}
+              {confirmRemove.kind === 'group'
+                ? `department${confirmRemove.count === 1 ? '' : 's'}`
+                : `room${confirmRemove.count === 1 ? '' : 's'}`}{' '}
+              in it
+            </>
+          ) : null}
+          ? Everyone sees this change. You can undo it after.
+        </ConfirmModal>
+      )}
     </div>
   )
 }

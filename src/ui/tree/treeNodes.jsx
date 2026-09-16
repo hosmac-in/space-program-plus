@@ -2,17 +2,37 @@
 // renders, the carousel rows above and below it, and the stylesheet they share.
 // No data access, no tree logic.
 
-import RemoveButton from '../primitives/RemoveButton.jsx'
 import { functionColours } from '../../data/functions.js'
 import { CanvasBandHeading, CanvasCard, CanvasContainer, DepartmentCardFace } from '../canvas/canvasCards.jsx'
 import { NODE_HEIGHT, NODE_WIDTH, PADDING } from './treeLayout.js'
-import { CARD_CONTROL } from '../canvas/canvasLayout.js'
+import { DEPTH } from '../canvas/canvasLayout.js'
+import { guideNodeTypes } from '../canvas/CanvasGuides.jsx'
 import { BandRow } from '../primitives/Band.jsx'
+
+// How long a group's collapse runs. Exported because TreeCanvas has to hold the
+// class below for exactly as long as the rule it switches on.
+export const COLLAPSE_MS = 420
 
 export const CANVAS_STYLE = `
   /* Settling into a new slot after a drop: slow, with a little overshoot. */
   .react-flow__node:not(.dragging) {
     transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  /* COLLAPSING A GROUP IS NOT A DROP. The spring above is a card being released
+     from the pointer, which is why it is allowed to sail past its slot; here
+     every box below the group moves at once while the group itself changes
+     height, and an overshoot on all of it at once reads as a jerk rather than as
+     one thing opening. Ease-out, the same curve the option canvas uses — and the
+     HEIGHT with it, so the box shrinks instead of snapping and the rest sliding
+     to catch up. React Flow sets the height on the node wrapper, so this is the
+     element that can animate it. */
+  .tree-collapsing .react-flow__node:not(.dragging) {
+    transition:
+      transform ${COLLAPSE_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      height ${COLLAPSE_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tree-collapsing .react-flow__node:not(.dragging) { transition: none; }
   }
   /* Riding along inside a group that's being dragged. A child is a DOM sibling
      of its parent, so its transform is re-set on every drag frame — the spring
@@ -55,10 +75,10 @@ export const CANVAS_STYLE = `
 
 // Chrome for all three shapes comes from ui/canvas/canvasCards.jsx, shared with
 // the option Canvas tab. Only the interactive parts are local: this tab has
-// drag handles and remove buttons, that one has ghosts and area totals.
+// drag handles and removal, that one has ghosts and area totals.
 //
-// RemoveButton is the only way to send a card back to the carousel — dragging
-// a card to empty canvas deliberately does nothing.
+// A RIGHT-CLICK ON THE ENDPOINT is the only way to send a card back to the
+// carousel — dragging a card to empty canvas deliberately does nothing.
 function HDepartmentCard({ data }) {
   return (
     <CanvasCard
@@ -67,29 +87,23 @@ function HDepartmentCard({ data }) {
       // The layout grew this card by its room list — it must draw at exactly
       // that height or the cards below it in the group stop lining up.
       height={data.height ?? NODE_HEIGHT}
-      // Sides only. The vertical insets belong to the face, so that
-      // departmentCardHeight is the whole of a card's height — see
-      // DepartmentCardFace, which also reserves the corner control's column.
-      padding={`0 ${PADDING}px`}
       isHighlighted={data.isHighlighted}
       pulse={data.pulse}
       cursor={data.canEdit ? 'grab' : 'pointer'}
       isDraggable={data.canEdit}
       onClick={() => data.onSelect()}
-      corner={
-        data.onRemove ? (
-          <RemoveButton onRemove={data.onRemove} title="Remove from group" corner stopPointerDown />
-        ) : null
-      }
     >
       {/* THE SAME FACE THE OPTION CANVAS DRAWS. No area: a catalog department
           has none of its own until an option sizes its rooms, and its rooms
-          carry no count — see DepartmentCardFace. */}
+          carry no count — see DepartmentCardFace. Removal is a right-click on
+          the endpoint; there is no × on a card any more. */}
       <DepartmentCardFace
         name={data.name}
         rooms={data.rooms}
         expanded={data.roomsExpanded}
         onToggleRooms={data.onToggleRooms}
+        onRemove={data.onRemove}
+        removeTitle="Right-click to remove from this group"
       />
     </CanvasCard>
   )
@@ -106,13 +120,15 @@ function HGroupBoxCard({ data }) {
       pulse={data.pulse}
       // Only the header strip drags the group — see dragHandle in the layout.
       headerClassName={data.canEdit ? 'group-drag-handle' : undefined}
-      // The control column, not headerRight — one card header shape across both
-      // canvases, and a group with no × still holds the space a section's takes.
-      headerControl={
-        data.onRemove ? (
-          <RemoveButton onRemove={data.onRemove} title="Remove from section" size={CARD_CONTROL} stopPointerDown />
-        ) : null
-      }
+      // A group's cards can run to a screenful; a section is read by which
+      // groups it holds. Collapsing is available to everyone, editor or not —
+      // it changes nothing stored.
+      collapsible
+      isCollapsed={data.isCollapsed}
+      onToggleCollapse={data.onToggleCollapse}
+      depth={DEPTH.group}
+      onRemove={data.onRemove}
+      removeTitle="Right-click to remove from this section"
     >
       {data.isEmpty && data.canEdit && (
         <div style={{ padding: `0 ${PADDING}px`, fontSize: 11, opacity: 0.7, color: data.colours.color }}>
@@ -138,6 +154,7 @@ function HSectionBoxCard({ data }) {
       borderWidth={1.5}
       fontSize={13}
       fontWeight={700}
+      depth={DEPTH.section}
       isDropTarget={data.isDropTarget}
       pulse={data.pulse}
     >
@@ -176,6 +193,8 @@ function HBuildingBoxCard({ data }) {
 }
 
 export const nodeTypes = {
+  // The tree itself, as one drawing over the boxes — see CanvasGuides.jsx.
+  ...guideNodeTypes,
   tDepartment: HDepartmentCard,
   tGroupBox: HGroupBoxCard,
   tSectionBox: HSectionBoxCard,

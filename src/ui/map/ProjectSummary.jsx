@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../../data/supabase.js'
 import OptionStats from '../option/OptionStats.jsx'
 import { Stat, StatCard } from '../primitives/Stat.jsx'
-import { formatArea, siteAreas } from './area.js'
+import { AREA_UNIT, formatArea, siteAreas } from './area.js'
 
 export default function ProjectSummary({
   projects,
@@ -74,7 +74,7 @@ export default function ProjectSummary({
       <StatCard title={selected.name}>
         {areas ? (
           <>
-            <Stat label="Site area" value={formatArea(areas.sqft)} unit="sqft" />
+            <Stat label="Site area" value={formatArea(areas.sqft)} unit={AREA_UNIT} />
             <Stat label="" value={formatArea(areas.sqm)} unit="sqm" />
             <Stat label="" value={formatArea(areas.acre, 2)} unit="acres" />
           </>

@@ -56,6 +56,16 @@ export function siteAreas(geojson) {
   return { sqm, sqft: sqm / SQM_PER_SQFT, acre: sqm / SQM_PER_ACRE }
 }
 
+// THE UNIT EVERY AREA IN THIS APP IS STATED IN, written once because it is
+// printed beside a figure in a dozen places and spelled out — "sqft" — it cost a
+// canvas card more width than the figure it labels. The squared glyph is one
+// character and reads the same.
+//
+// It is NOT the unit the energy model will report in; see the note on the
+// department heading in CLAUDE.md, which is the open question this does not
+// settle.
+export const AREA_UNIT = 'ft²'
+
 // Every number the app prints goes through here, so thousands separators and
 // rounding are the same wherever a figure appears. It was defined four times
 // under three names.

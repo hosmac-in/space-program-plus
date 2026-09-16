@@ -20,6 +20,7 @@
 
 import { useState } from 'react'
 import { BLOCK_PADDING } from './panelLayout.js'
+import DisclosureCaret from '../primitives/DisclosureCaret.jsx'
 
 export default function StripBand({
   // What the band is called — "Room Parameters", "Department Parameters".
@@ -97,21 +98,11 @@ export default function StripBand({
           font: 'inherit',
         }}
       >
-        {/* Rotated rather than swapped for a second glyph, so the caret keeps
-            its exact size and baseline in both states. */}
-        <span
-          style={{
-            fontSize: 9,
-            flexShrink: 0,
-            display: 'inline-block',
-            opacity: 0.6,
-            transform: open ? 'rotate(90deg)' : 'none',
-            // Turns with the slide, so one gesture reads as one movement.
-            transition: 'transform 180ms ease',
-          }}
-        >
-          ▶
-        </span>
+        {/* The glyph alone, with no target of its own: the whole heading is
+            already the button, so a second one inside it would only make part
+            of the line behave differently from the rest. Turns with the slide,
+            so one gesture reads as one movement. */}
+        <DisclosureCaret expanded={open} size={12} opacity={0.6} duration={180} />
         {/* Heavier and a size up from the rows it heads — and NOTHING ELSE. It
             was 11px regular, the same size as a room's rows and smaller than a
             department's, so the heading was the quietest thing in the band it
