@@ -15,7 +15,7 @@
 // and object edits wait for Save Data because they belong to an option someone
 // is composing. The chrome is literally the same (ui/panel/panelParts.jsx).
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { useCatalog } from '../../data/catalog.jsx'
 import {
@@ -35,6 +35,12 @@ import {
   roomWithObjectCount,
   roomWithEquipmentCount,
   newEquipmentNode,
+  deptRoomGroups,
+  normaliseRoomOrder,
+  readRoomGroups,
+  withRoomGroupDissolved,
+  withRoomGroupNamed,
+  withRoomsGrouped,
 } from '../../data/tree.js'
 import { functionColours } from '../../data/functions.js'
 import { catalogRoomSchedules, roomWithSchedule } from '../../data/schedules.js'
@@ -61,9 +67,12 @@ import {
   RoomAddRow,
   RoomBlock,
   RoomBrief,
+  RoomGroupBlock,
   RoomNotes,
+  GROUP_ROOM_INSET,
 } from '../panel/panelParts.jsx'
 import { Branch, BRANCH_ORIGIN_CONTENT } from '../panel/PanelTree.jsx'
+import { removeHint } from '../primitives/RemoveButton.jsx'
 import { BLOCK_GAP } from '../panel/panelLayout.js'
 import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import RoomEnergyStrip, { SCHEDULES_GROUP } from '../panel/RoomEnergyStrip.jsx'
@@ -80,6 +89,26 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
   // catalog there and then, and the gesture is easy to arrive at by accident.
   // Each holds a `confirm` that does the write.
   const [confirmTarget, setConfirmTarget] = useState(null)
+
+  // WHICH ROOMS ARE SELECTED, to be grouped. A click on a room's title bar
+  // toggles one; a right-click on it makes a group of them all. This is the
+  // app's one multi-selection and its one selection made in SIDE rather than in
+  // main — grouping is authored here because the grouping is the catalog's.
+  const [selected, setSelected] = useState(() => new Set())
+  // THE NAME IS ASKED FOR BEFORE ANYTHING IS WRITTEN — { ids, name } while the
+  // question is open, null otherwise. Cancelling writes nothing, which is the
+  // whole reason it is a prompt: a group made first and named after would sit
+  // untitled in the shared catalog the moment anyone thought better of it.
+  const [groupPrompt, setGroupPrompt] = useState(null)
+
+  // A SELECTION BELONGS TO ONE DEPARTMENT. This pane is not keyed by the
+  // placement, so without this, switching department with rooms still selected
+  // would group ids that live in another department — writing an empty group
+  // into the shared catalog.
+  useEffect(() => {
+    setSelected(new Set())
+    setGroupPrompt(null)
+  }, [selectedDeptInstanceId])
 
   const ctx = selectedDeptInstanceId ? findDeptContext(sections, selectedDeptInstanceId) : null
   const stored = ctx?.deptNode.rooms ?? []
@@ -108,7 +137,10 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
     items: stored,
     keyOf: (node) => node.instance_id,
     enabled: canEdit,
-    onCommit: (rooms) => write(rooms, 'Rooms reordered'),
+    // Normalised on the way out: a group's rooms are a contiguous run, so a
+    // room dragged out of its own run is pulled back into it. See
+    // normaliseRoomOrder — the list written is always a list that can be drawn.
+    onCommit: (rooms) => write(normaliseRoomOrder(rooms), 'Rooms reordered'),
   })
 
   if (!selectedDeptInstanceId) {
@@ -125,73 +157,53 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
 
   // From the reorder hook, not `stored`: while a drag is in progress that is the
   // arrangement under the pointer, and the saved one the rest of the time.
-  const linkedRooms = roomOrder.items
-    .map((node) => ({ node, def: rooms.find((r) => r.id === node.room_def_id) }))
-    .filter((e) => e.def)
+  const defOf = (node) => rooms.find((r) => r.id === node.room_def_id)
+  const linkedRooms = roomOrder.items.filter(defOf)
 
-  return (
-    <PanelShell colours={colours}>
-      <PanelHeading
-        name={deptDef?.name ?? 'Department'}
-        path={formatPath(placement?.sectionName, placement?.groupName)}
-        // THE ROOT OF THE TREE: the rooms below hang off this line.
-        root
-      />
+  // THE LIST AS IT IS DRAWN — runs of grouped rooms become group cards, the rest
+  // are rooms in place. Over the reorder hook's items, so the preview groups as
+  // it moves. `keepEmpty` only for an editor: a group whose rooms have all gone
+  // still has to be reachable to be dissolved, and to a reader it is nothing.
+  const entries = readRoomGroups(linkedRooms, deptRoomGroups(ctx.deptNode), { keepEmpty: canEdit })
 
-      {editor.error && <p style={{ color: 'red', fontSize: 12 }}>{editor.error}</p>}
+  // Every grouping edit is one write of the whole department node — the rooms
+  // and the group list move together or not at all. See setRoomGrouping.
+  const writeGrouping = (next, message) =>
+    editor.setRoomGrouping(selectedDeptInstanceId, next, { message })
 
-      {/* The catalog's DEFAULTS for this placement's two factors. Every option
-          that uses this department inherits these and may override either — see
-          data/factors.js. Written immediately, like everything else here.
+  // RIGHT-CLICK A SELECTED ROOM TO GROUP WHAT IS SELECTED — which asks for the
+  // name and writes nothing until it has one. The room under the pointer joins
+  // in whether or not it was one of them: you are pointing at it.
+  const askGroup = (node) => setGroupPrompt({ ids: new Set([...selected, node.instance_id]), name: '' })
 
-          Shown even to a non-admin: what an option will inherit is worth
-          knowing whether or not you can change it.
+  const makeGroup = () => {
+    const { ids, name } = groupPrompt
+    const { deptNode, groupId } = withRoomsGrouped(ctx.deptNode, ids, name)
+    setGroupPrompt(null)
+    if (!groupId) return
+    setSelected(new Set())
+    writeGrouping(deptNode, `${name.trim()}: ${ids.size} rooms grouped`)
+  }
 
-          IN THE SAME BAND THE OPTION DRAWS THEM IN, and for the same reason —
-          the same factors, the same rows, so the same component. The Project
-          tab adds only what it alone has: the muted/overridden treatment and a
-          reset, because nothing sits below the catalog. */}
-      {/* THE LINE ON ITS WAY DOWN from the department's own dot to its rooms.
-          The factors it is scaled by are facts about the department, not things
-          in it, so the tree runs past them — clear of the line, which is why the
-          band no longer bleeds to the shell's edge. */}
-      <div style={{ paddingLeft: BRANCH_ORIGIN_CONTENT, minWidth: 0 }}>
-      <StripBand title="Department Parameters" colours={colours} pad={0} top={12} plain>
-        {DEPARTMENT_FACTORS.map((factor) => {
-          const set = Number.isFinite(ctx.deptNode[factor.treeKey]) ? ctx.deptNode[factor.treeKey] : null
-          return (
-            <div
-              key={factor.key}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0', minWidth: 0, fontSize: 12 }}
-            >
-              <span style={{ color: '#555', minWidth: 0 }}>{factor.label}</span>
-              <CountField
-                value={set ?? factor.fallback}
-                canEdit={canEdit}
-                min={factor.min}
-                step={0.05}
-                decimals={2}
-                prefix="×"
-                colour="#555"
-                title={factor.describe(deptDef?.name ?? 'this department')}
-                onChange={(value) =>
-                  editor.setDeptFactor(selectedDeptInstanceId, factor, value, {
-                    message: `${deptDef?.name ?? 'Department'}: ${factor.label.toLowerCase()} set`,
-                  })
-                }
-              />
-            </div>
-          )
-        })}
-      </StripBand>
-      </div>
+  const renameGroup = (group, name) =>
+    name !== (group.name ?? '') &&
+    writeGrouping(withRoomGroupNamed(ctx.deptNode, group.instance_id, name), name ? `${name}: named` : 'Group name cleared')
 
-      {/* The wrapper is the drop target, so a drop landing in the gutter between
-          two rooms still counts — see useReorderList. */}
-      <div {...roomOrder.listProps}>
-      {linkedRooms.length === 0
-        ? !canEdit && <PanelNote>No rooms linked yet</PanelNote>
-        : linkedRooms.map(({ node, def }) => {
+  // Dissolving keeps every room — the prompt has to say so, or it reads exactly
+  // like the room removal two rows away.
+  const askDissolve = (group, count) =>
+    setConfirmTarget({
+      title: 'Ungroup these rooms?',
+      body: `Take "${group.name || 'this group'}" away? Its ${count} room${
+        count === 1 ? '' : 's'
+      } stay where they are, no longer grouped. The catalog is shared, so this changes it for everyone — you can undo it after.`,
+      confirm: () => writeGrouping(withRoomGroupDissolved(ctx.deptNode, group.instance_id), 'Group removed'),
+    })
+
+  // ONE ROOM, drawn wherever it sits — straight under the department, or inside
+  // a room group, which is all `inset` says. Everything about a room is the
+  // same either way, so this is a function rather than two call sites.
+  const renderRoom = (node, def, inset) => {
             // OBJECTS AND EQUIPMENT, ONE LIST. Two arrays in the document, one
             // question on screen — see the note in data/tree.js. `kind` rides
             // along on each entry and decides the one thing that differs: which
@@ -249,6 +261,30 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 name={shown}
                 type={def.type}
                 canEdit={canEdit}
+                // All a room needs to know about being one level deeper.
+                inset={inset}
+                // CLICK THE TITLE BAR TO SELECT, right-click to group. Editors
+                // only — grouping is a catalog edit, and a reader selecting
+                // rooms it cannot do anything with is a control that lies.
+                selected={selected.has(node.instance_id)}
+                onSelect={
+                  canEdit
+                    ? () =>
+                        setSelected((cur) => {
+                          const next = new Set(cur)
+                          if (!next.delete(node.instance_id)) next.add(node.instance_id)
+                          return next
+                        })
+                    : undefined
+                }
+                onGroup={canEdit ? () => askGroup(node) : undefined}
+                groupHint={
+                  canEdit
+                    ? selected.size > 0
+                      ? `Right click to group the ${selected.size + (selected.has(node.instance_id) ? 0 : 1)} selected rooms`
+                      : 'Click to select — then right-click to group'
+                    : undefined
+                }
                 // Renamed by double-clicking the title, and WRITTEN on Enter —
                 // one write and one undo step for the whole name, never one per
                 // keystroke, because every edit here is a whole section's jsonb.
@@ -495,7 +531,92 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 />
               </RoomBlock>
             )
-          })}
+  }
+
+  return (
+    <PanelShell colours={colours}>
+      <PanelHeading
+        name={deptDef?.name ?? 'Department'}
+        path={formatPath(placement?.sectionName, placement?.groupName)}
+        // THE ROOT OF THE TREE: the rooms below hang off this line.
+        root
+      />
+
+      {editor.error && <p style={{ color: 'red', fontSize: 12 }}>{editor.error}</p>}
+
+      {/* The catalog's DEFAULTS for this placement's two factors. Every option
+          that uses this department inherits these and may override either — see
+          data/factors.js. Written immediately, like everything else here.
+
+          Shown even to a non-admin: what an option will inherit is worth
+          knowing whether or not you can change it.
+
+          IN THE SAME BAND THE OPTION DRAWS THEM IN, and for the same reason —
+          the same factors, the same rows, so the same component. The Project
+          tab adds only what it alone has: the muted/overridden treatment and a
+          reset, because nothing sits below the catalog. */}
+      {/* THE LINE ON ITS WAY DOWN from the department's own dot to its rooms.
+          The factors it is scaled by are facts about the department, not things
+          in it, so the tree runs past them — clear of the line, which is why the
+          band no longer bleeds to the shell's edge. */}
+      <div style={{ paddingLeft: BRANCH_ORIGIN_CONTENT, minWidth: 0 }}>
+      <StripBand title="Department Parameters" colours={colours} pad={0} top={12} plain>
+        {DEPARTMENT_FACTORS.map((factor) => {
+          const set = Number.isFinite(ctx.deptNode[factor.treeKey]) ? ctx.deptNode[factor.treeKey] : null
+          return (
+            <div
+              key={factor.key}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0', minWidth: 0, fontSize: 12 }}
+            >
+              <span style={{ color: '#555', minWidth: 0 }}>{factor.label}</span>
+              <CountField
+                value={set ?? factor.fallback}
+                canEdit={canEdit}
+                min={factor.min}
+                step={0.05}
+                decimals={2}
+                prefix="×"
+                colour="#555"
+                title={factor.describe(deptDef?.name ?? 'this department')}
+                onChange={(value) =>
+                  editor.setDeptFactor(selectedDeptInstanceId, factor, value, {
+                    message: `${deptDef?.name ?? 'Department'}: ${factor.label.toLowerCase()} set`,
+                  })
+                }
+              />
+            </div>
+          )
+        })}
+      </StripBand>
+      </div>
+
+      {/* The wrapper is the drop target, so a drop landing in the gutter between
+          two rooms still counts — see useReorderList. */}
+      <div {...roomOrder.listProps}>
+      {linkedRooms.length === 0
+        ? !canEdit && <PanelNote>No rooms linked yet</PanelNote>
+        : entries.map((entry) =>
+            entry.kind === 'group' ? (
+              <RoomGroupBlock
+                key={entry.group.instance_id}
+                colours={colours}
+                name={entry.group.name}
+                // THE CATALOG'S DEFAULTS, ADDED UP. Each room in it shows the
+                // default area of one, so the group shows what those come to —
+                // the sum of what is on screen under it, which is the only
+                // figure it could honestly state. An option sizes them; this is
+                // what it starts from.
+                totalAreaSqft={entry.rooms.reduce((sum, n) => sum + catalogRoomAreaSqft(n), 0)}
+                onNameCommit={canEdit ? (next) => renameGroup(entry.group, next) : undefined}
+                onRemove={canEdit ? () => askDissolve(entry.group, entry.rooms.length) : null}
+                removeTitle={removeHint('this group')}
+              >
+                {entry.rooms.map((node) => renderRoom(node, defOf(node), GROUP_ROOM_INSET))}
+              </RoomGroupBlock>
+            ) : (
+              renderRoom(entry.room, defOf(entry.room), 0)
+            )
+          )}
       </div>
 
       {/* Below the rooms, matching the Project tab's pane and each room's own
@@ -518,6 +639,47 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
             onAdd={(r) => write([...stored, newRoomNode(r.id)], `${r.name} added`)}
           />
         </Branch>
+      )}
+
+      {/* THE NAME IS THE QUESTION. Asked before anything is written, so cancel
+          writes nothing at all — and so no group ever exists unnamed in a
+          catalog everyone reads. Enter answers it; the confirm is disabled until
+          there is something to answer with, because an empty name here means
+          "no" and there is already a button for that. */}
+      {groupPrompt && (
+        <ConfirmModal
+          title={`Group ${groupPrompt.ids.size} rooms`}
+          confirmLabel="Group them"
+          tone="primary"
+          confirmDisabled={!groupPrompt.name.trim()}
+          onConfirm={makeGroup}
+          onCancel={() => setGroupPrompt(null)}
+        >
+          <div style={{ marginBottom: 10 }}>
+            What are they together? The catalog is shared, so every option using this department reads
+            the same grouping — you can undo it after.
+          </div>
+          <input
+            autoFocus
+            value={groupPrompt.name}
+            placeholder="write group name"
+            onChange={(e) => setGroupPrompt((cur) => ({ ...cur, name: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && groupPrompt.name.trim()) makeGroup()
+            }}
+            className="spp-group-field"
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '6px 8px',
+              fontFamily: 'inherit',
+              fontSize: 13,
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              outline: 'none',
+            }}
+          />
+        </ConfirmModal>
       )}
 
       {confirmTarget && (

@@ -18,6 +18,7 @@ import {
   DEPT_CARET,
   DEPT_HEAD_INSET,
   DEPT_NAME_ROW,
+  ROOM_GROUP_STEP,
   ROOM_INDENT,
   ROOM_LINE_HEIGHT,
   ROOM_LIST_TOP,
@@ -207,11 +208,20 @@ export function CardRoomList({ rooms }) {
       {/* The branch to each room is drawn by the canvas's guide layer, not here
           — one tree, one drawing. All this list owes it is the indent it leaves
           and the line height it keeps, which is what branchToRoom measures. */}
+      {/* A row is a room, or a ROOM GROUP's heading with its rooms stepped in
+          under it — see data/tree.js. Two deep at most, because a room group is.
+          The step is the one branchToRoom takes at depth 1, so the dots the
+          guide layer draws land on these rows and not beside them. */}
       {rooms.map((room) => (
         <div
           key={room.key}
           title={room.count > 1 ? `${room.count} × ${room.name}` : room.name}
           style={{
+            paddingLeft: room.depth ? ROOM_GROUP_STEP : 0,
+            // A group heading is the same size as the rooms under it and only
+            // steadier: this list is 10px italic throughout, and a heading a
+            // size up in a card this small reads as a second card.
+            fontWeight: room.group ? 600 : 400,
             fontSize: 10,
             // On the TEXT, not the wrapper: on the wrapper it compounded with
             // the guide's own alpha and the tree came out quieter here than at
@@ -421,7 +431,11 @@ export function CanvasContainer({
         // ways of saying the same thing, and the switch is there to try either,
         // both or neither. Hanging this off it meant turning the border off took
         // the shadow with it.
-        boxShadow: isSection ? SECTION_SHADOW : undefined,
+        //
+        // NOT ON A GHOST. A ghost is an outline of something that is not there
+        // yet — a lift says it is sitting on the canvas, which is the one thing
+        // it is not doing.
+        boxShadow: isSection && !isGhost ? SECTION_SHADOW : undefined,
       }}
     >
       <CanvasRow

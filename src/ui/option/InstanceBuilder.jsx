@@ -385,6 +385,7 @@ export default function InstanceBuilder({
           unanchored,
           departments: goneDepts,
           rooms: goneRooms,
+          unplaced,
           objects: goneObjects,
           equipment: goneEquipment,
         } = loaded.dropped
@@ -407,6 +408,18 @@ export default function InstanceBuilder({
               // No 's': the word is already a plural.
               ...part(goneEquipment, 'piece of equipment', 'pieces of equipment'),
             ].join(', ')} — deleted from the catalog.`,
+            'error'
+          )
+        }
+        // ROOMS THE CATALOG DOES NOT PLACE — said separately, because they went
+        // for a different reason and it is a reason worth reading: an option may
+        // only hold what the catalog offers, and these were added back when it
+        // could hold anything. See loadInstanceData, which also says what stops
+        // it doing this when it cannot see the catalog.
+        if (unplaced > 0) {
+          onToast?.(
+            `Removed ${unplaced} room${unplaced === 1 ? '' : 's'} this department's catalog no longer places. ` +
+              'Add them on the Tree tab if they belong there.',
             'error'
           )
         }

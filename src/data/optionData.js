@@ -203,7 +203,7 @@ import {
   FLOOR_AREA,
   GROSSING,
 } from './factors.js'
-import { deptNodeIndex } from './tree.js'
+import { catalogRoomsForNode, deptNodeIndex } from './tree.js'
 
 export const SCHEMA_VERSION = 16
 
@@ -339,6 +339,9 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
     unanchored: (data?.departments ?? []).length - rows.length,
     departments: 0,
     rooms: 0,
+    // Rooms the catalog does not place — see AN OPTION HOLDS WHAT THE CATALOG
+    // OFFERS below. Counted apart from `rooms`, which is a deleted definition.
+    unplaced: 0,
     objects: 0,
     equipment: 0,
   }
@@ -377,6 +380,35 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
     return false
   }
 
+  // AN OPTION HOLDS WHAT THE CATALOG OFFERS, AND NOTHING ELSE.
+  //
+  // A room could once be added from "All rooms", anchored to no placement at
+  // all. That is no longer allowed — the panel draws the catalog's list and a
+  // room outside it has nowhere to be drawn — so such rooms are DROPPED on load
+  // and written out gone by the next save.
+  //
+  //   >>> THIS IS DESTRUCTIVE AND IT WAS AGREED. It takes the room's measured
+  //   >>> area, its objects, its notes and every override on it, for every
+  //   >>> option holding one, and there is no history behind a jsonb write.
+  //   >>> `node scripts/backupData.js` before deploying a change to this rule.
+  //
+  // TWO GUARDS, BOTH LOAD-BEARING:
+  //
+  //   1. NO CATALOG, NO PRUNING. `sections` absent or empty is "did not ask",
+  //      not "asked, and there are none" — the same distinction pruneTree draws
+  //      for equipment. Without this one failed catalog fetch would empty every
+  //      option in the database on its next save.
+  //   2. A DEPARTMENT WHOSE OWN NODE IS GONE KEEPS ITS ROOMS. That placement was
+  //      deleted, which says nothing about the rooms; the pane already reports
+  //      it as "(no longer in the tree)". Pruning there would throw away a whole
+  //      department's work because one catalog node went.
+  const asked = Array.isArray(catalog.sections) && catalog.sections.length > 0
+  const placedIn = (treeNodeId) => {
+    if (!asked) return null
+    const placements = catalogRoomsForNode(catalog.sections, treeNodeId)
+    return placements ? new Set(placements.map((n) => n.instance_id)) : null
+  }
+
   const departments = rows
     .filter((d) => keep(departmentDefs, d.department_def_id, 'departments'))
     .map((d) => {
@@ -401,6 +433,12 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
         ),
         rooms: (d.rooms ?? [])
           .filter((r) => keep(roomDefs, r.room_def_id, 'rooms'))
+          .filter((r) => {
+            const placed = placedIn(d.tree_node_id)
+            if (!placed || placed.has(r.tree_room_node_id)) return true
+            dropped.unplaced += 1
+            return false
+          })
           .map((r) => {
             const roomDef = roomDefs.find((x) => x.id === r.room_def_id)
             return {

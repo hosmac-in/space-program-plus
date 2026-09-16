@@ -126,6 +126,20 @@ body {
   border-bottom: 1px solid currentColor !important;
 }
 
+/* A room group's name, which is the one field in this app that opens EMPTY —
+ * a group is made first and named second, so the placeholder is the whole of
+ * what it says at that moment.
+ *
+ * Grey italic rather than the field's own ink: it is not a value, and a
+ * placeholder in the same ink as a typed name reads as one. A group card takes
+ * no function colour (see RoomGroupBlock), so unlike everything else on these
+ * headers a fixed grey is safe here — there is no unknown hue under it. */
+.spp-group-field::placeholder {
+  color: #999;
+  font-style: italic;
+  opacity: 1;
+}
+
 /* A carousel scrolls but shows no bar: the arrows at its ends and the wheel say
  * it is scrollable, and a bar under a one-line strip of cards is most of the
  * strip's height. Scrolling itself is untouched — this hides the bar only. */

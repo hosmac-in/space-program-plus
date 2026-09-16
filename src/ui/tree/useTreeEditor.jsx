@@ -457,6 +457,42 @@ export function useTreeEditor() {
     return true
   }), [])
 
+  // ROOM GROUPS: the room list AND the group list, in ONE write.
+  //
+  // Grouping changes both — the chosen rooms move together and take a new
+  // `room_group_id`, and the group itself is appended — so it cannot be two
+  // actions. Two would be two whole-section writes of a shared catalog, two undo
+  // steps, and a state persisted in between holding a group that owns nothing.
+  // See ROOM GROUPS in data/tree.js, which owns the shapes; this only writes
+  // what those builders return.
+  //
+  // `next` is a whole department node. The undo pair snapshots both halves, for
+  // the reason setDeptRooms snapshots its list.
+  const setRoomGrouping = useCallback(serialise(async (deptInstanceId, next, opts = {}) => {
+    const { record = true, message } = opts
+    const { sections } = catalogRef.current
+    const ctx = findDeptContext(sections, deptInstanceId)
+    if (!ctx) return false
+
+    const previous = { rooms: ctx.deptNode.rooms || [], room_groups: ctx.deptNode.room_groups || [] }
+    const taken = { rooms: next.rooms || [], room_groups: next.room_groups || [] }
+    const section = sections.find((s) => s.id === ctx.sectionId)
+    const { tree, found } = updateDeptNode(section.tree || EMPTY_TREE, deptInstanceId, (dept) => ({
+      ...dept,
+      ...taken,
+    }))
+    if (!found || !(await write(ctx.sectionId, tree))) return false
+
+    if (message) pushToast(message)
+    if (record) {
+      pushCommand(
+        () => setRoomGrouping(deptInstanceId, previous, { record: false }),
+        () => setRoomGrouping(deptInstanceId, taken, { record: false })
+      )
+    }
+    return true
+  }), [])
+
   // The catalog's DEFAULT for one of a department's factors — the value an
   // option inherits. A scalar, so the undo pair is the previous and next value.
   // Clearing removes the key rather than writing 1, which is how "the catalog
@@ -517,6 +553,7 @@ export function useTreeEditor() {
     removeDept,
     moveDept,
     setDeptRooms,
+    setRoomGrouping,
     setDeptFactor,
     undo,
     redo,

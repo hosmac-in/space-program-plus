@@ -87,6 +87,9 @@ export const DEPT_HEAD_INSET = (ROW_HEIGHT - DEPT_NAME_ROW) / 2
 // What a card has to be to hold its list. The card must draw at exactly this
 // height or every card below it in the group stops lining up, so the face and
 // both layouts read the one function.
+//
+// It counts ROWS, not rooms: a room group puts a heading in the list too, and a
+// card that grew only by its rooms would clip by one line per group.
 export const departmentCardHeight = (roomCount) =>
   roomCount === 0
     ? DEPT_HEAD_HEIGHT
@@ -243,8 +246,11 @@ export const branchTo = (x, y, clear = ENDPOINT.dot) => {
 // And a room, which is a line of text rather than a box: the branch takes the
 // shorter ROOM_STEP and is capped with a dot, with the name starting past it.
 // ROOM_INDENT is the same measurement read from the list's own left edge.
-export const branchToRoom = (cardX, cardY, i) => ({
-  x: cardX + GUIDE_X + ROOM_STEP,
+//
+// `depth` is 0 for a row hanging off the card and 1 for one inside a ROOM GROUP
+// — the list is two deep at most, because a room group is (see data/tree.js).
+export const branchToRoom = (cardX, cardY, i, depth = 0) => ({
+  x: cardX + GUIDE_X + ROOM_STEP * (depth + 1),
   y: cardY + ROW_HEIGHT + ROOM_LIST_TOP + i * ROOM_LINE_HEIGHT + ROOM_LINE_HEIGHT / 2,
   dot: true,
 })
@@ -252,15 +258,52 @@ export const branchToRoom = (cardX, cardY, i) => ({
 // Where a room's NAME starts inside the list, which is itself inset by ROW_INSET
 // like every other row: the step, then the dot, then the air before the text.
 export const ROOM_INDENT = DEPT_CARET / 2 + ROOM_STEP + GUIDE_DOT / 2 + GUIDE_GAP
+// One more step for a row inside a room group, so its dot lands where
+// branchToRoom puts it at depth 1.
+export const ROOM_GROUP_STEP = ROOM_STEP
+
+// THE WHOLE TREE INSIDE AN OPEN CARD, from its rows. The rows at depth 0 hang
+// off the card's own caret; a ROOM GROUP row is itself the parent of the rows
+// stepped in under it, and takes a dot rather than a caret because the card's
+// caret is what opened the lot.
+//
+// Both canvases call this: the card is drawn once (DepartmentCardFace) and its
+// tree has to be built once too, or the two tabs branch differently to the same
+// list. See data/tree.js for what a room group is.
+export function roomBranches(cardX, cardY, rows) {
+  const at = (i, depth) => branchToRoom(cardX, cardY, i, depth)
+  const top = rows.map((row, i) => ({ row, i })).filter(({ row }) => !row.depth)
+  const out = [{ ...branchFrom(cardX, cardY, ENDPOINT.caret), children: top.map(({ i }) => at(i, 0)) }]
+
+  top.forEach(({ row, i }) => {
+    if (!row.group) return
+    const children = []
+    for (let j = i + 1; j < rows.length && rows[j].depth; j += 1) children.push(at(j, 1))
+    // A group with nothing under it would be a line ending in air — the one
+    // thing this tree never draws.
+    if (children.length === 0) return
+    const from = at(i, 0)
+    out.push({ x: from.x, y0: from.y, originDot: true, children })
+  })
+  return out
+}
 // One alpha for every segment. The ink is already a PAIRED colour, so it has
 // contrast in hand: 0.35 threw most of it away and the section level all but
 // disappeared, 1 made a hairline out-shout the names it sits under.
 export const GUIDE_ALPHA = 0.55
 
-// The air between a building's core section and the band proper. Wider than
-// GAP because it is the only thing saying the core is not one of the sections
-// in the row — at GAP it read as the first of them.
-export const CORE_GAP = GAP * 2
+// THE AIR BETWEEN TWO SECTIONS, side by side in a building's band. Wider than
+// the GAP between boxes stacked INSIDE a section, and deliberately: a section is
+// a whole department list read top to bottom, so the eye has to know where one
+// stops without a rule to tell it. Derived, like CARD_GAP — the relation between
+// the two is what makes the nesting legible.
+export const SECTION_GAP = GAP * 3
+
+// The air between a building's core section and the band proper. It is the only
+// thing saying the core is not one of the sections in the row, so it has to be
+// wider than the air BETWEEN those sections — derived from it for that reason,
+// or widening the row silently turns the core into the first of them.
+export const CORE_GAP = SECTION_GAP * 1.5
 
 // A building's heading is a title, not a card header — see CanvasBandHeading.
 // It gets its own height because 30px cannot hold 30px type.
@@ -364,11 +407,11 @@ export function layoutRowBox(boxes, labelHeight = LABEL_HEIGHT) {
   let runningX = 0
   const placed = boxes.map((box) => {
     const x = runningX
-    runningX += box.width + GAP
+    runningX += box.width + SECTION_GAP
     return { ...box, x, y: contentTop }
   })
 
-  const contentRight = boxes.length === 0 ? NODE_WIDTH + PADDING * 2 : runningX - GAP
+  const contentRight = boxes.length === 0 ? NODE_WIDTH + PADDING * 2 : runningX - SECTION_GAP
   const tallest = boxes.length === 0 ? EMPTY_HEIGHT : Math.max(...boxes.map((b) => b.height))
 
   return {

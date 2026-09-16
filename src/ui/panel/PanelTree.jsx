@@ -56,9 +56,14 @@ export const BRANCH_X = BRANCH_SPINE_X + ROOM_STEP
 // text at 3px reads as part of the text.
 export const BRANCH_MARGIN = 8
 
-// A box's own column, from its left edge: half a ring, so the ring the branch
-// lands on sits exactly inside the box rather than hanging off it.
-export const BOX_SPINE_X = CARET_RING / 2
+// A box's own column, from its left edge. Half a ring puts the ring exactly
+// inside the box — and exactly AGAINST its edge, which is what made every card
+// read as cramped: the caret touched the left wall and the name started a ring's
+// width later with nothing either side of it. Half the standard margin again
+// gives the ring air inside its own box, and every card gets it from this one
+// number: it sets where the branch lands, where the name starts after it, and
+// how far in the box's own body begins.
+export const BOX_SPINE_X = CARET_RING / 2 + BRANCH_MARGIN / 2
 // How far a child BOX is inset, so that column lands directly under the caret
 // its branch ended on and the line carries on inside it.
 export const BRANCH_BOX = BRANCH_X - BOX_SPINE_X
@@ -286,6 +291,13 @@ export function Branch({
   // prompts.
   onRemove,
   removeTitle = removeHint(),
+  // A + STANDING ON THE BRANCH'S END, for a ghost: the thing the tree points at
+  // is the thing you press. Drawn by the tree, like the caret and for the same
+  // reason — the line and the control it lands on cannot be placed by two
+  // components and be relied on to meet. (The pickers use `endpoint="add"` with
+  // no node here and put their own + in the content flow, which is why this is
+  // optional rather than derived from the endpoint.)
+  add = null,
   // Where this row's content starts. Defaulted from the terminator, so a caller
   // states it only to put something of its own on the branch's end — which is
   // what an add button does — or to hand the branch a BOX to enter.
@@ -341,6 +353,24 @@ export function Branch({
               cursor: onToggle ? 'pointer' : 'default',
             }}
           />
+        )}
+        {add && (
+          <span
+            style={{
+              position: 'absolute',
+              zIndex: 2,
+              left: endX - ADD_ENDPOINT / 2,
+              top: head ?? 0,
+              marginTop: head == null ? 0 : -ADD_ENDPOINT / 2,
+              width: ADD_ENDPOINT,
+              height: ADD_ENDPOINT,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {add}
+          </span>
         )}
         {children}
       </div>

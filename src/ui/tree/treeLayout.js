@@ -4,12 +4,12 @@
 // ui/canvas/canvasLayout.js. Only what's unique to this tab lives here.
 
 import { functionColours } from '../../data/functions.js'
-import { catalogRoomLabel, compareSections } from '../../data/tree.js'
+import { catalogRoomLabel, compareSections, deptRoomGroups, readRoomGroups } from '../../data/tree.js'
 import {
   branchFrom,
   branchTo,
-  branchToRoom,
   caretAt,
+  roomBranches,
   ENDPOINT,
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
@@ -98,13 +98,32 @@ export function buildTreeLayout(
   // about the room — see data/tree.js. A room whose definition row is gone is
   // dropped here rather than drawn nameless; pruneTree removes it from the
   // document on the next write of the section anyway.
-  const roomsOf = (deptNode) =>
-    (deptNode.rooms || [])
-      .map((node) => {
-        const def = roomById.get(node.room_def_id)
-        return def ? { key: node.instance_id, name: catalogRoomLabel(node) || def.name } : null
-      })
-      .filter(Boolean)
+  //
+  // ROOM GROUPS ARE ROWS TOO — a heading with its rooms stepped in under it, the
+  // same shape the side panel draws. The card lists what a department is made
+  // of, and how it is grouped is part of that. A group whose rooms have all lost
+  // their definitions is left out rather than drawn empty.
+  const nameOf = (node) => {
+    const def = roomById.get(node.room_def_id)
+    return def ? catalogRoomLabel(node) || def.name : null
+  }
+  const roomsOf = (deptNode) => {
+    const rows = []
+    readRoomGroups(deptNode.rooms, deptRoomGroups(deptNode)).forEach((entry) => {
+      if (entry.kind === 'room') {
+        const name = nameOf(entry.room)
+        if (name) rows.push({ key: entry.room.instance_id, name })
+        return
+      }
+      const kids = entry.rooms
+        .map((node) => ({ key: node.instance_id, name: nameOf(node), depth: 1 }))
+        .filter((r) => r.name)
+      if (kids.length === 0) return
+      rows.push({ key: entry.group.instance_id, name: entry.group.name || 'Untitled group', group: true })
+      rows.push(...kids)
+    })
+    return rows
+  }
 
   // A card grows by its list only while that list is OPEN — collapsed is the
   // resting state. The same measure the option canvas uses, so the two tabs draw
@@ -338,10 +357,7 @@ export function buildTreeLayout(
           // A card's rooms are the last level of the tree, and only while the
           // list is open — a shut card is a leaf.
           if (expandedRooms.has(nodeId) && entry.rooms.length > 0) {
-            branches.push({
-              ...branchFrom(cardX, cardY, ENDPOINT.caret),
-              children: entry.rooms.map((_, i) => branchToRoom(cardX, cardY, i)),
-            })
+            branches.push(...roomBranches(cardX, cardY, entry.rooms))
           }
           nodes.push({
             id: nodeId,

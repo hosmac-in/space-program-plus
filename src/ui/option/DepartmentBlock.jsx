@@ -19,11 +19,12 @@ import { useAnnotations } from './annotations.jsx'
 import { useReadOnly } from '../../readOnly.jsx'
 import {
   catalogRoomDimensions,
-  catalogRoomLabel,
   catalogRoomNode,
   catalogRoomNotes,
   catalogRoomsForNode,
+  deptRoomGroups,
   findDeptContext,
+  readRoomGroups,
   resolveNodePlacement,
   resolveRoomLabel,
 } from '../../data/tree.js'
@@ -49,9 +50,9 @@ import {
   roomWithField,
 } from '../../data/roomEnergy.js'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
-import StripBand from '../panel/StripBand.jsx'
+// Still here for the OBJECT picker inside a room — only the room picker went.
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
-import { useReorderList } from '../primitives/useReorderList.js'
+import StripBand from '../panel/StripBand.jsx'
 import {
   CountField,
   ObjectRow,
@@ -64,11 +65,12 @@ import {
   RoomAreaRow,
   RoomBlock,
   RoomBrief,
+  RoomGroupBlock,
   RoomNotes,
+  GhostBlock,
+  GROUP_ROOM_INSET,
 } from '../panel/panelParts.jsx'
-import { Branch, BRANCH_ORIGIN_CONTENT } from '../panel/PanelTree.jsx'
-import { BLOCK_GAP } from '../panel/panelLayout.js'
-import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
+import { BRANCH_ORIGIN_CONTENT } from '../panel/PanelTree.jsx'
 import RoomEnergyStrip, { SCHEDULES_GROUP } from '../panel/RoomEnergyStrip.jsx'
 
 export default function DepartmentBlock({
@@ -140,19 +142,26 @@ export default function DepartmentBlock({
   const pathTo = (...tail) =>
     formatPath(placement?.buildingName, placement?.sectionName, placement?.groupName, dept.name, ...tail)
 
-  // DRAG A ROOM UP OR DOWN THE LIST. The array's order is what this panel, the
-  // canvas card and every outline draw, so arranging it is the whole edit —
-  // there is no sort key on a room and nothing else has to be touched.
+  // THE CATALOG IS THE LIST, AND ITS ORDER. This pane draws every room the
+  // catalog places in this department — solid where the option has added it,
+  // GHOSTED where it has not — in the catalog's own order and inside the
+  // catalog's own room groups. An option may hold nothing the catalog does not
+  // offer, so there is nothing else that could be in the list and no picker
+  // below it: everything addable is already on screen with a + on its branch.
   //
-  // A department-level change rather than a room-level one: it is the list that
-  // moved, not anything in a room. `draftOf` stringifies the whole rooms array,
-  // so Save Data notices without being told. No coalesce — one drop is one step.
-  const roomOrder = useReorderList({
-    items: dept.rooms,
-    keyOf: (room) => room.instanceId,
-    enabled: !readOnly,
-    onCommit: (rooms) => onDeptChange?.(dept.instanceId, (d) => ({ ...d, rooms })),
-  })
+  //   >>> THE OPTION NO LONGER ARRANGES ITS OWN ROOMS. It could once; the order
+  //   >>> is the catalog's now, so the two tabs read a department the same way
+  //   >>> round. Arranging is done on the Tree tab, for everyone at once.
+  const byAnchor = new Map(dept.rooms.filter((r) => r.treeRoomNodeId).map((r) => [r.treeRoomNodeId, r]))
+  const entries = readRoomGroups(catalogRooms ?? [], deptRoomGroups(catalogDeptNode))
+
+  // ROOMS THE CATALOG NO LONGER ACCOUNTS FOR — anchored to nothing, or to a
+  // placement that has been deleted. loadInstanceData drops these, but it
+  // refuses to when it cannot see the catalog (see the guards there), so they
+  // are drawn rather than silently left out: a room holding an area someone
+  // measured must never be invisible.
+  const anchored = new Set((catalogRooms ?? []).map((n) => n.instance_id))
+  const orphans = dept.rooms.filter((r) => !r.treeRoomNodeId || !anchored.has(r.treeRoomNodeId))
 
   // OBJECTS AND EQUIPMENT ARE ONE LIST ON SCREEN AND TWO IN THE DOCUMENT. To the
   // person filling in a room they are one question — what stands in it — so they
@@ -199,6 +208,317 @@ export default function DepartmentBlock({
         ],
       }
     })
+  }
+
+  // ONE ROOM THE OPTION HAS — drawn wherever the catalog puts it, straight
+  // under the department or inside a room group, which is all `inset` says.
+  const renderRoom = (room, inset) => {
+        // This room's own catalog node: what restricts its object picker, and
+        // what its schedules are inherited from.
+        const catalogRoom = catalogRoomNode(catalogRooms, room.treeRoomNodeId)
+        const catalogObjects = catalogRoom?.objects ?? null
+        const catalogEquipment = catalogRoom?.equipment ?? null
+        // Once per room: the block wears it and the schedule band is painted a
+        // pale wash of it.
+        const roomColours = functionColours(functions, roomDefs.find((d) => d.id === room.defId)?.function_id)
+        // What this room is called, and who said so: this option's label, the
+        // catalog placement's, or the definition's name. Resolved ONCE and
+        // threaded — the header, every title, the confirm dialog and the path
+        // handed to Rhino all read from here.
+        const shown = resolveRoomLabel(catalogRoom, room, room.name)
+        // Everything in this room, in the order it is drawn.
+        const items = itemsOf(room)
+
+        return (
+          <RoomBlock
+            key={room.instanceId}
+            colours={roomColours}
+            // All a room needs to know about sitting one level deeper, inside a
+            // room group — see RoomBlock.
+            inset={inset}
+            name={shown.name}
+            // Renamed by double-clicking the title. What it falls back to is the
+            // catalog's label, or the definition's name — typing that back
+            // stores no override, and emptying the field clears one.
+            //
+            // The commit only changes what is IN MEMORY: this tab writes nothing
+            // until Save Data, which lights up because `draftOf` stringifies the
+            // whole rooms array. '' rather than deleting the key, so the dirty
+            // check compares like with like — see loadInstanceData.
+            inheritedName={shown.inherited ?? room.name}
+            onNameCommit={(label) => onRoomChange(room.instanceId, (r) => ({ ...r, label }))}
+            type={room.type}
+            count={room.count}
+            // What this many of it comes to. The area of ONE is typed on the
+            // RoomAreaRow below, beside the objects it has to hold.
+            totalAreaSqft={(room.areaSqft ?? 0) * room.count}
+            canEdit={!readOnly}
+            onCountChange={(count) =>
+              onRoomChange(
+                room.instanceId,
+                (r) => ({ ...r, count }),
+                // Typing a number is one undo step, however many keystrokes —
+                // the same treatment an object's count gets.
+                { coalesce: `roomCount:${room.instanceId}` }
+              )
+            }
+            onRemove={() =>
+              setConfirmTarget({
+                roomInstanceId: room.instanceId,
+                roomName: shown.name,
+                // Everything standing in the room, so the confirmation says what
+                // removing it actually takes with it.
+                objectCount: itemsOf(room).reduce((s, o) => s + o.count, 0),
+              })
+            }
+            control={annotations?.room?.(room, pathTo(shown.name), shown.name)}
+            countOverride={annotations?.roomCount?.(room, shown.name)}
+            // This option's own note is drawn when the room has one and offered
+            // as a + when it has not. No size: that is the catalog's, and is
+            // authored on the Tree tab. See RoomExtras.
+            hasNote={!!room.notes}
+            canAddNote={!readOnly}
+            // No grip: the order is the catalog's now, and a handle that
+            // rearranged nothing would be worse than none.
+          >
+            {/* What the catalog says about this room's energy, and this
+                option's overrides of it.
+
+                Schedules take no `coalesce`: picking from a list is one step
+                already. Fields do, like a count — they report every keystroke so
+                Save Data answers while you type, and the whole number is still
+                one undo step. Neither persists: like every other room edit here,
+                they wait for Save Data.
+
+                Clearing or resetting removes the override, handing the value
+                back to whatever the catalog says — it does not set the room to
+                zero, or to "no schedule". See data/optionData.js. */}
+            <RoomEnergyStrip
+              canEdit={!readOnly}
+              scheduleRows={resolveRoomSchedules(catalogRoom, room.schedules)}
+              fieldRows={{
+                [LOADS_GROUP]: resolveRoomFields(ROOM_LOADS, LOADS_GROUP, catalogRoom, room),
+                [HVAC_GROUP]: resolveRoomFields(ROOM_HVAC, HVAC_GROUP, catalogRoom, room),
+              }}
+              schedules={schedules}
+              colours={roomColours}
+              roomName={shown.name}
+              onFieldChange={(field, group, value) =>
+                onRoomChange(
+                  room.instanceId,
+                  (r) =>
+                    group === SCHEDULES_GROUP
+                      ? roomWithSchedule(r, field.key, value)
+                      : roomWithField(r, field, group, value),
+                  { coalesce: `${group}:${field.key}:${room.instanceId}` }
+                )
+              }
+              onFieldReset={(field, group) =>
+                onRoomChange(room.instanceId, (r) =>
+                  group === SCHEDULES_GROUP
+                    ? roomWithSchedule(r, field.key, null)
+                    : roomWithField(r, field, group, null)
+                )
+              }
+            />
+
+            {/* What the catalog says about this room, directly above its object
+                list: the size it is usually built to, then the General Note.
+                Both read-only — there is nothing to override, they are simply
+                what the catalog says, read live. */}
+            <RoomBrief {...catalogRoomDimensions(catalogRoom)}>
+              {catalogRoomNotes(catalogRoom) && (
+                <CatalogNote label="General Note:">{catalogRoomNotes(catalogRoom)}</CatalogNote>
+              )}
+            </RoomBrief>
+
+            {/* The room, then what stands in it, then what they leave over. The
+                area of ONE of it is typed here — reported on every keystroke and
+                coalesced, so Save Data answers while you type and the whole
+                number is still one undo step. */}
+            <RoomAreaRow
+              value={room.areaSqft ?? 0}
+              canEdit={!readOnly}
+              title={`Area of one ${shown.name}`}
+              onChange={(areaSqft) =>
+                onRoomChange(room.instanceId, (r) => ({ ...r, areaSqft }), {
+                  coalesce: `roomArea:${room.instanceId}`,
+                })
+              }
+            />
+
+            {/* One list, both arrays — see itemsOf. `instanceId` keys it: it is
+                a uuid, so it is unique across the two without a composite key. */}
+            {items.map((obj) => {
+              const key = listOf(obj.kind)
+              return (
+              <ObjectRow
+                key={obj.instanceId}
+                name={obj.name}
+                type={obj.type}
+                count={obj.count}
+                canEdit={!readOnly}
+                area={obj.areaSqft != null ? obj.areaSqft * obj.count : null}
+                onCountChange={(count) =>
+                  onRoomChange(
+                    room.instanceId,
+                    (r) => ({
+                      ...r,
+                      [key]: (r[key] ?? []).map((o) => (o.instanceId === obj.instanceId ? { ...o, count } : o)),
+                    }),
+                    // Typing a number is one undo step, however many keystrokes.
+                    { coalesce: `count:${obj.instanceId}` }
+                  )
+                }
+                // ALWAYS THROUGH THE PROMPT. The gesture is a right-click on the
+                // branch's end, which is easy to arrive at by accident.
+                onRemove={() =>
+                  setConfirmItem({
+                    roomInstanceId: room.instanceId,
+                    key,
+                    instanceId: obj.instanceId,
+                    name: obj.name,
+                  })
+                }
+              />
+              )
+            })}
+
+            {/* Not an object, drawn as one: what the room's area leaves over
+                once its objects are taken out. Derived on every render from the
+                two figures above it — storing it would let it disagree with
+                them — and red when it goes negative, which means the objects do
+                not fit in the area entered. */}
+            {circulationDef &&
+              (() => {
+                const circulation = circulationSqft(room, circulationDef.id)
+                return (
+                  <ObjectRow
+                    // Named by the sp_object row, not by this file.
+                    name={circulationDef.name}
+                    area={circulation}
+                    canEdit={false}
+                    tone={circulation < 0 ? 'warn' : 'muted'}
+                  />
+                )
+              })()}
+
+            {/* The object picker, and a + for a note if this room has not got
+                one. No + for a size here: the suggested size is a catalog fact,
+                authored on the Tree tab. See RoomAddRow. */}
+            {!readOnly && (
+            <RoomAddRow>
+            {/* ONE PICKER FOR BOTH, in two labelled groups. Two + buttons side
+                by side would ask which of them a thing is before you can look
+                for it, and for most of this catalog that is not obvious. The
+                divider drops itself when filtering leaves nothing under it, so
+                typing a name that only matches equipment shows one group. */}
+            <SearchAddPicker
+              options={[
+                ...objectDefs
+                  .filter((def) => {
+                    // Circulation is what the room has left over, not something
+                    // you put in it — it is already on the row above, derived.
+                    if (circulationDef && def.id === circulationDef.id) return false
+                    if (room.objects.some((o) => o.defId === def.id)) return false
+                    if (!catalogObjects || catalogObjects.length === 0) return true
+                    return catalogObjects.some((o) => o.object_def_id === def.id)
+                  })
+                  .map((def) => ({ ...def, kind: 'object' })),
+                { divider: true, id: 'equipment-divider', label: 'Equipment' },
+                ...equipmentDefs
+                  .filter((def) => {
+                    if ((room.equipment ?? []).some((e) => e.defId === def.id)) return false
+                    // Restricted to the catalog placement's equipment the same
+                    // way objects are, and unrestricted for the same reason: a
+                    // room the catalog says nothing about may hold anything.
+                    if (!catalogEquipment || catalogEquipment.length === 0) return true
+                    return catalogEquipment.some((e) => e.equipment_def_id === def.id)
+                  })
+                  .map((def) => ({ ...def, kind: 'equipment' })),
+              ]}
+              placeholder="Search objects and equipment..."
+              title="Add an object or equipment to this room"
+              label="Add an object"
+              size={16}
+              onAdd={(def) => addToRoom(room.instanceId, def)}
+            />
+            </RoomAddRow>
+            )}
+
+            {/* This option's OWN note — a second note, not an override of the
+                catalog's General Note above. Reported on every keystroke and
+                coalesced, so Save Data lights up as you type and the whole note
+                is still one undo step. */}
+            <RoomNotes
+              note={room.notes ?? ''}
+              canEdit={!readOnly}
+              onChange={(notes) =>
+                onRoomChange(room.instanceId, (r) => ({ ...r, notes }), {
+                  coalesce: `notes:${room.instanceId}`,
+                })
+              }
+            />
+          </RoomBlock>
+        )
+  }
+
+  // A GHOST CARD for a catalog room the option has not added, and for a whole
+  // group of them. Its + is the add — see GhostBlock.
+  const addOne = (node) => onAddRoom?.({ id: node.instance_id, node, def: roomDefs.find((d) => d.id === node.room_def_id) })
+  const nameOf = (node) => {
+    const def = roomDefs.find((d) => d.id === node.room_def_id)
+    return resolveRoomLabel(node, null, def?.name).name
+  }
+
+  // One entry of the catalog's list: a room the option has, a ghost of one it
+  // has not, or a group holding both kinds.
+  const renderEntry = (entry, inset = 0) => {
+    if (entry.kind === 'room') {
+      const room = byAnchor.get(entry.room.instance_id)
+      return room ? (
+        renderRoom(room, inset)
+      ) : (
+        <GhostBlock
+          key={entry.room.instance_id}
+          name={nameOf(entry.room)}
+          inset={inset}
+          onAdd={() => addOne(entry.room)}
+          addTitle={`Add ${nameOf(entry.room)} to this department`}
+        />
+      )
+    }
+
+    const held = entry.rooms.filter((n) => byAnchor.has(n.instance_id))
+    // A group with nothing added is one ghost rather than a card full of them:
+    // its + adds the lot, which is the whole reason a group is a group.
+    if (held.length === 0) {
+      return (
+        <GhostBlock
+          key={entry.group.instance_id}
+          name={entry.group.name || 'Untitled group'}
+          note={`${entry.rooms.length} room${entry.rooms.length === 1 ? '' : 's'}`}
+          inset={inset}
+          onAdd={() => entry.rooms.forEach(addOne)}
+          addTitle={`Add every room in ${entry.group.name || 'this group'}`}
+        />
+      )
+    }
+
+    return (
+      <RoomGroupBlock
+        key={entry.group.instance_id}
+        colours={colours}
+        name={entry.group.name}
+        // Named and dissolved on the Tree tab, where the grouping lives.
+        totalAreaSqft={held.reduce((sum, n) => {
+          const room = byAnchor.get(n.instance_id)
+          return sum + (room.areaSqft ?? 0) * room.count
+        }, 0)}
+      >
+        {entry.rooms.map((n) => renderEntry({ kind: 'room', room: n }, GROUP_ROOM_INSET))}
+      </RoomGroupBlock>
+    )
   }
 
   return (
@@ -393,310 +713,23 @@ export default function DepartmentBlock({
       </StripBand>
       </div>
 
-      {/* For an editor the labelled + below already says the list is empty, and
-          a note between the tree and that + would break the line. */}
-      {readOnly && dept.rooms.length === 0 && <PanelNote>No rooms yet</PanelNote>}
-
-      {/* The wrapper is the drop target, so a drop landing in the 8px gutter
-          between two rooms still counts — see useReorderList. */}
-      <div {...roomOrder.listProps}>
-      {roomOrder.items.map((room, i) => {
-        // This room's own catalog node: what restricts its object picker, and
-        // what its schedules are inherited from.
-        const catalogRoom = catalogRoomNode(catalogRooms, room.treeRoomNodeId)
-        const catalogObjects = catalogRoom?.objects ?? null
-        const catalogEquipment = catalogRoom?.equipment ?? null
-        // Once per room: the block wears it and the schedule band is painted a
-        // pale wash of it.
-        const roomColours = functionColours(functions, roomDefs.find((d) => d.id === room.defId)?.function_id)
-        // What this room is called, and who said so: this option's label, the
-        // catalog placement's, or the definition's name. Resolved ONCE and
-        // threaded — the header, every title, the confirm dialog and the path
-        // handed to Rhino all read from here.
-        const shown = resolveRoomLabel(catalogRoom, room, room.name)
-        // Everything in this room, in the order it is drawn.
-        const items = itemsOf(room)
-
-        return (
-          <RoomBlock
-            key={room.instanceId}
-            colours={roomColours}
-            name={shown.name}
-            // Renamed by double-clicking the title. What it falls back to is the
-            // catalog's label, or the definition's name — typing that back
-            // stores no override, and emptying the field clears one.
-            //
-            // The commit only changes what is IN MEMORY: this tab writes nothing
-            // until Save Data, which lights up because `draftOf` stringifies the
-            // whole rooms array. '' rather than deleting the key, so the dirty
-            // check compares like with like — see loadInstanceData.
-            inheritedName={shown.inherited ?? room.name}
-            onNameCommit={(label) => onRoomChange(room.instanceId, (r) => ({ ...r, label }))}
-            type={room.type}
-            count={room.count}
-            // What this many of it comes to. The area of ONE is typed on the
-            // RoomAreaRow below, beside the objects it has to hold.
-            totalAreaSqft={(room.areaSqft ?? 0) * room.count}
-            canEdit={!readOnly}
-            onCountChange={(count) =>
-              onRoomChange(
-                room.instanceId,
-                (r) => ({ ...r, count }),
-                // Typing a number is one undo step, however many keystrokes —
-                // the same treatment an object's count gets.
-                { coalesce: `roomCount:${room.instanceId}` }
-              )
-            }
-            onRemove={() =>
-              setConfirmTarget({
-                roomInstanceId: room.instanceId,
-                roomName: shown.name,
-                // Everything standing in the room, so the confirmation says what
-                // removing it actually takes with it.
-                objectCount: itemsOf(room).reduce((s, o) => s + o.count, 0),
-              })
-            }
-            control={annotations?.room?.(room, pathTo(shown.name), shown.name)}
-            countOverride={annotations?.roomCount?.(room, shown.name)}
-            // This option's own note is drawn when the room has one and offered
-            // as a + when it has not. No size: that is the catalog's, and is
-            // authored on the Tree tab. See RoomExtras.
-            hasNote={!!room.notes}
-            canAddNote={!readOnly}
-            dragHandleProps={roomOrder.handleProps(room.instanceId)}
-            dragProps={roomOrder.itemProps(room.instanceId)}
-            isDragging={roomOrder.draggingKey === room.instanceId}
-          >
-            {/* What the catalog says about this room's energy, and this
-                option's overrides of it.
-
-                Schedules take no `coalesce`: picking from a list is one step
-                already. Fields do, like a count — they report every keystroke so
-                Save Data answers while you type, and the whole number is still
-                one undo step. Neither persists: like every other room edit here,
-                they wait for Save Data.
-
-                Clearing or resetting removes the override, handing the value
-                back to whatever the catalog says — it does not set the room to
-                zero, or to "no schedule". See data/optionData.js. */}
-            <RoomEnergyStrip
-              canEdit={!readOnly}
-              scheduleRows={resolveRoomSchedules(catalogRoom, room.schedules)}
-              fieldRows={{
-                [LOADS_GROUP]: resolveRoomFields(ROOM_LOADS, LOADS_GROUP, catalogRoom, room),
-                [HVAC_GROUP]: resolveRoomFields(ROOM_HVAC, HVAC_GROUP, catalogRoom, room),
-              }}
-              schedules={schedules}
-              colours={roomColours}
-              roomName={shown.name}
-              onFieldChange={(field, group, value) =>
-                onRoomChange(
-                  room.instanceId,
-                  (r) =>
-                    group === SCHEDULES_GROUP
-                      ? roomWithSchedule(r, field.key, value)
-                      : roomWithField(r, field, group, value),
-                  { coalesce: `${group}:${field.key}:${room.instanceId}` }
-                )
-              }
-              onFieldReset={(field, group) =>
-                onRoomChange(room.instanceId, (r) =>
-                  group === SCHEDULES_GROUP
-                    ? roomWithSchedule(r, field.key, null)
-                    : roomWithField(r, field, group, null)
-                )
-              }
-            />
-
-            {/* What the catalog says about this room, directly above its object
-                list: the size it is usually built to, then the General Note.
-                Both read-only — there is nothing to override, they are simply
-                what the catalog says, read live. */}
-            <RoomBrief {...catalogRoomDimensions(catalogRoom)}>
-              {catalogRoomNotes(catalogRoom) && (
-                <CatalogNote label="General Note:">{catalogRoomNotes(catalogRoom)}</CatalogNote>
-              )}
-            </RoomBrief>
-
-            {/* The room, then what stands in it, then what they leave over. The
-                area of ONE of it is typed here — reported on every keystroke and
-                coalesced, so Save Data answers while you type and the whole
-                number is still one undo step. */}
-            <RoomAreaRow
-              value={room.areaSqft ?? 0}
-              canEdit={!readOnly}
-              title={`Area of one ${shown.name}`}
-              onChange={(areaSqft) =>
-                onRoomChange(room.instanceId, (r) => ({ ...r, areaSqft }), {
-                  coalesce: `roomArea:${room.instanceId}`,
-                })
-              }
-            />
-
-            {/* One list, both arrays — see itemsOf. `instanceId` keys it: it is
-                a uuid, so it is unique across the two without a composite key. */}
-            {items.map((obj) => {
-              const key = listOf(obj.kind)
-              return (
-              <ObjectRow
-                key={obj.instanceId}
-                name={obj.name}
-                type={obj.type}
-                count={obj.count}
-                canEdit={!readOnly}
-                area={obj.areaSqft != null ? obj.areaSqft * obj.count : null}
-                onCountChange={(count) =>
-                  onRoomChange(
-                    room.instanceId,
-                    (r) => ({
-                      ...r,
-                      [key]: (r[key] ?? []).map((o) => (o.instanceId === obj.instanceId ? { ...o, count } : o)),
-                    }),
-                    // Typing a number is one undo step, however many keystrokes.
-                    { coalesce: `count:${obj.instanceId}` }
-                  )
-                }
-                // ALWAYS THROUGH THE PROMPT. The gesture is a right-click on the
-                // branch's end, which is easy to arrive at by accident.
-                onRemove={() =>
-                  setConfirmItem({
-                    roomInstanceId: room.instanceId,
-                    key,
-                    instanceId: obj.instanceId,
-                    name: obj.name,
-                  })
-                }
-              />
-              )
-            })}
-
-            {/* Not an object, drawn as one: what the room's area leaves over
-                once its objects are taken out. Derived on every render from the
-                two figures above it — storing it would let it disagree with
-                them — and red when it goes negative, which means the objects do
-                not fit in the area entered. */}
-            {circulationDef &&
-              (() => {
-                const circulation = circulationSqft(room, circulationDef.id)
-                return (
-                  <ObjectRow
-                    // Named by the sp_object row, not by this file.
-                    name={circulationDef.name}
-                    area={circulation}
-                    canEdit={false}
-                    tone={circulation < 0 ? 'warn' : 'muted'}
-                  />
-                )
-              })()}
-
-            {/* The object picker, and a + for a note if this room has not got
-                one. No + for a size here: the suggested size is a catalog fact,
-                authored on the Tree tab. See RoomAddRow. */}
-            {!readOnly && (
-            <RoomAddRow>
-            {/* ONE PICKER FOR BOTH, in two labelled groups. Two + buttons side
-                by side would ask which of them a thing is before you can look
-                for it, and for most of this catalog that is not obvious. The
-                divider drops itself when filtering leaves nothing under it, so
-                typing a name that only matches equipment shows one group. */}
-            <SearchAddPicker
-              options={[
-                ...objectDefs
-                  .filter((def) => {
-                    // Circulation is what the room has left over, not something
-                    // you put in it — it is already on the row above, derived.
-                    if (circulationDef && def.id === circulationDef.id) return false
-                    if (room.objects.some((o) => o.defId === def.id)) return false
-                    if (!catalogObjects || catalogObjects.length === 0) return true
-                    return catalogObjects.some((o) => o.object_def_id === def.id)
-                  })
-                  .map((def) => ({ ...def, kind: 'object' })),
-                { divider: true, id: 'equipment-divider', label: 'Equipment' },
-                ...equipmentDefs
-                  .filter((def) => {
-                    if ((room.equipment ?? []).some((e) => e.defId === def.id)) return false
-                    // Restricted to the catalog placement's equipment the same
-                    // way objects are, and unrestricted for the same reason: a
-                    // room the catalog says nothing about may hold anything.
-                    if (!catalogEquipment || catalogEquipment.length === 0) return true
-                    return catalogEquipment.some((e) => e.equipment_def_id === def.id)
-                  })
-                  .map((def) => ({ ...def, kind: 'equipment' })),
-              ]}
-              placeholder="Search objects and equipment..."
-              title="Add an object or equipment to this room"
-              label="Add an object"
-              size={16}
-              onAdd={(def) => addToRoom(room.instanceId, def)}
-            />
-            </RoomAddRow>
-            )}
-
-            {/* This option's OWN note — a second note, not an override of the
-                catalog's General Note above. Reported on every keystroke and
-                coalesced, so Save Data lights up as you type and the whole note
-                is still one undo step. */}
-            <RoomNotes
-              note={room.notes ?? ''}
-              canEdit={!readOnly}
-              onChange={(notes) =>
-                onRoomChange(room.instanceId, (r) => ({ ...r, notes }), {
-                  coalesce: `notes:${room.instanceId}`,
-                })
-              }
-            />
-          </RoomBlock>
-        )
-      })}
-      </div>
-
-      {/* Below the rooms, not above them: the list is what the pane is for, and
-          the picker is what you reach for after reading it — the same order an
-          object's picker already sits in inside each room. */}
-      {/* THE PICKER LISTS PLACEMENTS, NOT DEFINITIONS. The same room may sit
-          twice in one department, so a list of definitions could not say which
-          one you meant — and that is what made addRoom guess with `matches[0]`
-          and anchor a room to the wrong catalog node's area and objects.
-
-          Each row is one catalog placement: its label as the name, the
-          definition underneath as the quiet second line SearchAddPicker already
-          draws. "Male Toilet / Toilet" and "Female Toilet / Toilet", and typing
-          "toilet" still finds both.
-
-          Dedup is by the PLACEMENT, never the definition. */}
-      {/* THE LAST BRANCH OF THE DEPARTMENT, with the + standing on its end: the
-          thing the tree points at is the thing you press. */}
-      {!readOnly && (
-      <Branch endpoint="add" head={BLOCK_GAP + ADD_ENDPOINT / 2}>
-      <SearchAddPicker
-        options={[
-          // WHAT THIS DEPARTMENT ALREADY HAS, first: the catalog's own
-          // placements, each with its label as the name and the definition
-          // underneath. One placement may be added once, so the ones already in
-          // the option drop out.
-          ...(catalogRooms ?? []).flatMap((node) => {
-            const def = roomDefs.find((d) => d.id === node.room_def_id)
-            if (!def) return []
-            if (dept.rooms.some((r) => r.treeRoomNodeId === node.instance_id)) return []
-            const label = catalogRoomLabel(node)
-            return [{ id: node.instance_id, name: label || def.name, path: label ? def.name : null, node, def }]
-          }),
-          // Then everything else there is. The catalog says what a department is
-          // USUALLY built from, not what it may contain — a project needing a
-          // room nobody thought to place should not have to go and edit the
-          // catalog first, and a room added this way is anchored to no
-          // placement, so it inherits nothing and states everything itself.
-          { divider: true, id: 'all-rooms', label: 'All rooms' },
-          ...roomDefs.map((def) => ({ id: `def-${def.id}`, name: def.name, node: null, def })),
-        ]}
-        placeholder="Search rooms..."
-        title="Add a room to this department"
-        label="Add a room"
-        size={ADD_ENDPOINT}
-        onAdd={onAddRoom}
-      />
-      </Branch>
+      {/* The catalog places nothing here, so there is nothing to draw and
+          nothing to add — said once rather than left as an empty column. */}
+      {entries.length === 0 && orphans.length === 0 && (
+        <PanelNote>No rooms in this department yet — they are added on the Tree tab.</PanelNote>
       )}
+
+      {entries.map((entry) => renderEntry(entry))}
+
+      {/* Everything the catalog does not account for, last and said plainly —
+          see `orphans`. */}
+      {orphans.map((room) => renderRoom(room, 0))}
+
+      {/* NO PICKER. Every room this department may hold is already drawn — a
+          ghost with a + where the option has not added it — so a search box
+          below the list would be a second way to do the one thing the list
+          already offers, and the only way to add something the catalog does not
+          place. An option holds what the catalog offers and nothing else. */}
 
       {confirmTarget && (
         <ConfirmModal

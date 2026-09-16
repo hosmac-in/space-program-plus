@@ -12,6 +12,7 @@
 
 import AddButton from '../primitives/AddButton.jsx'
 import RemoveButton, { removeHint } from '../primitives/RemoveButton.jsx'
+import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import { AREA_UNIT, formatArea } from '../map/area.js'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
@@ -80,6 +81,33 @@ const BODY = insideBox(BODY_INSET)
 const NAME_SIZE = 22
 const NAME_LEADING = 1.2
 
+// WHAT A SELECTED ROOM WEARS. The blue every selection in this app is drawn in,
+// as a ring OUTSIDE the box — a room's header is painted in its own function
+// colour, and a tint laid over an unknown hue is exactly the thing that cannot
+// be relied on to show (see the note on red text in CLAUDE.md).
+const SELECT_RING = 'rgba(26,115,232,0.85)'
+
+// A ROOM GROUP'S NAME SITS BETWEEN a department's and a room's, because that is
+// where the group itself sits: 16 against 22 above it and 14 below. It was 12 —
+// smaller than the rooms it heads, which read as a caption on them rather than
+// as the thing containing them.
+const GROUP_NAME = 16
+// And the row is as much taller as the type is, so the name is padded like every
+// other header rather than squeezed into a room's height.
+const GROUP_HEAD = ROOM_HEAD + (GROUP_NAME - 14) * 2
+// The group card's own edge. A room block has none — the tree says what it
+// belongs to and the shadow says where it ends — but a group CONTAINS things,
+// and a box with rooms in it has to say where it closes.
+const GROUP_BORDER = 1
+// How far a group's body starts in from its own edge — the tree runs down this,
+// exactly as it does inside a room. See BOX_CONTENT.
+const GROUP_BODY_LEFT = BOX_CONTENT
+// The quiet ink a ghost is drawn in — a card for something the option has not
+// added yet. It sits on the department's pale wash, so a mid grey reads on it
+// without borrowing a colour from the room it stands for.
+const GHOST_INK = '#8a8a8a'
+const GHOST_DASH = '1px dashed #bdbdbd'
+
 // No wrapper is needed for a room's own rows — its parameter band, what the
 // catalog says about it, its area. They are not children, so they register
 // nothing, and the one line simply runs past them on its way to the objects.
@@ -129,6 +157,7 @@ export function formatPath(...names) {
 // editing and everything below is part of it. The ladder, largest first:
 //
 //   22  department name
+//   16  room group name (bold) — between the two, like the group itself
 //   14  room name (bold)
 //   13  object row, the area chain, the department's stats, the path
 //   12  a department's parameter rows; a collapsing band's title, which is
@@ -696,6 +725,20 @@ export function RoomBlock({
   hasNote = false,
   canAddSize = false,
   canAddNote = false,
+  // HOW FAR IN THIS ROOM'S CONTAINER SITS from the box the tree branched out of
+  // — 0 straight under a department, the group body's own inset inside a room
+  // group. It is the ONE number a deeper level needs: the tree's columns are all
+  // measured from the element they are drawn in, so both of this block's follow
+  // from it and everything below (its objects) needs nothing at all.
+  inset = 0,
+  // SELECT SEVERAL ROOMS AND GROUP THEM — the Tree tab only, where the grouping
+  // is authored. A click on the title bar toggles; a right-click on it groups
+  // what is selected. Both absent everywhere else, so the header behaves exactly
+  // as it did.
+  selected = false,
+  onSelect,
+  onGroup,
+  groupHint,
   children,
 }) {
   const [open, setOpen] = useState(false)
@@ -743,8 +786,9 @@ export function RoomBlock({
       // The branch enters the BOX rather than stopping outside it: the block is
       // inset just enough that its own spine column falls under the caret the
       // branch ends on, so the line carries straight on down inside it to the
-      // objects. See BRANCH_BOX.
-      contentAt={BRANCH_BOX}
+      // objects. See BRANCH_BOX — and `inset`, which is all a deeper level moves.
+      endX={insideBox(inset).endX}
+      contentAt={BRANCH_BOX - inset}
       expanded={open}
       onToggle={() => setOpen((v) => !v)}
       title={open ? `Hide what is in ${name}` : `Show what is in ${name}`}
@@ -758,7 +802,11 @@ export function RoomBlock({
         // No outline: the tree says what this belongs to, and the shadow says
         // where it ends. See BLOCK_SHADOW.
         borderRadius: BLOCK_RADIUS,
-        boxShadow: BLOCK_SHADOW,
+        // SELECTED rings the block rather than tinting it: the header is painted
+        // in the room's own function colour and a tint on top of an unknown hue
+        // is the one thing that cannot be relied on to show. The ring is outside
+        // the box, so nothing inside moves when it appears.
+        boxShadow: selected ? `0 0 0 2px ${SELECT_RING}, ${BLOCK_SHADOW}` : BLOCK_SHADOW,
         minWidth: 0,
         // The row being carried is faded where it currently sits, so the gap
         // opening up ahead of it reads as where it is going rather than as a
@@ -767,10 +815,27 @@ export function RoomBlock({
       }}
     >
       <div
+        // CLICK THE TITLE BAR TO SELECT, right-click to group what is selected.
+        // Nothing else uses either gesture on this strip — opening is the caret,
+        // renaming is a double-click (which nets two toggles and so leaves the
+        // room as it was), and the count field and the grip stop their own
+        // events. Absent on every panel but the one that authors groups.
+        onClick={onSelect ? () => onSelect() : undefined}
+        onContextMenu={
+          onGroup
+            ? (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onGroup()
+              }
+            : undefined
+        }
+        title={groupHint}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 6,
+          cursor: onSelect ? 'pointer' : undefined,
           // ONE HEIGHT, because the branch has to meet it at a known point —
           // see ROOM_HEAD. The left inset clears the caret the tree draws over
           // this strip; the right is the block's own, so the area figure lands
@@ -950,6 +1015,232 @@ export function RoomBlock({
         </div>
       )}
     </div>
+    </Branch>
+  )
+}
+
+// A ROOM GROUP — a named box around some of a department's rooms, one level
+// deep. The shape and the rules are in data/tree.js under ROOM GROUPS; this is
+// only how one is drawn, and both panels draw it: the Tree tab authors it, the
+// Project tab shows the same thing without the name field or the dissolve.
+//
+// IT TAKES NO FUNCTION COLOUR. A room group has no sp_function, and inventing
+// one would put a fourth hue in a panel already carrying the department's wash
+// and every room's own. It is the quiet box; the rooms inside stay the loudest
+// thing in it, which is the right way round.
+//
+// IT ARRIVES NAMED. The name is asked for when the group is made, before
+// anything is written — so there is no moment where a group sits unnamed in a
+// catalog everyone reads. Double-click to rename it after, the way a room is
+// renamed; emptying the name is allowed and draws the placeholder, because
+// clearing is a thing someone may mean.
+export function RoomGroupBlock({
+  // THE DEPARTMENT'S colours, not a function of its own — a room group has no
+  // sp_function and inventing one would put a fourth hue in a panel already
+  // carrying the department's wash and every room's. It borrows the department's
+  // because that is whose group it is.
+  colours,
+  name,
+  // Absent on the Project tab, where the grouping is the catalog's to change.
+  onNameCommit,
+  totalAreaSqft,
+  onRemove,
+  removeTitle,
+  children,
+}) {
+  const [open, setOpen] = useState(true)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(name ?? '')
+
+  const commitName = () => {
+    if (!editing) return
+    setEditing(false)
+    onNameCommit?.(draft.trim())
+  }
+
+  const shown = name || 'Untitled group'
+
+  return (
+    <Branch
+      endpoint="caret"
+      padTop={BLOCK_GAP}
+      head={BLOCK_GAP + GROUP_HEAD / 2}
+      contentAt={BRANCH_BOX}
+      expanded={open}
+      onToggle={() => setOpen((v) => !v)}
+      title={open ? `Hide ${shown}` : `Show ${shown}`}
+      onRemove={onRemove}
+      removeTitle={removeTitle}
+    >
+      {/* A CARD, the way a group box is one on the canvas: the rooms inside are
+          things IN something, not things beside each other at a smaller size.
+          White ground with the block shadow, so it lifts off the department's
+          wash exactly as a room does — and NO RIGHT PADDING, which is the one
+          thing that would move every area figure inside it off the datum. */}
+      <div
+        style={{
+          minWidth: 0,
+          background: '#fff',
+          border: `${GROUP_BORDER}px solid ${colours?.inverted.border ?? SUBTLE_RULE}`,
+          borderRadius: BLOCK_RADIUS,
+          boxShadow: BLOCK_SHADOW,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            height: GROUP_HEAD,
+            // The department's own wash, ruled off from the white below: a band
+            // that labels what is under it rather than a second card on top of
+            // one.
+            background: colours?.inverted.background,
+            borderBottom: open ? `1px solid ${colours?.inverted.border ?? SUBTLE_RULE}` : 'none',
+            borderRadius: open
+              ? `${BLOCK_RADIUS - GROUP_BORDER}px ${BLOCK_RADIUS - GROUP_BORDER}px 0 0`
+              : BLOCK_RADIUS - GROUP_BORDER,
+            // The same left inset a room's header takes, so a group's name and a
+            // room's name start on the same vertical; nothing on the right but
+            // the figure, which stays on the panel's datum.
+            padding: `0 ${HEADER_PADDING_RIGHT}px 0 ${BRANCH_CONTENT - BRANCH_BOX - GROUP_BORDER}px`,
+            minWidth: 0,
+            fontSize: GROUP_NAME,
+            fontWeight: 700,
+            // ITALIC, like every other thing this app STATES rather than lets
+            // you edit in place — a group is a heading over its rooms, not one
+            // of them.
+            fontStyle: 'italic',
+            color: '#444',
+          }}
+        >
+          {editing ? (
+            <input
+              className="spp-title-field spp-group-field"
+              autoFocus
+              value={draft}
+              placeholder="write group name"
+              onChange={(e) => setDraft(e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={() => commitName()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+                if (e.key === 'Escape') {
+                  // Abandon before the blur handler can commit it — the same
+                  // guard a room's rename uses.
+                  setEditing(false)
+                  e.currentTarget.blur()
+                }
+              }}
+              style={{
+                flex: '0 1 auto',
+                minWidth: 0,
+                // Wide enough to hold the placeholder, which is longer than most
+                // names anyone types into it.
+                width: `${Math.max(16, draft.length + 1)}ch`,
+                fontFamily: 'inherit',
+                fontSize: 'inherit',
+                fontWeight: 'inherit',
+                color: 'inherit',
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                padding: 0,
+              }}
+            />
+          ) : (
+            <span
+              title={onNameCommit ? `${shown} — double-click to rename` : shown}
+              onDoubleClick={
+                onNameCommit
+                  ? (e) => {
+                      e.stopPropagation()
+                      setDraft(name ?? '')
+                      setEditing(true)
+                    }
+                  : undefined
+              }
+              // An unnamed group says so where its name would be, in the same
+              // grey italic the field's placeholder uses — it is a group waiting
+              // to be named, not a group called nothing.
+              style={{ ...ellipsis, flex: '0 1 auto', ...(name ? null : { fontStyle: 'italic', opacity: 0.6 }) }}
+            >
+              {name || 'write group name'}
+            </span>
+          )}
+          <span style={{ flex: 1, minWidth: 0 }} />
+          {totalAreaSqft != null && (
+            <span title={`Everything in ${shown}`} style={{ ...AREA_FIGURE, color: '#555' }}>
+              {formatArea(totalAreaSqft)} {AREA_UNIT}
+            </span>
+          )}
+        </div>
+
+        {/* LEFT PADDING ONLY. Nothing here sets a width, so the rooms inside
+            still end on the panel's own right edge and every area figure stays
+            on the one datum — a right padding is the single thing that would
+            break that column. */}
+        {open && (
+          <div
+            style={{
+              paddingLeft: GROUP_BODY_LEFT,
+              // The top takes less because each room's own branch already pads
+              // by BLOCK_GAP above it; the bottom has nothing under it, so it
+              // takes both and the rooms sit evenly inside the box.
+              paddingTop: BLOCK_GAP,
+              paddingBottom: BLOCK_GAP * 2,
+              minWidth: 0,
+            }}
+          >
+            {children}
+          </div>
+        )}
+      </div>
+    </Branch>
+  )
+}
+
+// How far a room inside a group is from the box the tree branched out of — what
+// RoomBlock's `inset` wants. The card's border counts: `inset` is measured from
+// the card's OUTER edge, which is where the tree's columns are.
+export const GROUP_ROOM_INSET = GROUP_BODY_LEFT + GROUP_BORDER
+
+// A CARD FOR SOMETHING THE OPTION HAS NOT ADDED YET — a room, or a whole group
+// of them. The catalog says what a department is built from, so the panel draws
+// all of it and marks what is missing; the + on the branch's end adds it.
+//
+// The same idea the option CANVAS already uses for a section, a group or a
+// department it does not hold. Quiet and dashed, so a list of them reads as an
+// outline of what could be there rather than as a list of things that are.
+export function GhostBlock({ name, note, onAdd, addTitle, head = ROOM_HEAD, inset = 0 }) {
+  return (
+    <Branch
+      endpoint="add"
+      padTop={BLOCK_GAP}
+      head={BLOCK_GAP + head / 2}
+      endX={insideBox(inset).endX}
+      contentAt={BRANCH_BOX - inset}
+      add={<AddButton onClick={onAdd} title={addTitle} size={ADD_ENDPOINT} />}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          border: GHOST_DASH,
+          borderRadius: BLOCK_RADIUS,
+          padding: `0 ${HEADER_PADDING_RIGHT}px 0 ${BRANCH_CONTENT - BRANCH_BOX}px`,
+          minWidth: 0,
+          color: GHOST_INK,
+          fontSize: 13,
+          fontStyle: 'italic',
+          minHeight: head,
+        }}
+      >
+        <span style={{ ...ellipsis, flex: '0 1 auto' }}>{name}</span>
+        {note && <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.8 }}>{note}</span>}
+      </div>
     </Branch>
   )
 }

@@ -7,12 +7,20 @@
 
 import { functionColours } from '../../data/functions.js'
 import { buildingAreaSqft } from '../../data/optionData.js'
-import { catalogRoomNode, catalogRoomsForNode, compareSections, resolveRoomLabel } from '../../data/tree.js'
+import {
+  catalogRoomNode,
+  catalogRoomsForNode,
+  compareSections,
+  deptRoomGroups,
+  findDeptContext,
+  readRoomGroups,
+  resolveRoomLabel,
+} from '../../data/tree.js'
 import {
   branchFrom,
   branchTo,
-  branchToRoom,
   caretAt,
+  roomBranches,
   ENDPOINT,
   BUILDING_GAP,
   BUILDING_LABEL_HEIGHT,
@@ -220,13 +228,43 @@ export function buildLayout({
   // resolveRoomLabel, not `r.name` — two placements of one sp_room read "Male
   // Toilet" and "Female Toilet" on the panel and must not read "Toilet" twice
   // here. That chain is defined once, in data/tree.js.
+  //
+  // GROUPED THE WAY THE CATALOG GROUPS THEM, like the panel: the grouping is a
+  // catalog fact and an option reads it live (see ROOM GROUPS in data/tree.js).
+  // Only rooms the option HAS are listed — a card says what is in a department,
+  // not what could be; the panel is where the ghosts are.
   const roomsOf = (d) => {
     const catalogRooms = catalogRoomsForNode(sections, d.treeNodeId)
-    return (d.rooms ?? []).map((r) => ({
+    const deptNode = findDeptContext(sections, d.treeNodeId)?.deptNode ?? null
+    const byAnchor = new Map((d.rooms ?? []).filter((r) => r.treeRoomNodeId).map((r) => [r.treeRoomNodeId, r]))
+    const row = (r, depth) => ({
       key: r.instanceId,
       name: resolveRoomLabel(catalogRoomNode(catalogRooms, r.treeRoomNodeId), r, r.name).name,
       count: r.count ?? 1,
-    }))
+      ...(depth ? { depth } : null),
+    })
+
+    const rows = []
+    readRoomGroups(catalogRooms ?? [], deptRoomGroups(deptNode)).forEach((entry) => {
+      if (entry.kind === 'room') {
+        const held = byAnchor.get(entry.room.instance_id)
+        if (held) rows.push(row(held, 0))
+        return
+      }
+      const kids = entry.rooms.map((n) => byAnchor.get(n.instance_id)).filter(Boolean)
+      if (kids.length === 0) return
+      rows.push({ key: entry.group.instance_id, name: entry.group.name || 'Untitled group', group: true })
+      kids.forEach((r) => rows.push(row(r, 1)))
+    })
+
+    // Anything the catalog no longer places, last — the same rooms the panel
+    // draws as orphans. loadInstanceData drops them, but never when it cannot
+    // see the catalog, so they must still have somewhere to be.
+    const placed = new Set((catalogRooms ?? []).map((n) => n.instance_id))
+    ;(d.rooms ?? [])
+      .filter((r) => !r.treeRoomNodeId || !placed.has(r.treeRoomNodeId))
+      .forEach((r) => rows.push(row(r, 0)))
+    return rows
   }
 
   departments.forEach((d, i) => {
@@ -656,10 +694,7 @@ export function buildLayout({
             expandedRooms.has(entry.treeNodeId) &&
             entry.rooms.length > 0
           ) {
-            branches.push({
-              ...branchFrom(groupX + x, groupY + y, ENDPOINT.caret),
-              children: entry.rooms.map((_, i) => branchToRoom(groupX + x, groupY + y, i)),
-            })
+            branches.push(...roomBranches(groupX + x, groupY + y, entry.rooms))
           }
           nodes.push({
             // KEYED BY THE PLACEMENT, not by where it happens to sit. These ids

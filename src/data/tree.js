@@ -14,9 +14,14 @@
 //         "department_def_id": "...",  <- which sp_department row
 //         "grossing_factor": 1.3,      <- optional default, see DEFAULTS below
 //         "occupancy_multiplier": 1,   <- optional default
+//         "room_groups": [{            <- optional, see ROOM GROUPS below
+//           "instance_id": "...",
+//           "name": "Consulting"       <- authored here, see the note there
+//         }],
 //         "rooms": [{
 //           "instance_id": "...",
 //           "room_def_id": "...",      <- which sp_room row
+//           "room_group_id": "...",    <- optional, which room_groups entry
 //           "label": "Male Toilet",    <- optional, see A PLACEMENT'S OWN NAME
 //           "area_sqft": 180,          <- optional default, see AREA below
 //           "width_ft": 12,            <- optional, suggestion only, see below
@@ -54,8 +59,9 @@
 //
 // Otherwise only ids are stored — no names. A *_def_id resolves against the
 // definition tables (catalog.jsx) at render, so renaming a room in sp_room
-// updates every placement at once. The one authored name is a room's `label`,
-// which is not a copy of anything — see A PLACEMENT'S OWN NAME below.
+// updates every placement at once. The TWO authored names are a room's `label`
+// and a room group's `name` — neither is a copy of anything — see A PLACEMENT'S
+// OWN NAME and ROOM GROUPS below.
 //
 // COUNTS: OBJECTS HAVE ONE, ROOMS DO NOT
 //
@@ -436,6 +442,179 @@ export function roomWithNotes(room, notes) {
   if (trimmed) next.notes = trimmed
   else delete next.notes
   return next
+}
+
+// --- Room groups --------------------------------------------------------------
+//
+// A department can hold forty rooms, and a flat list of forty is not a thing
+// anyone reads. A ROOM GROUP is a named box around some of them — "Consulting",
+// "Support" — and it is ONE LEVEL DEEP, never nested: a group holds rooms and
+// nothing else.
+//
+// It lives HERE, in the catalog, and nowhere else. `sp_option.data` stores no
+// grouping at all: an option's room is anchored to one of these placements by
+// `tree_room_node_id`, so every option already saved picks the grouping up the
+// moment it is authored — the same live resolution a renamed sp_room gets.
+// Grouping is therefore authored on the TREE TAB alone; the option panel draws
+// the groups and cannot change them.
+//
+//   >>> `room_group_id`, NOT `group_id`. `groups[]` already means the level
+//   >>> ABOVE departments in this same document and `group_def_id` is one
+//   >>> character away. A second meaning of "group" one level below the first is
+//   >>> how the next reader of a dept node gets it wrong.
+//
+//   >>> `name` IS THE SECOND AUTHORED NAME IN THIS DOCUMENT, and it is not the
+//   >>> denormalised name the header forbids — for `label`'s reason exactly.
+//   >>> There is no definition row to copy from: a room group has no table, by
+//   >>> decision, so the name is stated here or nowhere. Do not normalise it
+//   >>> into one.
+//
+// A GROUP IS A CONTIGUOUS RUN of the rooms array. Grouping MOVES the chosen
+// rooms together rather than tagging them where they lie, so the drawing and the
+// stored order are the same thing — which is what keeps the room list's
+// drag-to-arrange preview honest. Drawing a group at its first member and
+// absorbing the rest was the alternative, and it makes several different drag
+// previews render identically and hides a dropped room between two rooms nobody
+// can see.
+//
+// An `room_group_id` pointing at a group that is gone, and a group with no
+// members, are both TOLERATED rather than pruned: pruneTree is not widened (see
+// the warning there), so the room simply draws ungrouped and the empty group
+// draws where it can still be dissolved.
+
+// This department's groups, and which one a room is in. Never null: a
+// department with none is every department before this existed.
+export function deptRoomGroups(deptNode) {
+  return Array.isArray(deptNode?.room_groups) ? deptNode.room_groups : []
+}
+
+export function roomGroupId(roomNode) {
+  return typeof roomNode?.room_group_id === 'string' ? roomNode.room_group_id : null
+}
+
+// THE ROOM LIST AS IT IS DRAWN, in both panels, from the one function:
+//
+//   [{ kind: 'group', group, rooms: [...] } | { kind: 'room', room }]
+//
+// A run of rooms sharing a group becomes that group; anything else is a room in
+// place. A room whose group no longer exists falls through as an ungrouped room,
+// and a group with no run of its own is emitted empty at the end so it can still
+// be named or dissolved — `keepEmpty` is false wherever an empty group would be
+// noise rather than a control (the option panel, which cannot edit them).
+//
+// It takes the ROOMS rather than the department node, because the list on screen
+// is not always the stored one: mid-drag it is the reorder preview, and in an
+// option it is that option's own rooms matched onto these placements.
+export function readRoomGroups(rooms, groups, { keepEmpty = false } = {}) {
+  const byId = new Map((groups ?? []).map((g) => [g.instance_id, g]))
+  const seen = new Set()
+  const out = []
+
+  for (const room of rooms ?? []) {
+    const group = byId.get(roomGroupId(room))
+    if (!group) {
+      out.push({ kind: 'room', room })
+      continue
+    }
+    seen.add(group.instance_id)
+    const last = out[out.length - 1]
+    if (last?.kind === 'group' && last.group.instance_id === group.instance_id) last.rooms.push(room)
+    else out.push({ kind: 'group', group, rooms: [room] })
+  }
+
+  if (keepEmpty) {
+    (groups ?? [])
+      .filter((g) => !seen.has(g.instance_id))
+      .forEach((group) => out.push({ kind: 'group', group, rooms: [] }))
+  }
+  return out
+}
+
+// GROUP THE CHOSEN ROOMS. They are spliced together at the position of the first
+// of them, in the order they already sit in — the selection is a set, not an
+// arrangement, so it must not decide one.
+//
+// IT ARRIVES NAMED. The name is asked for before anything is written, so there
+// is no moment where a group exists unnamed in a catalog everyone reads, and
+// cancelling the question writes nothing at all. (A group made first and named
+// after was the first cut: abandoning the field then left an untitled group one
+// undo step deep, which is a worse default than asking.)
+//
+// Returns `{ deptNode, groupId }` — the id ALONGSIDE the node rather than on it,
+// because anything hung on the node is written into the section's jsonb.
+export function withRoomsGrouped(deptNode, roomInstanceIds, name) {
+  const chosen = new Set(roomInstanceIds)
+  const rooms = deptNode?.rooms ?? []
+  const taken = rooms.filter((r) => chosen.has(r.instance_id))
+  if (taken.length === 0) return { deptNode, groupId: null }
+
+  const group = { instance_id: crypto.randomUUID(), name: typeof name === 'string' ? name.trim() : '' }
+  const at = rooms.findIndex((r) => chosen.has(r.instance_id))
+  const rest = rooms.filter((r) => !chosen.has(r.instance_id))
+
+  return {
+    deptNode: {
+      ...deptNode,
+      room_groups: [...deptRoomGroups(deptNode), group],
+      rooms: [
+        ...rest.slice(0, at),
+        ...taken.map((r) => ({ ...r, room_group_id: group.instance_id })),
+        ...rest.slice(at),
+      ],
+    },
+    groupId: group.instance_id,
+  }
+}
+
+// Blank and whitespace-only are kept as '' rather than deleting the key: an
+// unnamed group is a real state — it is what a group is the moment it is made —
+// and it still has to draw its placeholder and be findable.
+export function withRoomGroupNamed(deptNode, groupId, name) {
+  return {
+    ...deptNode,
+    room_groups: deptRoomGroups(deptNode).map((g) =>
+      g.instance_id === groupId ? { ...g, name: typeof name === 'string' ? name.trim() : '' } : g
+    ),
+  }
+}
+
+// DISSOLVING A GROUP KEEPS ITS ROOMS. They stay exactly where they are in the
+// array, ungrouped — this removes a box, never a room.
+export function withRoomGroupDissolved(deptNode, groupId) {
+  return {
+    ...deptNode,
+    room_groups: deptRoomGroups(deptNode).filter((g) => g.instance_id !== groupId),
+    rooms: (deptNode?.rooms ?? []).map((r) => {
+      if (roomGroupId(r) !== groupId) return r
+      const next = { ...r }
+      delete next.room_group_id
+      return next
+    }),
+  }
+}
+
+// A GROUP'S ROOMS STAY CONTIGUOUS. A drag can leave a room outside its own run;
+// this pulls it back, each group keeping the position of its first member. Run
+// after any reorder, so the list that is written is always the list that can be
+// drawn.
+export function normaliseRoomOrder(rooms) {
+  const out = []
+  const placed = new Set()
+  for (const room of rooms) {
+    if (placed.has(room)) continue
+    const id = roomGroupId(room)
+    if (!id) {
+      out.push(room)
+      continue
+    }
+    rooms
+      .filter((r) => roomGroupId(r) === id)
+      .forEach((r) => {
+        out.push(r)
+        placed.add(r)
+      })
+  }
+  return out
 }
 
 // --- A placement's own name --------------------------------------------------
