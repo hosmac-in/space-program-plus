@@ -66,6 +66,9 @@ import {
   RoomBrief,
   RoomNotes,
 } from '../panel/panelParts.jsx'
+import { Branch, BRANCH_ORIGIN_CONTENT } from '../panel/PanelTree.jsx'
+import { BLOCK_GAP } from '../panel/panelLayout.js'
+import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import RoomEnergyStrip, { SCHEDULES_GROUP } from '../panel/RoomEnergyStrip.jsx'
 
 export default function DepartmentBlock({
@@ -95,6 +98,10 @@ export default function DepartmentBlock({
   onSelectDepartment,
 }) {
   const [confirmTarget, setConfirmTarget] = useState(null)
+  // What a right-click on an object's branch is asking to remove. Separate from
+  // the room's: the two dialogs are open at different moments and say different
+  // things.
+  const [confirmItem, setConfirmItem] = useState(null)
 
   // Whatever a second app wants to say about this department and its rooms.
   // Null in the editor, which is the ordinary case — see ./annotations.jsx.
@@ -208,9 +215,8 @@ export default function DepartmentBlock({
           // stays: a placement the catalog has lost is about this department,
           // not about where you are.
           note={!placement ? '(no longer in the tree)' : null}
-          // Held open even where nothing fills it, so the area figures sit in
-          // the same column in both apps — see PanelHeading.
-          reserveControl
+          // THE ROOT OF THE TREE: the rooms below hang off this line.
+          root
           control={annotations?.department?.(dept, deptArea, pathTo())}
           // What the whole department comes to: every room's area times how
           // many of it, grossed up. The same figure the HUD and the canvas card
@@ -286,6 +292,15 @@ export default function DepartmentBlock({
         />
       </div>
 
+      {/* THE LINE ON ITS WAY DOWN from the department's own dot to its rooms:
+          the phase it is in and the factors it is scaled by are facts about the
+          department, not things in it, so the tree runs past them. */}
+      {/* THE LINE PASSES DOWN THE LEFT of everything between the department's
+          own dot and its first room, so all of it starts clear of that column —
+          which is also why the parameter band no longer bleeds to the shell's
+          edge (`pad={0}`): it sits in the department's column now, with the tree
+          beside it. */}
+      <div style={{ paddingLeft: BRANCH_ORIGIN_CONTENT, minWidth: 0 }}>
       {/* Which phase this pane is editing, stated rather than chosen.
 
           It used to be a <select>, when a department had one phase and its
@@ -311,7 +326,7 @@ export default function DepartmentBlock({
           will be more, and a department that opens as a wall of multipliers
           buries the rooms the panel is actually for. `plain` because the shell
           is already painted in this department's wash — see StripBand. */}
-      <StripBand title="Department Parameters" colours={colours} pad={16} top={12} plain>
+      <StripBand title="Department Parameters" colours={colours} pad={0} top={12} plain>
         {resolveFactors(catalogDeptNode, dept).map((f) => {
           const inherited = f.source === 'inherited'
           return (
@@ -376,13 +391,16 @@ export default function DepartmentBlock({
           )
         })}
       </StripBand>
+      </div>
 
-      {dept.rooms.length === 0 && <PanelNote>No rooms yet</PanelNote>}
+      {/* For an editor the labelled + below already says the list is empty, and
+          a note between the tree and that + would break the line. */}
+      {readOnly && dept.rooms.length === 0 && <PanelNote>No rooms yet</PanelNote>}
 
       {/* The wrapper is the drop target, so a drop landing in the 8px gutter
           between two rooms still counts — see useReorderList. */}
       <div {...roomOrder.listProps}>
-      {roomOrder.items.map((room) => {
+      {roomOrder.items.map((room, i) => {
         // This room's own catalog node: what restricts its object picker, and
         // what its schedules are inherited from.
         const catalogRoom = catalogRoomNode(catalogRooms, room.treeRoomNodeId)
@@ -396,6 +414,8 @@ export default function DepartmentBlock({
         // threaded — the header, every title, the confirm dialog and the path
         // handed to Rhino all read from here.
         const shown = resolveRoomLabel(catalogRoom, room, room.name)
+        // Everything in this room, in the order it is drawn.
+        const items = itemsOf(room)
 
         return (
           <RoomBlock
@@ -515,7 +535,7 @@ export default function DepartmentBlock({
 
             {/* One list, both arrays — see itemsOf. `instanceId` keys it: it is
                 a uuid, so it is unique across the two without a composite key. */}
-            {itemsOf(room).map((obj) => {
+            {items.map((obj) => {
               const key = listOf(obj.kind)
               return (
               <ObjectRow
@@ -536,11 +556,15 @@ export default function DepartmentBlock({
                     { coalesce: `count:${obj.instanceId}` }
                   )
                 }
+                // ALWAYS THROUGH THE PROMPT. The gesture is a right-click on the
+                // branch's end, which is easy to arrive at by accident.
                 onRemove={() =>
-                  onRoomChange(room.instanceId, (r) => ({
-                    ...r,
-                    [key]: (r[key] ?? []).filter((o) => o.instanceId !== obj.instanceId),
-                  }))
+                  setConfirmItem({
+                    roomInstanceId: room.instanceId,
+                    key,
+                    instanceId: obj.instanceId,
+                    name: obj.name,
+                  })
                 }
               />
               )
@@ -640,7 +664,10 @@ export default function DepartmentBlock({
           "toilet" still finds both.
 
           Dedup is by the PLACEMENT, never the definition. */}
+      {/* THE LAST BRANCH OF THE DEPARTMENT, with the + standing on its end: the
+          thing the tree points at is the thing you press. */}
       {!readOnly && (
+      <Branch endpoint="add" head={BLOCK_GAP + ADD_ENDPOINT / 2}>
       <SearchAddPicker
         options={[
           // WHAT THIS DEPARTMENT ALREADY HAS, first: the catalog's own
@@ -665,8 +692,10 @@ export default function DepartmentBlock({
         placeholder="Search rooms..."
         title="Add a room to this department"
         label="Add a room"
+        size={ADD_ENDPOINT}
         onAdd={onAddRoom}
       />
+      </Branch>
       )}
 
       {confirmTarget && (
@@ -680,6 +709,22 @@ export default function DepartmentBlock({
         >
           Remove "{confirmTarget.roomName}" and its {confirmTarget.objectCount} object
           {confirmTarget.objectCount === 1 ? '' : 's'}? You can undo this after.
+        </ConfirmModal>
+      )}
+
+      {confirmItem && (
+        <ConfirmModal
+          title="Remove from this room?"
+          onConfirm={() => {
+            onRoomChange(confirmItem.roomInstanceId, (r) => ({
+              ...r,
+              [confirmItem.key]: (r[confirmItem.key] ?? []).filter((o) => o.instanceId !== confirmItem.instanceId),
+            }))
+            setConfirmItem(null)
+          }}
+          onCancel={() => setConfirmItem(null)}
+        >
+          Remove "{confirmItem.name}"? You can undo this after.
         </ConfirmModal>
       )}
     </PanelShell>

@@ -8,6 +8,7 @@ import { NODE_HEIGHT, NODE_WIDTH, PADDING } from './treeLayout.js'
 import { DEPTH } from '../canvas/canvasLayout.js'
 import { guideNodeTypes } from '../canvas/CanvasGuides.jsx'
 import { BandRow } from '../primitives/Band.jsx'
+import { removeHint } from '../primitives/RemoveButton.jsx'
 
 // How long a group's collapse runs. Exported because TreeCanvas has to hold the
 // class below for exactly as long as the rule it switches on.
@@ -103,7 +104,7 @@ function HDepartmentCard({ data }) {
         expanded={data.roomsExpanded}
         onToggleRooms={data.onToggleRooms}
         onRemove={data.onRemove}
-        removeTitle="Right-click to remove from this group"
+        removeTitle={removeHint('from this group')}
       />
     </CanvasCard>
   )
@@ -128,7 +129,7 @@ function HGroupBoxCard({ data }) {
       onToggleCollapse={data.onToggleCollapse}
       depth={DEPTH.group}
       onRemove={data.onRemove}
-      removeTitle="Right-click to remove from this section"
+      removeTitle={removeHint('from this section')}
     >
       {data.isEmpty && data.canEdit && (
         <div style={{ padding: `0 ${PADDING}px`, fontSize: 11, opacity: 0.7, color: data.colours.color }}>

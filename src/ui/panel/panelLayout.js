@@ -44,24 +44,16 @@ export const CONTROL_SLOT = 18
 //   >>> as a different screen rather than the same one with a control added.
 export const ANNOTATION_SLOT = 30
 
-// THE COLUMN EVERY ROW ENDS WITH, and the reason every sqft figure in the panel
-// lines up: the department heading, a room's header, a room's own area row and
-// every object row reserve this same trailing width, whatever they put in it —
-// a ×, an annotation, or nothing at all.
+// >>> NO ROW RESERVES A CONTROL COLUMN ANY MORE, and nothing should add one
+// back. There is no × in this panel: removal is a RIGHT-CLICK on the end of a
+// row's own branch, which always prompts (see PanelTree.jsx and the canvases,
+// which settled it first). A second app's annotation is simply the last thing in
+// the row when there is one, and in the editor there never is — so every sqft
+// figure ends on the panel's own right edge, which cannot drift.
 //
-// It is the ANNOTATION slot's width, not the ×'s, because the widest thing that
-// can appear here sets the column. Reserving the smaller one and widening it
-// only where an annotation exists is what made the figures sit 12px further
-// left in the Companion than in the editor, and the heading's area chain sit
-// left of the very rooms it totals, in both.
-//
-//   >>> One number. A row that reserves CONTROL_SLOT instead — or nothing —
-//   >>> takes itself out of the column, and there is no way to see that except
-//   >>> by looking at the panel.
-//
-// Declared after ANNOTATION_SLOT, not before: a const read above its own
-// declaration throws at import time and takes the whole app to a blank page.
-export const TRAILING_SLOT = ANNOTATION_SLOT
+// The old trailing column had to be both the datum and the control slot. Each
+// side has one job now: the tree and its + down the left, the figures down the
+// right.
 
 // Divides one kind of statement from another INSIDE a room's body — the room's
 // own generic size from the objects standing in it, one energy section from the
@@ -104,10 +96,17 @@ export const PAIR_WIDTH = 108
 // coloured header are what separate one room from the next, so the padding does
 // not also have to.
 export const BLOCK_PADDING = 10
-// The horizontal inset matches BLOCK_PADDING so the header's right-hand columns
-// end where the body's do — the areas below have to line up with the area
-// above them. CHANGE THE TWO TOGETHER.
-export const HEADER_PADDING = '5px 10px'
+// The header's right-hand inset matches BLOCK_PADDING so its columns end where
+// the body's do — the areas below have to line up with the area above them.
+// CHANGE THE TWO TOGETHER. The LEFT inset is the tree's (see PanelTree.jsx): the
+// branch lands on a caret drawn over this strip, and the name starts clear of it.
+export const HEADER_PADDING_RIGHT = 10
+
+// ONE HEIGHT FOR A ROOM'S HEADER, fixed rather than sized to its own text: the
+// tree has to know where the branch meets the row (PanelTree.jsx), and a header
+// that grew with its name would give a different answer on every room. The
+// canvas settled the same thing for the same reason — see ROW_HEIGHT there.
+export const ROOM_HEAD = 28
 // The air above a row that opens a new kind of statement — a room block under
 // the one before it, a note under the objects.
 export const BLOCK_GAP = 6
@@ -122,3 +121,14 @@ export const BLOCK_GAP = 6
 //   >>> up with.
 export const ROW_PAD = 3
 export const BLOCK_RADIUS = 6
+
+// A ROOM IS LIFTED OFF THE PANEL, NOT OUTLINED ON IT. The tree already says what
+// contains what — a border around every room was a second answer to a question
+// already answered, and a column of them boxed the tree in. The shadow is enough
+// to say where the block ends, which is all the outline was doing.
+//
+// The border is a number rather than a deleted line because the geometry is
+// measured from the block's outer edge: the tree's columns and the body's inset
+// both read it, and putting one back means changing this alone.
+export const BLOCK_BORDER = 0
+export const BLOCK_SHADOW = '0 1px 3px rgba(0,0,0,0.18)'

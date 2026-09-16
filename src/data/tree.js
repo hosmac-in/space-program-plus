@@ -238,10 +238,19 @@ export function pruneTree(tree, { groups = [], departments = [], rooms = [], obj
 // Null sorts last, then by name: a section added straight in the table editor
 // has no order and must still appear, at the end, rather than jumping to the
 // front on a null-is-zero comparison.
+// >>> A DEFINITION ROW'S NAME MAY BE NULL, and every bare string method on one
+// is a blank page. One reached a picker's filter and took the whole app down on
+// the first keystroke; a comparator is the other place it happens, because a
+// list sorts before anything gets to draw it. Null sorts as empty — first, and
+// visible, which is where a row that needs a name belongs.
+//
+// The one definition of it: three lists sorted by name had three copies.
+export const byName = (a, b) => (a?.name ?? '').localeCompare(b?.name ?? '')
+
 export function compareSections(a, b) {
   const ax = a.sort_order ?? Infinity
   const bx = b.sort_order ?? Infinity
-  return ax !== bx ? ax - bx : a.name.localeCompare(b.name)
+  return ax !== bx ? ax - bx : byName(a, b)
 }
 
 // Writes one building's section order, one row per section. Small (a handful of

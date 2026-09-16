@@ -10,6 +10,7 @@ import ReactFlow, { Background, ReactFlowProvider, useNodesState, useReactFlow }
 import CanvasFrame, { useCanvasInput } from '../canvas/CanvasFrame.jsx'
 import 'reactflow/dist/style.css'
 import { useCatalog } from '../../data/catalog.jsx'
+import { byName } from '../../data/tree.js'
 import { buildTreeLayout, NODE_HEIGHT, NODE_WIDTH } from './treeLayout.js'
 import { CARD_GAP, GAP } from '../canvas/canvasLayout.js'
 import { CANVAS_STYLE, COLLAPSE_MS, CarouselRow, nodeTypes } from './treeNodes.jsx'
@@ -25,9 +26,6 @@ const NO_EDGES = []
 // is in flight.
 const DRAG_Z = 1000
 
-function byName(a, b) {
-  return a.name.localeCompare(b.name)
-}
 
 function TreeCanvasInner({
   onSelectDepartment,

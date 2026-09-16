@@ -33,6 +33,11 @@ export default function StripBand({
   // department's PanelShell is 16, and guessing wrong leaves the band inset by
   // the difference on both sides.
   pad = BLOCK_PADDING,
+  // The LEFT inset alone, where that differs — a room's body starts further in
+  // on the left than on the right, because the tree runs down it. Without this
+  // the band bleeds past the block's edge on one side and stops short on the
+  // other.
+  padLeft = pad,
   // A department's shell is ALREADY painted in its wash, so a band painted the
   // same is invisible. `plain` rules it off top and bottom instead and paints
   // nothing — the same band, without a second copy of this file.
@@ -71,10 +76,10 @@ export default function StripBand({
       // caret's turn and the padding's ease off through.
       className="spp-band"
       style={{
-        margin: `${top ?? -pad}px -${pad}px ${pad}px`,
+        margin: `${top ?? -pad}px -${pad}px ${pad}px -${padLeft}px`,
         // The padding eases with the row, or the band gains its last 2px in one
         // frame after the slide has finished.
-        padding: `4px ${pad}px ${open ? 6 : 4}px`,
+        padding: `4px ${pad}px ${open ? 6 : 4}px ${padLeft}px`,
         transition: 'padding 180ms ease',
         color: colours.inverted.color,
         ...skin,

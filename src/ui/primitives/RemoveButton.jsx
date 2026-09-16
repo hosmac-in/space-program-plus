@@ -5,6 +5,21 @@
 // everywhere and nothing has to re-derive the styling. If you need a remove
 // button, import this rather than writing another one.
 
+// THE ONE WORDING FOR THE OTHER REMOVE — the right-click.
+//
+// On both canvases and down the side panel there is no × to aim at: removal is a
+// right-click on the end of a row's own branch, and it always prompts. A gesture
+// with nothing drawn to announce it has to SAY so wherever it is live, and the
+// tooltip is the only thing that can — so every such row builds its hint here
+// rather than spelling its own, which is how three of them came to read three
+// different ways.
+export const removeHint = (what) => `Right click to remove${what ? ` ${what}` : ''}`
+
+// The hint appended to whatever the control already says, for an endpoint that
+// both opens and removes: without it the caret's own title wins on hover and the
+// gesture goes unannounced on exactly the rows that have one.
+export const withRemoveHint = (title, hint) => [title, hint].filter(Boolean).join(' — ')
+
 const RED = 'rgb(247, 112, 112)'
 const RED_HOVER = '#d11d1d'
 const OUTLINE = '#1a1a1a'

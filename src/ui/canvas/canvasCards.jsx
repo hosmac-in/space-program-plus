@@ -28,6 +28,7 @@ import {
 } from './canvasLayout.js'
 import { AREA_UNIT, formatArea } from '../map/area.js'
 import DisclosureCaret from '../primitives/DisclosureCaret.jsx'
+import { withRemoveHint } from '../primitives/RemoveButton.jsx'
 
 // WHAT A DEPARTMENT IS MADE OF, not just how big it is. The figure on a card
 // answers the second question and nothing on either canvas answered the first —
@@ -290,7 +291,10 @@ export function DepartmentCardFace({
               blank
               expanded={expanded}
               onToggle={() => onToggleRooms?.()}
-              title={expanded ? 'Hide rooms' : `Show ${rooms.length} rooms`}
+              // The caret's own title AND the gesture on the column it sits in:
+              // a child's title wins on hover, so without this the right-click
+              // goes unannounced on every row that can open. See withRemoveHint.
+              title={withRemoveHint(expanded ? 'Hide rooms' : `Show ${rooms.length} rooms`, onRemove && removeTitle)}
               size={CARET_RING}
             />
           ) : null)
@@ -439,7 +443,10 @@ export function CanvasContainer({
               blank
               expanded={!isCollapsed}
               onToggle={onToggleCollapse}
-              title={isCollapsed ? `Show what is in ${name}` : `Collapse ${name}`}
+              title={withRemoveHint(
+                isCollapsed ? `Show what is in ${name}` : `Collapse ${name}`,
+                onRemove && removeTitle
+              )}
               size={CARET_RING}
             />
           ) : null)

@@ -26,7 +26,7 @@ import { useCatalog } from '../../data/catalog.jsx'
 import { summarize } from '../../data/optionData.js'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import AddButton from '../primitives/AddButton.jsx'
-import RemoveButton from '../primitives/RemoveButton.jsx'
+import RemoveButton, { removeHint } from '../primitives/RemoveButton.jsx'
 import { useReadOnly } from '../../readOnly.jsx'
 import {
   CanvasBandHeading,
@@ -263,7 +263,7 @@ function DepartmentNodeCard({ data }) {
             ? null
             : () => data.onRequestRemove(data.instanceId, data.name, data.roomCount, data.objectCount)
         }
-        removeTitle="Right-click to remove this department"
+        removeTitle={removeHint('this department')}
       />
     </CanvasCard>
   )
@@ -407,7 +407,7 @@ function ContainerNode({
           ) : null
         }
         onRemove={data.onRemove}
-        removeTitle={`Right-click to remove ${data.name} from this option`}
+        removeTitle={removeHint(`${data.name} from this option`)}
         // The same figure a card carries, at the same size — see CanvasFigure.
         headerRight={<CanvasFigure areaSqft={data.totalAreaSqft} />}
       />

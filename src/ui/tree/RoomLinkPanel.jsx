@@ -15,6 +15,8 @@
 // and object edits wait for Save Data because they belong to an option someone
 // is composing. The chrome is literally the same (ui/panel/panelParts.jsx).
 
+import { useState } from 'react'
+import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { useCatalog } from '../../data/catalog.jsx'
 import {
   catalogObjectCount,
@@ -61,6 +63,9 @@ import {
   RoomBrief,
   RoomNotes,
 } from '../panel/panelParts.jsx'
+import { Branch, BRANCH_ORIGIN_CONTENT } from '../panel/PanelTree.jsx'
+import { BLOCK_GAP } from '../panel/panelLayout.js'
+import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import RoomEnergyStrip, { SCHEDULES_GROUP } from '../panel/RoomEnergyStrip.jsx'
 import StripBand from '../panel/StripBand.jsx'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
@@ -69,6 +74,12 @@ import { useReorderList } from '../primitives/useReorderList.js'
 export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
   const { rooms, objects, equipment, sections, groups, departments, functions, schedules } = useCatalog()
   const editor = useTreeEditorContext()
+
+  // WHAT A RIGHT-CLICK ON A BRANCH IS ASKING TO REMOVE — a room, or one thing
+  // standing in it. It ALWAYS asks: every edit on this tab writes the shared
+  // catalog there and then, and the gesture is easy to arrive at by accident.
+  // Each holds a `confirm` that does the write.
+  const [confirmTarget, setConfirmTarget] = useState(null)
 
   const ctx = selectedDeptInstanceId ? findDeptContext(sections, selectedDeptInstanceId) : null
   const stored = ctx?.deptNode.rooms ?? []
@@ -123,6 +134,8 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
       <PanelHeading
         name={deptDef?.name ?? 'Department'}
         path={formatPath(placement?.sectionName, placement?.groupName)}
+        // THE ROOT OF THE TREE: the rooms below hang off this line.
+        root
       />
 
       {editor.error && <p style={{ color: 'red', fontSize: 12 }}>{editor.error}</p>}
@@ -138,7 +151,12 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
           the same factors, the same rows, so the same component. The Project
           tab adds only what it alone has: the muted/overridden treatment and a
           reset, because nothing sits below the catalog. */}
-      <StripBand title="Department Parameters" colours={colours} pad={16} top={12} plain>
+      {/* THE LINE ON ITS WAY DOWN from the department's own dot to its rooms.
+          The factors it is scaled by are facts about the department, not things
+          in it, so the tree runs past them — clear of the line, which is why the
+          band no longer bleeds to the shell's edge. */}
+      <div style={{ paddingLeft: BRANCH_ORIGIN_CONTENT, minWidth: 0 }}>
+      <StripBand title="Department Parameters" colours={colours} pad={0} top={12} plain>
         {DEPARTMENT_FACTORS.map((factor) => {
           const set = Number.isFinite(ctx.deptNode[factor.treeKey]) ? ctx.deptNode[factor.treeKey] : null
           return (
@@ -166,6 +184,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
           )
         })}
       </StripBand>
+      </div>
 
       {/* The wrapper is the drop target, so a drop landing in the gutter between
           two rooms still counts — see useReorderList. */}
@@ -220,6 +239,8 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 .map((e) => ({ areaSqft: e.def.area_sqft ?? null, count: catalogObjectCount(e.node) })),
             }
             const circulation = circulationSqft(asRoom, circulationDef?.id)
+            // The circulation line only draws once an area has been entered.
+            const showCirculation = circulationDef && areaSqft > 0
 
             return (
               <RoomBlock
@@ -258,10 +279,19 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 dragProps={roomOrder.itemProps(node.instance_id)}
                 isDragging={roomOrder.draggingKey === node.instance_id}
                 onRemove={() =>
-                  write(
-                    stored.filter((r) => r.instance_id !== node.instance_id),
-                    `${shown} removed`
-                  )
+                  setConfirmTarget({
+                    title: 'Remove room?',
+                    // What goes with it, so the dialog says what is actually
+                    // being thrown away.
+                    body: `Remove "${shown}" from this department, and the ${linked.length} thing${
+                      linked.length === 1 ? '' : 's'
+                    } in it? The catalog is shared, so this changes it for everyone — you can undo it after.`,
+                    confirm: () =>
+                      write(
+                        stored.filter((r) => r.instance_id !== node.instance_id),
+                        `${shown} removed`
+                      ),
+                  })
                 }
               >
                 {/* The catalog's schedules, loads and HVAC for this placement —
@@ -370,22 +400,27 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                         }
                         canEdit={canEdit}
                         onRemove={() =>
-                          editRoom(
-                            node.instance_id,
-                            (r) =>
-                              entry.kind === 'equipment'
-                                ? {
-                                    ...r,
-                                    equipment: (r.equipment || []).filter(
-                                      (e) => e.instance_id !== entry.node.instance_id
-                                    ),
-                                  }
-                                : {
-                                    ...r,
-                                    objects: r.objects.filter((o) => o.instance_id !== entry.node.instance_id),
-                                  },
-                            `${entry.def.name} removed`
-                          )
+                          setConfirmTarget({
+                            title: 'Remove from this room?',
+                            body: `Remove "${entry.def.name}" from ${shown}? The catalog is shared, so this changes it for everyone — you can undo it after.`,
+                            confirm: () =>
+                              editRoom(
+                                node.instance_id,
+                                (r) =>
+                                  entry.kind === 'equipment'
+                                    ? {
+                                        ...r,
+                                        equipment: (r.equipment || []).filter(
+                                          (e) => e.instance_id !== entry.node.instance_id
+                                        ),
+                                      }
+                                    : {
+                                        ...r,
+                                        objects: r.objects.filter((o) => o.instance_id !== entry.node.instance_id),
+                                      },
+                                `${entry.def.name} removed`
+                              ),
+                          })
                         }
                       />
                     ))}
@@ -397,7 +432,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                     Only once an area has been entered: without one every room
                     would report its objects back as negative circulation, which
                     is noise rather than a finding. */}
-                {circulationDef && areaSqft > 0 && (
+                {showCirculation && (
                   <ObjectRow
                     name={circulationDef.name}
                     area={circulation}
@@ -470,14 +505,32 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
           room twice in one department is the point — two Toilets, named "Male"
           and "Female" on the row inside each. The filter that used to sit here
           was what made that impossible. */}
+      {/* THE LAST BRANCH OF THE DEPARTMENT, with the + standing on its end: the
+          thing the tree points at is the thing you press. */}
       {canEdit && (
-        <SearchAddPicker
-          options={rooms}
-          placeholder="Search rooms..."
-          title="Add a room to this department"
-          label="Add a room"
-          onAdd={(r) => write([...stored, newRoomNode(r.id)], `${r.name} added`)}
-        />
+        <Branch endpoint="add" head={BLOCK_GAP + ADD_ENDPOINT / 2}>
+          <SearchAddPicker
+            options={rooms}
+            placeholder="Search rooms..."
+            title="Add a room to this department"
+            label="Add a room"
+            size={ADD_ENDPOINT}
+            onAdd={(r) => write([...stored, newRoomNode(r.id)], `${r.name} added`)}
+          />
+        </Branch>
+      )}
+
+      {confirmTarget && (
+        <ConfirmModal
+          title={confirmTarget.title}
+          onConfirm={() => {
+            confirmTarget.confirm()
+            setConfirmTarget(null)
+          }}
+          onCancel={() => setConfirmTarget(null)}
+        >
+          {confirmTarget.body}
+        </ConfirmModal>
       )}
     </PanelShell>
   )

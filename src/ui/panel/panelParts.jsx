@@ -11,22 +11,34 @@
 // their nodes into these props.
 
 import AddButton from '../primitives/AddButton.jsx'
-import RemoveButton from '../primitives/RemoveButton.jsx'
+import RemoveButton, { removeHint } from '../primitives/RemoveButton.jsx'
 import { AREA_UNIT, formatArea } from '../map/area.js'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   AREA_WIDTH,
+  BLOCK_BORDER,
   BLOCK_GAP,
   BLOCK_PADDING,
   BLOCK_RADIUS,
-  HEADER_PADDING,
+  BLOCK_SHADOW,
+  HEADER_PADDING_RIGHT,
   OBJECT_CONTROL,
-  ROOM_CONTROL,
+  ROOM_HEAD,
   ROW_PAD,
   SUBTLE_GAP,
   SUBTLE_RULE,
-  TRAILING_SLOT,
 } from './panelLayout.js'
+import {
+  Branch,
+  BRANCH_BOX,
+  BRANCH_CONTENT,
+  BRANCH_ORIGIN_CONTENT,
+  BranchRoot,
+  BOX_CONTENT,
+  insideBox,
+  TreeLayer,
+  useRootAnchor,
+} from './PanelTree.jsx'
 
 const ellipsis = { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 
@@ -47,30 +59,58 @@ export const AREA_FIGURE = {
   whiteSpace: 'nowrap',
 }
 
-// How far a room block's header content sits inside the panel's own content
-// box: the block's 1px border plus its horizontal padding, which HEADER_PADDING
-// keeps equal to BLOCK_PADDING. A heading that wants to line up with the rooms
-// below it pads by this. Derived rather than written as 13, so it follows if
-// the block's padding ever moves.
-const ROOM_INSET = BLOCK_PADDING + 1
+// How far a room block's RIGHT-hand edge sits inside the panel's own content
+// box: the block's border plus its horizontal padding. The heading pads by this
+// so its area chain ends exactly where a room's area does. Derived rather than
+// written as a number, so it follows if the block's padding ever moves.
+const ROOM_INSET = HEADER_PADDING_RIGHT + BLOCK_BORDER
+
+// HOW FAR A ROOM'S BODY STARTS INSIDE THE BLOCK — wider than BLOCK_PADDING, and
+// on the left alone. The tree carries on inside the room, since the things
+// standing in it are its children, so the line runs down this inset and
+// everything written in the body has to start clear of it. See BOX_CONTENT.
+// Exported for the one thing that bleeds out of that padding and has to know
+// how far: a room's parameter band.
+export const ROOM_BODY_LEFT = BOX_CONTENT + BLOCK_BORDER
+const BODY_INSET = ROOM_BODY_LEFT
+const BODY = insideBox(BODY_INSET)
+
+// The department name — the top of the type ladder below, and the row the tree
+// starts from.
+const NAME_SIZE = 22
+const NAME_LEADING = 1.2
+
+// No wrapper is needed for a room's own rows — its parameter band, what the
+// catalog says about it, its area. They are not children, so they register
+// nothing, and the one line simply runs past them on its way to the objects.
 
 // The box the whole panel sits in, painted with the department's own function
 // colour — the same pale wash its card wears on either canvas, so the pane
-// visibly belongs to the card you clicked.
+// visibly belongs to the card you clicked. No outline: the wash already says
+// where it ends, and an edge around the whole panel boxed the tree in.
+//
+// It is also where THE TREE is drawn, as one object over everything in it — see
+// PanelTree.jsx. A panel with nothing to branch to draws nothing.
 export function PanelShell({ colours, children }) {
   return (
     <div
       style={{
-        border: `2px solid ${colours.inverted.border}`,
         borderRadius: 8,
-        padding: 16,
+        // NO SIDE PADDING. With the outline gone there is nothing to be inset
+        // from: the column this sits in already pads by 16, so a second inset
+        // was 32px of the panel's width spent saying the same thing twice — and
+        // it came out of the room names, which is what the panel is read by. The
+        // wash runs edge to edge and the tree starts in its own column.
+        padding: '16px 0',
         marginBottom: 16,
         background: colours.inverted.background,
         color: colours.inverted.color,
         minWidth: 0,
       }}
     >
-      {children}
+      <TreeLayer>
+        <BranchRoot>{children}</BranchRoot>
+      </TreeLayer>
     </div>
   )
 }
@@ -98,15 +138,18 @@ export function formatPath(...names) {
 // `under` sits below the name INSIDE the name's column, so it runs alongside the
 // stacked figures in `right` rather than below the whole row — two columns of
 // small print reading across from each other, one left-aligned and one right.
-// `control` is an annotation slot (ui/option/annotations.jsx), at the FAR RIGHT
-// in ANNOTATION_SLOT — the same column a room's sits in, so the two line up down
-// the panel and the heading's figures end where a room's area does.
+// `control` is an annotation slot (ui/option/annotations.jsx), last in the row.
+// No column is held open for one: nothing else can appear there — a department
+// is removed on the canvas, not from this panel — so in the editor the figures
+// simply end on the panel's own right edge.
 //
-// `reserveControl` holds that column open whether or not anything fills it. A
-// department is removed on the canvas, not from this panel, so nothing else ever
-// will — and a column that appeared in one app and not the other would move
-// every figure in the panel sideways between them.
-export function PanelHeading({ name, path, note, right, under, control, reserveControl }) {
+// >>> THE TREE STARTS HERE. The department is the root, so the name's row
+// carries the origin dot and the line drops out of it into the rooms below —
+// which is why the row is inset by the tree's own column. `root` is false for a
+// heading with no tree under it (a building's).
+export function PanelHeading({ name, path, note, right, under, control, root = false }) {
+  // The tree measures itself from the NAME's own line — see useRootAnchor.
+  const anchor = useRootAnchor()
   return (
     <div style={{ minWidth: 0 }}>
       {/* Above the name: context is read on the way in, and below the name it
@@ -116,47 +159,47 @@ export function PanelHeading({ name, path, note, right, under, control, reserveC
           path. Nesting the note inside the path swallowed it in the first
           case. */}
       {(path || note) && (
-        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 1, overflowWrap: 'anywhere' }}>
+        <div
+          style={{
+            fontSize: 12,
+            opacity: 0.75,
+            marginBottom: 1,
+            overflowWrap: 'anywhere',
+            // With the name below it, not with the tree's column beside it.
+            paddingLeft: root ? BRANCH_ORIGIN_CONTENT : 0,
+          }}
+        >
           {path}
           {note && <span style={{ marginLeft: path ? 6 : 0, color: '#c17' }}>{note}</span>}
         </div>
       )}
       <div
         style={{
+          position: 'relative',
           display: 'flex',
           alignItems: 'baseline',
           gap: 12,
           minWidth: 0,
-          // A room block's border plus its header's horizontal padding. With
-          // this the heading's right-hand column ends exactly where a room's
-          // does, one level in.
-          paddingRight: reserveControl ? ROOM_INSET : 0,
+          // A room block's border plus its header's right-hand padding. With
+          // this the heading's figures end exactly where a room's area does,
+          // one level in.
+          paddingRight: ROOM_INSET,
+          paddingLeft: root ? BRANCH_ORIGIN_CONTENT : 0,
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.2, overflowWrap: 'anywhere' }}>{name}</div>
+          {/* The row the tree hangs from: its own middle is where the first
+              branch leaves. Nothing states that height — it is measured. */}
+          <div
+            ref={root ? anchor : undefined}
+            style={{ fontSize: NAME_SIZE, fontWeight: 700, lineHeight: NAME_LEADING, overflowWrap: 'anywhere' }}
+          >
+            {name}
+          </div>
           {under}
         </div>
         {right}
-        {reserveControl && (
-          <span
-            style={{
-              width: TRAILING_SLOT,
-              flexShrink: 0,
-              display: 'inline-flex',
-              justifyContent: 'center',
-              // The row's gap is 12 and a room header's is 6; this makes up the
-              // difference, so the figures sit the same distance off the control
-              // in both.
-              marginLeft: -6,
-              // Not on the baseline: the item is a graphic, and it lines up with
-              // the first line of the figures beside it.
-              alignSelf: 'flex-start',
-            }}
-          >
-            {control}
-          </span>
-        )}
+        {control}
       </div>
     </div>
   )
@@ -447,6 +490,11 @@ export function CountField({
 // `tone` is for a row that is not an object at all: the derived circulation
 // line, quiet by default and red when it goes negative — the objects do not fit
 // in the area entered for the room.
+//
+// IT IS A BRANCH OF THE TREE — the things standing in a room are its children,
+// and the line carries on down into them from the caret that opened the room.
+// The row terminates in a dot: there is nothing under an object to open. The
+// caller says nothing about the tree at all; the layer can see the whole list.
 export function ObjectRow({
   name,
   type,
@@ -460,16 +508,14 @@ export function ObjectRow({
   onCountCommit,
   onRemove,
 }) {
+  // No wrapping: the row is narrow, so the name takes whatever the figure on the
+  // right doesn't need and ellipsises rather than pushing it out of the panel.
+  // spp-row highlights the whole row under the pointer, tying the name to the
+  // figure across the gap from it.
   return (
-    // No wrapping: the row is narrow, so the name takes whatever the fixed
-    // controls on the right don't need and ellipsises rather than pushing them
-    // out of the panel.
-    //
-    // spp-row highlights the whole row under the pointer, tying the name to the
-    // figures across the gap from it; spp-hover-reveal brings out the × at the
-    // same moment — see RemoveButton.
+    <Branch {...BODY} onRemove={canEdit ? onRemove : null} removeTitle={removeHint(name)}>
     <div
-      className="spp-row spp-hover-reveal"
+      className="spp-row"
       // paddingBlock, NOT the `padding` shorthand — see the note in
       // EnergyFieldRows: the shorthand resets .spp-row's padding-inline and the
       // row ends up offset by its own negative margin.
@@ -509,23 +555,16 @@ export function ObjectRow({
         )}
       </span>
 
-      {/* Same column as the room's own area in the header above — see
-          AREA_WIDTH. The two have to line up: one is the room, the rest are
-          what is in it. */}
+      {/* LAST IN THE ROW, so it ends on the block's own right edge — the same
+          column the room's area in the header above ends on. The two have to
+          line up: one is the room, the rest are what is in it. */}
       {area !== undefined && (
         <span style={{ ...AREA_FIGURE, color: tone === 'warn' ? '#c11' : '#555' }}>
           {area != null ? `${formatArea(area)} ${AREA_UNIT}` : 'no area'}
         </span>
       )}
-
-      {/* TRAILING_SLOT, not the button's own width — see panelLayout. The × is
-          centred in the column every row ends with, rather than setting it. */}
-      <span style={{ width: TRAILING_SLOT, flexShrink: 0, display: 'inline-flex', justifyContent: 'center' }}>
-        {canEdit && onRemove && (
-          <RemoveButton onRemove={onRemove} title={`Remove ${name}`} size={OBJECT_CONTROL} />
-        )}
-      </span>
     </div>
+    </Branch>
   )
 }
 
@@ -539,9 +578,10 @@ export function ObjectRow({
 // on every other, and left the room's real size — area × count — a figure
 // nothing on screen ever showed.
 //
-// Same three columns as an ObjectRow, so every figure in the block lines up:
-// label, the area in AREA_WIDTH, and the control slot left empty (there is
-// nothing to remove — a room always has an area, even if it is 0).
+// Same two columns as an ObjectRow, so every figure in the block lines up: the
+// label, and the area in AREA_WIDTH ending on the block's own edge. It is the
+// room's own row rather than one of its children, so it carries no branch — the
+// tree runs past it on the way to the objects.
 export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChange, onCommit, title }) {
   return (
     <div
@@ -574,7 +614,6 @@ export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChan
         size="12px"
         title={title ?? 'Area of one of this room'}
       />
-      <span style={{ width: TRAILING_SLOT, flexShrink: 0 }} />
     </div>
   )
 }
@@ -582,6 +621,22 @@ export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChan
 // One room: a coloured header carrying its name, how many of it, and its remove
 // button, then a body holding whatever the caller puts in it — object rows, and
 // its own picker.
+//
+// IT HANGS OFF THE TREE AND IT IS SHUT. The block draws its own branch (see
+// PanelTree.jsx) because the caret at the end of that branch is what opens it,
+// and a line and the control it lands on cannot be drawn by two components and
+// be relied on to meet. The caller says nothing about the tree: the layer sees
+// the whole list, and the line starts at the department's own heading.
+//
+//   >>> SHUT IS THE RESTING STATE, the same call the canvas card's room list
+//   >>> made. A department of twelve rooms, each with its parameter band, its
+//   >>> objects and its notes, is the detail view — not the one a department is
+//   >>> read in. Shut, a room is one row: its name, how many, and its area on
+//   >>> the same datum as every other figure in the panel.
+//
+// The state is local, unlike the canvases' — there a card's height is what the
+// layout stacks the next one by, so an open card would grow over its neighbours.
+// A panel is flow and has no such problem.
 //
 // `count` is optional because only an option has one: how many of a room a
 // program holds is not a catalog fact, so the Tree tab passes none and its
@@ -643,6 +698,7 @@ export function RoomBlock({
   canAddNote = false,
   children,
 }) {
+  const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [asked, setAsked] = useState({ size: false, note: false })
@@ -677,12 +733,32 @@ export function RoomBlock({
   }
 
   return (
+    <Branch
+      endpoint="caret"
+      // The air above the block is the branch's padding, not the block's margin:
+      // the spine is drawn down the item, and a margin would fall outside it and
+      // leave a gap in the line between one room and the next.
+      padTop={BLOCK_GAP}
+      head={BLOCK_GAP + ROOM_HEAD / 2}
+      // The branch enters the BOX rather than stopping outside it: the block is
+      // inset just enough that its own spine column falls under the caret the
+      // branch ends on, so the line carries straight on down inside it to the
+      // objects. See BRANCH_BOX.
+      contentAt={BRANCH_BOX}
+      expanded={open}
+      onToggle={() => setOpen((v) => !v)}
+      title={open ? `Hide what is in ${name}` : `Show what is in ${name}`}
+      onRemove={canEdit ? onRemove : null}
+      removeTitle={removeHint(name)}
+    >
     <div
       {...dragProps}
       style={{
-        border: `1px solid ${colours.border}`,
+        position: 'relative',
+        // No outline: the tree says what this belongs to, and the shadow says
+        // where it ends. See BLOCK_SHADOW.
         borderRadius: BLOCK_RADIUS,
-        marginTop: BLOCK_GAP,
+        boxShadow: BLOCK_SHADOW,
         minWidth: 0,
         // The row being carried is faded where it currently sits, so the gap
         // opening up ahead of it reads as where it is going rather than as a
@@ -691,21 +767,27 @@ export function RoomBlock({
       }}
     >
       <div
-        // The header, not the whole block: marking the block would reveal every
-        // object row's × inside it at once — see RemoveButton.
-        className="spp-hover-reveal"
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 6,
-          padding: HEADER_PADDING,
+          // ONE HEIGHT, because the branch has to meet it at a known point —
+          // see ROOM_HEAD. The left inset clears the caret the tree draws over
+          // this strip; the right is the block's own, so the area figure lands
+          // on the panel's datum. Both are less the block's border, which the
+          // tree's columns are measured from the outside of.
+          height: ROOM_HEAD,
+          padding: `0 ${HEADER_PADDING_RIGHT}px 0 ${BRANCH_CONTENT - BRANCH_BOX - BLOCK_BORDER}px`,
           background: colours.background,
           color: colours.color,
           fontWeight: 600,
           minWidth: 0,
-          borderRadius: `${BLOCK_RADIUS - 1}px ${BLOCK_RADIUS - 1}px 0 0`,
+          // Shut, the header IS the block: its bottom corners have to round too,
+          // or the colour squares off inside the block's own radius.
+          borderRadius: open ? `${BLOCK_RADIUS}px ${BLOCK_RADIUS}px 0 0` : BLOCK_RADIUS,
         }}
       >
+
         {/* NOT hover-revealed, unlike the ×. spp-reveal means "this deletes
             something" everywhere in this app, and a second meaning would leave
             it meaning nothing — see CLAUDE.md. It is quiet instead: a grip at
@@ -832,40 +914,43 @@ export function RoomBlock({
           </span>
         )}
 
-        {/* ONE control slot, not two. An annotation takes the slot the × would
-            have had rather than widening the header for a second: an app with
-            something to put here writes nothing, so there is no × to sit beside
-            — see src/readOnly.jsx.
+        {/* An annotation, and NO COLUMN HELD OPEN FOR ONE. There is no × here
+            any more — removal is a right-click on the branch — so the slot that
+            used to hold either of them is gone, and a second app's control is
+            simply the last thing in the row when there is one. In the editor
+            there never is, and the area figure ends on the panel's own edge. */}
+        {control}
 
-            And ONE WIDTH, whichever it holds: the slot used to grow from 18 to
-            30 when an annotation arrived, which moved every area figure in the
-            header 12px left in the Companion and nowhere else. */}
-        <span
+      </div>
+
+      {/* NOT MOUNTED WHILE SHUT, and so not slid open either.
+
+          A band slides because it is a few rows appearing in place. A room's
+          body is the rest of the panel moving, and — the reason that settles it
+          — the tree is MEASURED: rows kept in the layout but clipped still have
+          a position, so the drawing would branch to objects nobody can see, and
+          every frame of a slide would be a stale line. */}
+      {open && (
+        <div
+          // White, so object rows stay legible whatever colour the room's
+          // function paints the header and whatever the panel behind it is
+          // tinted.
           style={{
-            width: TRAILING_SLOT,
-            flexShrink: 0,
-            display: 'inline-flex',
-            justifyContent: 'center',
+            // Wider on the left, where the tree runs — see BODY_INSET. The
+            // RIGHT stays BLOCK_PADDING, because that edge is the datum every
+            // area figure in the panel ends on.
+            padding: `${BLOCK_PADDING}px ${BLOCK_PADDING}px ${BLOCK_PADDING}px ${BODY_INSET}px`,
+            minWidth: 0,
+            background: '#fff',
+            color: '#1a1a1a',
+            borderRadius: `0 0 ${BLOCK_RADIUS}px ${BLOCK_RADIUS}px`,
           }}
         >
-          {control ?? (canEdit && onRemove && <RemoveButton onRemove={onRemove} title={`Remove ${name}`} size={ROOM_CONTROL} />)}
-        </span>
-      </div>
-
-      {/* White, so object rows stay legible whatever colour the room's function
-          paints the header and whatever the panel behind it is tinted. */}
-      <div
-        style={{
-          padding: BLOCK_PADDING,
-          minWidth: 0,
-          background: '#fff',
-          color: '#1a1a1a',
-          borderRadius: `0 0 ${BLOCK_RADIUS - 1}px ${BLOCK_RADIUS - 1}px`,
-        }}
-      >
-        <RoomExtras.Provider value={extras}>{children}</RoomExtras.Provider>
-      </div>
+          <RoomExtras.Provider value={extras}>{children}</RoomExtras.Provider>
+        </div>
+      )}
     </div>
+    </Branch>
   )
 }
 
@@ -1030,6 +1115,9 @@ function useRoomExtras() {
 // room has not got yet. One row, because they are the same kind of act — "this
 // room also has a…" — and three separate lines of + would be taller than the
 // fields they are hiding.
+//
+// IT IS THE LAST BRANCH, and the + stands on its end: the thing the tree is
+// pointing at is the thing you press. The canvas's ghost + is the same idea.
 export function RoomAddRow({ children }) {
   const extras = useRoomExtras()
   const offers = [
@@ -1037,7 +1125,15 @@ export function RoomAddRow({ children }) {
     extras?.canAddNote && !extras.showNote && { key: 'note', label: 'Add note', onClick: extras.revealNote },
   ].filter(Boolean)
 
+  // The + is an object's size here rather than a room's, so it takes the
+  // branch's end at its own half-width.
   return (
+    <Branch
+      {...BODY}
+      endpoint="add"
+      head={BLOCK_GAP + OBJECT_CONTROL / 2}
+      contentAt={BODY.endX - OBJECT_CONTROL / 2}
+    >
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', minWidth: 0 }}>
       {children}
       {offers.map((offer) => (
@@ -1052,6 +1148,7 @@ export function RoomAddRow({ children }) {
         </span>
       ))}
     </div>
+    </Branch>
   )
 }
 

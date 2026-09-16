@@ -35,6 +35,7 @@ import { LOADS_GROUP, HVAC_GROUP, CONDITIONED_KEY } from '../../data/roomEnergy.
 import { schedulesForRole } from '../../data/schedules.js'
 import EnergyFieldRows from './EnergyFieldRows.jsx'
 import StripBand from './StripBand.jsx'
+import { ROOM_BODY_LEFT } from './panelParts.jsx'
 
 // Which jsonb map a schedule row writes to. Named like a field group so the
 // caller's one handler can route by it.
@@ -154,7 +155,10 @@ export default function RoomEnergyStrip({
     fn && ((field, value) => fn(field, field.group, value === NO_SCHEDULE ? null : value))
 
   return (
-    <StripBand title="Room Parameters" colours={colours}>
+    // padLeft: a room's body starts further in on the left than on the right,
+    // because the tree runs down that side — the band still bleeds to both of
+    // the block's edges. See ROOM_BODY_LEFT.
+    <StripBand title="Room Parameters" colours={colours} padLeft={ROOM_BODY_LEFT}>
       {/* Two columns that stack when the panel is too narrow to hold both — see
           .spp-energy-grid in index.css, which owns the widths, the gap and the
           divider because all three change when it wraps. */}

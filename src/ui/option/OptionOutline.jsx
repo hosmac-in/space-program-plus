@@ -10,7 +10,7 @@
 // added, as ghosts; repeating those here would make the panel a second, worse
 // copy of the canvas rather than a summary of the thing you've built.
 
-import { catalogRoomNode, deptNodeIndex, resolveNodePlacement, resolveRoomLabel } from '../../data/tree.js'
+import { byName, catalogRoomNode, deptNodeIndex, resolveNodePlacement, resolveRoomLabel } from '../../data/tree.js'
 import { functionColours } from '../../data/functions.js'
 import { buildingAreaSqft, departmentAreaSqft } from '../../data/optionData.js'
 import { resolveBuildingFactors } from '../../data/factors.js'
@@ -335,7 +335,7 @@ export default function OptionOutline({
     const inBuilding = placed.filter((p) => p.at?.buildingId === selection.id)
     const ownSections = sections
       .filter((s) => s.building_id === selection.id && sectionIds.includes(s.id))
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort(byName)
 
     return (
       <div style={{ minWidth: 0 }}>

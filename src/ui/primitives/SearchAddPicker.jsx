@@ -55,7 +55,13 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
   // keeps the caller from having to know what the query matched.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const matches = (o) => !q || o.name.toLowerCase().includes(q) || (o.path ?? '').toLowerCase().includes(q)
+    // >>> A NAMELESS OPTION MUST NOT THROW. Every list here is definition rows
+    // straight from the database, and a row with a null name is real data —
+    // a `name.toLowerCase()` on one took the whole app to a blank page on the
+    // first keystroke, which is a worse answer than a row that simply never
+    // matches. Same treatment `path` already had.
+    const matches = (o) =>
+      !q || (o.name ?? '').toLowerCase().includes(q) || (o.path ?? '').toLowerCase().includes(q)
 
     const out = []
     let pending = null
@@ -307,7 +313,12 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                     }}
                     onMouseEnter={() => setActive(row)}
                   >
-                    <div>{opt.name}</div>
+                    {/* A row with no name still has to be a row you can see and
+                        aim at — see the filter above. Drawn as what it is, so
+                        the definition that needs naming can be found. */}
+                    <div style={opt.name ? undefined : { color: '#c17', fontStyle: 'italic' }}>
+                      {opt.name || 'Unnamed'}
+                    </div>
                     {opt.path && (
                       <div style={{ fontSize: 11, color: '#999', overflowWrap: 'anywhere' }}>{opt.path}</div>
                     )}
