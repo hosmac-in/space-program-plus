@@ -6,41 +6,30 @@
 // quietly computes different areas from the panel beside it, which is exactly
 // what `buildingFactors` was doing before this existed.
 //
-// It also holds the 3D diagram, behind `diagram` — see below.
+// It also holds the analysis view, behind `diagram` — see below.
 
-import { lazy, Suspense, useState } from 'react'
+import { useState } from 'react'
 import DepartmentGraph from './DepartmentGraph.jsx'
-
-// LAZY, and that is load-bearing rather than a nicety: a plain import puts
-// three.js (~150 kB gzipped) in the bundle both apps share, and the Companion
-// passes `diagram={false}` — it would pay for a view it has no way to open.
-const OptionDiagram = lazy(() => import('../diagram/OptionDiagram.jsx'))
+import OptionAnalysis from '../diagram/OptionAnalysis.jsx'
 
 // `diagram` is the editor's, not the Companion's. A prop rather than a context
 // because there is exactly one caller either way, and rather than `useReadOnly()`
 // because this is not a permission: the Companion is bound to a document and
-// checks a model against the program, so a second way of drawing that program is
+// checks a model against the program, so a second way of looking at that program is
 // simply not what that app is for.
 export default function OptionCanvas({ workspace, onSelectDepartment, diagram = false }) {
   const { builderState: option, selection, setSelection, selectedDeptInstanceId, selectedPhase, guard } = workspace
 
-  // Which view is showing. Local, and deliberately NOT in the URL: the diagram
-  // is a way of looking at the option you already have open, not a place — and
-  // a shareable link that landed on it would be reporting the viewer's last
-  // glance rather than anything about the option. Reconsider when it can be
-  // orbited to a particular angle, which IS worth sharing.
-  const [showDiagram, setShowDiagram] = useState(false)
+  // Which view is showing. Local, and deliberately NOT in the URL: analysis is
+  // a way of looking at the option you already have open, not a place — and a
+  // shareable link that landed on it would be reporting the viewer's last
+  // glance rather than anything about the option.
+  const [showAnalysis, setShowAnalysis] = useState(false)
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      {showDiagram && diagram ? (
-        <Suspense fallback={<div style={{ padding: 12, fontSize: 13, color: '#999' }}>Loading the model…</div>}>
-          <OptionDiagram
-            departments={option.departments}
-            sectionIds={option.sectionIds}
-            buildingFactors={option.buildingFactors}
-          />
-        </Suspense>
+      {showAnalysis && diagram ? (
+        <OptionAnalysis departments={option.departments} buildingFactors={option.buildingFactors} />
       ) : (
         <DepartmentGraph
           optionName={option.optionName}
@@ -71,7 +60,7 @@ export default function OptionCanvas({ workspace, onSelectDepartment, diagram = 
       {diagram && (
         <button
           type="button"
-          onClick={() => setShowDiagram((v) => !v)}
+          onClick={() => setShowAnalysis((v) => !v)}
           style={{
             position: 'absolute',
             top: 8,
@@ -85,7 +74,7 @@ export default function OptionCanvas({ workspace, onSelectDepartment, diagram = 
             cursor: 'pointer',
           }}
         >
-          {showDiagram ? 'View Plan' : 'View Diagram'}
+          {showAnalysis ? 'View Space Program' : 'View Analysis'}
         </button>
       )}
     </div>

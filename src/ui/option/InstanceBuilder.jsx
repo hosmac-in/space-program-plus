@@ -14,7 +14,7 @@ import {
   resolveNodePlacement,
 } from '../../data/tree.js'
 import { withBuildingFactor } from '../../data/factors.js'
-import { loadProjectWeather } from '../../data/weather.js'
+import { loadProjectSite, loadProjectWeather } from '../../data/weather.js'
 import {
   buildInstanceData,
   DEPARTMENT_FACTORS,
@@ -123,6 +123,8 @@ export default function InstanceBuilder({
   // The project's weather station, copied into every write. Not part of the
   // option state: nothing here edits it, and it must not enter the undo stack.
   const weatherRef = useRef(null)
+  // Same treatment for the project's site and context polygons — see weatherRef.
+  const siteRef = useRef(null)
 
   historyRef.current = history
   presentRef.current = history.present
@@ -259,7 +261,8 @@ export default function InstanceBuilder({
           present.buildingIds,
           present.phaseCount,
           present.buildingFactors,
-          weatherRef.current
+          weatherRef.current,
+          siteRef.current
         ),
         version: at + 1,
       })
@@ -449,6 +452,14 @@ export default function InstanceBuilder({
         weatherRef.current = loaded.weather
         loadProjectWeather(row.project_id).then((w) => {
           if (!cancelled && w) weatherRef.current = w
+        })
+
+        // Same reasoning as the station just above: a separate query that must
+        // never delay or fail the load, keeping whatever was last saved until
+        // it answers.
+        siteRef.current = loaded.site
+        loadProjectSite(row.project_id).then((s) => {
+          if (!cancelled && s) siteRef.current = s
         })
       })
 

@@ -14,6 +14,10 @@
 //       "epw_url": "https://.../IND_Mumbai...epw",   <- Grasshopper reads this
 //       "city": "Mumbai", "source": "ISHRAE"
 //     },
+//     "site": {                        <- the project's site, copied in
+//       "site_geojson": { ... },       <- Grasshopper reads these, same reason
+//       "context_geojson": { ... }     <- as weather: it has no client for sp_project
+//     },
 //     "departments": [{
 //       "instance_id": "...",
 //       "department_def_id": "...",
@@ -131,6 +135,10 @@
 // SCHEMA VERSIONS. Every older row still loads, and absence always means the
 // behaviour that version had, so none of these needs a migration.
 //
+// 17  `site`: the project's site and context polygons, COPIED in on every save
+//     for the same reason `weather` is — Grasshopper reads this document alone
+//     and has no client for `sp_project`. Absent: no site geometry drawn for
+//     the project, which is what every older row means, and is not an error.
 // 16  a room may carry `equipment`, the same shape as `objects` against
 //     sp_equipment. Absent: none, which is what every older row means. A
 //     separate list rather than a wider `objects` because the def-id KEY is what
@@ -205,7 +213,7 @@ import {
 } from './factors.js'
 import { catalogRoomsForNode, deptNodeIndex } from './tree.js'
 
-export const SCHEMA_VERSION = 16
+export const SCHEMA_VERSION = 17
 
 // Re-exported because this is where every other option figure is imported from.
 export {
@@ -240,12 +248,16 @@ export function buildInstanceData(
   buildingIds = [],
   phaseCount = DEFAULT_PHASE_COUNT,
   buildingFactors = {},
-  weather = null
+  weather = null,
+  site = null
 ) {
   return {
     // Copied from the project on every save, not resolved on read: Grasshopper
     // reads this document alone. A project with no station writes no key.
     ...(weather?.epw_url ? { weather } : {}),
+    // Same discipline: copied in, never resolved live, and absent when the
+    // project has none.
+    ...(site?.site_geojson ? { site } : {}),
     // Written as given, not clamped: the builder already holds a valid count,
     // and a legacy option using more phases than the input offers must keep them.
     phase_count: Number.isInteger(phaseCount) && phaseCount > 0 ? phaseCount : DEFAULT_PHASE_COUNT,
@@ -523,6 +535,7 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
     // Read back only so a save that cannot reach the project keeps what is
     // already stored rather than dropping it. The project is the source.
     weather: data?.weather ?? null,
+    site: data?.site ?? null,
   }
 }
 

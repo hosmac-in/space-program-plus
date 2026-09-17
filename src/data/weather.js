@@ -38,6 +38,25 @@ export async function loadProjectWeather(projectId) {
   return { station_id: s.id, epw_url: s.epw_url, city: s.city, source: s.source }
 }
 
+// Same reason and the same shape of caller as loadProjectWeather: the site and
+// context polygons are drawn from `sp_project`, but Grasshopper has no client
+// for that table, so a copy travels in `sp_option.data` alongside the weather
+// station. Read through `sp_project_geojson` (see App.jsx's project list) —
+// the view that turns the PostGIS columns into GeoJSON — not `sp_project`
+// itself, which holds them as geometry. Null on any failure or absence, for
+// the same reason: a site that cannot be read must not stop an option loading
+// or saving.
+export async function loadProjectSite(projectId) {
+  if (!projectId) return null
+  const { data, error } = await supabase
+    .from('sp_project_geojson')
+    .select('site_geojson, context_geojson')
+    .eq('id', projectId)
+    .single()
+  if (error || !data?.site_geojson) return null
+  return { site_geojson: data.site_geojson, context_geojson: data.context_geojson ?? null }
+}
+
 // Mean of the ring's vertices, not a true area centroid: a site is a small
 // polygon and both land inside it, which is all that "which station is nearest"
 // needs. GeoJSON is [lng, lat] — the one thing worth getting wrong once.
