@@ -19,9 +19,11 @@
 //       "context_geojson": { ... }     <- as weather: it has no client for sp_project
 //     },
 //     "area_metrics": {                <- fsi and ground_cover are typed on this
-//       "fsi": 1.5,                    <- option's settings dialog; plot_area_sqft
-//       "ground_cover": 0.4,           <- is measured from site.site_geojson and
-//       "plot_area_sqft": 43560        <- copied in the same way site itself is
+//       "fsi": 1.5,                    <- option's settings dialog; the three
+//       "ground_cover": 0.4,           <- plot_area_* figures are measured from
+//       "plot_area_sqft": 43560,       <- site.site_geojson and copied in the
+//       "plot_area_sqm": 4047.0,       <- same way site itself is
+//       "plot_area_acre": 1.0
 //     },
 //     "departments": [{
 //       "instance_id": "...",
@@ -141,12 +143,17 @@
 // behaviour that version had, so none of these needs a migration.
 //
 // 18  `area_metrics`: `fsi` and `ground_cover`, typed by the person setting up
-//     the option, plus `plot_area_sqft` — COPIED in from `site.site_geojson` on
-//     every save, the same discipline as `site` and `weather` themselves, since
-//     it is a measurement of that geometry rather than a fact this document
-//     invents. Absent: nobody has set either figure, which is what every older
-//     row means. Written only when at least one of the three is known, so an
-//     option nobody has touched this on keeps the payload it always wrote.
+//     the option, plus `plot_area_sqft` / `plot_area_sqm` / `plot_area_acre` —
+//     COPIED in from `site.site_geojson` on every save, the same discipline as
+//     `site` and `weather` themselves, since these are a measurement of that
+//     geometry rather than a fact this document invents. All three units are
+//     stored rather than derived on read, for the reason `siteAreas` computes
+//     all three in ui/map/area.js: this app is stated in sqft (see AREA_UNIT)
+//     but FSI/ground-cover briefs and site records are as often read in sqm or
+//     acres, and Grasshopper has no client to convert on its own. Absent:
+//     nobody has set anything here, which is what every older row means.
+//     Written only when at least one figure is known, so an option nobody has
+//     touched this on keeps the payload it always wrote.
 // 17  `site`: the project's site and context polygons, COPIED in on every save
 //     for the same reason `weather` is — Grasshopper reads this document alone
 //     and has no client for `sp_project`. Absent: no site geometry drawn for
@@ -271,19 +278,25 @@ export function buildInstanceData(
     // Same discipline: copied in, never resolved live, and absent when the
     // project has none.
     ...(site?.site_geojson ? { site } : {}),
-    // `fsi` and `groundCover` are typed here; `plotAreaSqft` is a measurement of
-    // `site.site_geojson`, copied in the same way `site` itself is. Written only
-    // when there is something to say, and each figure only when it is finite —
-    // absence of one must not blank out the others.
+    // `fsi` and `groundCover` are typed here; the three `plotArea*` figures are
+    // a measurement of `site.site_geojson`, copied in the same way `site`
+    // itself is — all three units, not one converted on read, since Grasshopper
+    // reads this document alone. Written only when there is something to say,
+    // and each figure only when it is finite — absence of one must not blank
+    // out the others.
     ...(areaMetrics &&
     (Number.isFinite(areaMetrics.fsi) ||
       Number.isFinite(areaMetrics.groundCover) ||
-      Number.isFinite(areaMetrics.plotAreaSqft))
+      Number.isFinite(areaMetrics.plotAreaSqft) ||
+      Number.isFinite(areaMetrics.plotAreaSqm) ||
+      Number.isFinite(areaMetrics.plotAreaAcre))
       ? {
           area_metrics: {
             ...(Number.isFinite(areaMetrics.plotAreaSqft)
               ? { plot_area_sqft: areaMetrics.plotAreaSqft }
               : {}),
+            ...(Number.isFinite(areaMetrics.plotAreaSqm) ? { plot_area_sqm: areaMetrics.plotAreaSqm } : {}),
+            ...(Number.isFinite(areaMetrics.plotAreaAcre) ? { plot_area_acre: areaMetrics.plotAreaAcre } : {}),
             ...(Number.isFinite(areaMetrics.fsi) ? { fsi: areaMetrics.fsi } : {}),
             ...(Number.isFinite(areaMetrics.groundCover) ? { ground_cover: areaMetrics.groundCover } : {}),
           },
@@ -568,13 +581,15 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
     weather: data?.weather ?? null,
     site: data?.site ?? null,
     // Read back the same way: `fsi` and `groundCover` so the settings dialog
-    // opens on what was last typed, `plotAreaSqft` so a save that cannot
-    // recompute it (no site on the project) keeps the last known figure rather
-    // than dropping it.
+    // opens on what was last typed, the `plotArea*` figures so a save that
+    // cannot recompute them (no site on the project) keeps the last known
+    // values rather than dropping them.
     areaMetrics: {
       fsi: Number.isFinite(data?.area_metrics?.fsi) ? data.area_metrics.fsi : null,
       groundCover: Number.isFinite(data?.area_metrics?.ground_cover) ? data.area_metrics.ground_cover : null,
       plotAreaSqft: Number.isFinite(data?.area_metrics?.plot_area_sqft) ? data.area_metrics.plot_area_sqft : null,
+      plotAreaSqm: Number.isFinite(data?.area_metrics?.plot_area_sqm) ? data.area_metrics.plot_area_sqm : null,
+      plotAreaAcre: Number.isFinite(data?.area_metrics?.plot_area_acre) ? data.area_metrics.plot_area_acre : null,
     },
   }
 }

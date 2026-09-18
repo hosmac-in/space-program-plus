@@ -16,6 +16,14 @@ import {
 import { withBuildingFactor } from '../../data/factors.js'
 import { loadProjectSite, loadProjectWeather } from '../../data/weather.js'
 import { siteAreas } from '../map/area.js'
+
+// siteAreas() names its three units for reading; area_metrics names them for
+// storage (see data/optionData.js) — this is the one place the two vocabularies
+// meet.
+function toPlotArea(areas) {
+  if (!areas) return null
+  return { plotAreaSqft: areas.sqft, plotAreaSqm: areas.sqm, plotAreaAcre: areas.acre }
+}
 import {
   buildInstanceData,
   DEPARTMENT_FACTORS,
@@ -130,10 +138,11 @@ export default function InstanceBuilder({
   const weatherRef = useRef(null)
   // Same treatment for the project's site and context polygons — see weatherRef.
   const siteRef = useRef(null)
-  // The last known plot area, measured from siteRef's geojson. Kept apart from
-  // siteRef itself so a write can fall back to it when the site hasn't resolved
-  // yet — recomputing from null geometry would write the plot area away.
-  const plotAreaSqftRef = useRef(null)
+  // The last known plot area, in all three units siteAreas() gives, measured
+  // from siteRef's geojson. Kept apart from siteRef itself so a write can fall
+  // back to it when the site hasn't resolved yet — recomputing from null
+  // geometry would write the plot area away.
+  const plotAreaRef = useRef(null)
 
   historyRef.current = history
   presentRef.current = history.present
@@ -274,7 +283,7 @@ export default function InstanceBuilder({
           siteRef.current,
           {
             ...present.areaMetrics,
-            plotAreaSqft: siteAreas(siteRef.current?.site_geojson)?.sqft ?? plotAreaSqftRef.current,
+            ...(toPlotArea(siteAreas(siteRef.current?.site_geojson)) ?? plotAreaRef.current ?? {}),
           }
         ),
         version: at + 1,
@@ -453,7 +462,13 @@ export default function InstanceBuilder({
           areaMetrics: { fsi: loaded.areaMetrics?.fsi ?? null, groundCover: loaded.areaMetrics?.groundCover ?? null },
         }
         resetOption(present)
-        plotAreaSqftRef.current = loaded.areaMetrics?.plotAreaSqft ?? null
+        plotAreaRef.current = loaded.areaMetrics
+          ? {
+              plotAreaSqft: loaded.areaMetrics.plotAreaSqft,
+              plotAreaSqm: loaded.areaMetrics.plotAreaSqm,
+              plotAreaAcre: loaded.areaMetrics.plotAreaAcre,
+            }
+          : null
         setOptionName(row.option_name ?? '')
         lastSavedNameRef.current = row.option_name ?? ''
         versionRef.current = row.version
@@ -476,8 +491,8 @@ export default function InstanceBuilder({
         loadProjectSite(row.project_id).then((s) => {
           if (!cancelled && s) {
             siteRef.current = s
-            const areas = siteAreas(s.site_geojson)
-            if (areas) plotAreaSqftRef.current = areas.sqft
+            const areas = toPlotArea(siteAreas(s.site_geojson))
+            if (areas) plotAreaRef.current = areas
           }
         })
       })
