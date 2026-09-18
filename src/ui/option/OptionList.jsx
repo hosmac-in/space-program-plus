@@ -47,6 +47,40 @@ function PhaseCountField({ value, onChange, note }) {
   )
 }
 
+// FSI and ground cover: two plain numbers with no catalog default to inherit
+// and no per-room override chain — see AREA METRICS in data/optionData.js.
+// Typed here alongside phases, on the same one-Save dialog, for the reason
+// PhaseCountField gives: chosen at creation, changed afterwards, one field
+// either way.
+function AreaMetricsFields({ fsi, groundCover, onChangeFsi, onChangeGroundCover }) {
+  return (
+    <div style={{ display: 'flex', gap: 16 }}>
+      <label style={{ display: 'block', fontSize: 13 }}>
+        <span style={{ display: 'block', marginBottom: 4 }}>FSI</span>
+        <input
+          type="number"
+          min={0}
+          step="any"
+          value={fsi ?? ''}
+          onChange={(e) => onChangeFsi(e.target.value === '' ? null : parseFloat(e.target.value))}
+          style={{ width: 72, padding: 6 }}
+        />
+      </label>
+      <label style={{ display: 'block', fontSize: 13 }}>
+        <span style={{ display: 'block', marginBottom: 4 }}>Ground cover</span>
+        <input
+          type="number"
+          min={0}
+          step="any"
+          value={groundCover ?? ''}
+          onChange={(e) => onChangeGroundCover(e.target.value === '' ? null : parseFloat(e.target.value))}
+          style={{ width: 72, padding: 6 }}
+        />
+      </label>
+    </div>
+  )
+}
+
 // Which buildings an option contains, as a checkbox each.
 //
 // The same list does both jobs — picked when the option is created, changed
@@ -96,6 +130,8 @@ export default function OptionList({
   // open yet, which is exactly when there is nothing to edit.
   openBuildingIds,
   openPhaseCount = DEFAULT_PHASE_COUNT,
+  openFsi = null,
+  openGroundCover = null,
   onSetOptionSettings,
   departmentCountByBuilding,
   departmentCountByPhase,
@@ -111,6 +147,8 @@ export default function OptionList({
   const [duplicateFromId, setDuplicateFromId] = useState('')
   const [newBuildingIds, setNewBuildingIds] = useState([])
   const [newPhaseCount, setNewPhaseCount] = useState(DEFAULT_PHASE_COUNT)
+  const [newFsi, setNewFsi] = useState(null)
+  const [newGroundCover, setNewGroundCover] = useState(null)
   const [creating, setCreating] = useState(false)
   const creatingRef = useRef(false)
   const [createError, setCreateError] = useState(null)
@@ -120,6 +158,8 @@ export default function OptionList({
   // edited alongside it and committed by the same button.
   const [editBuildingIds, setEditBuildingIds] = useState(null)
   const [editPhaseCount, setEditPhaseCount] = useState(DEFAULT_PHASE_COUNT)
+  const [editFsi, setEditFsi] = useState(null)
+  const [editGroundCover, setEditGroundCover] = useState(null)
   const [confirmDrop, setConfirmDrop] = useState(null)
 
   // Returns its own canceller: a response for the project you just left must
@@ -170,6 +210,17 @@ export default function OptionList({
       buildings: [...newBuildingIds],
       sections: [],
       departments: [],
+      // Only when typed: plot_area_sqft is measured from the site, not entered
+      // here, and follows once InstanceBuilder saves this option for the first
+      // time — see buildInstanceData.
+      ...(newFsi != null || newGroundCover != null
+        ? {
+            area_metrics: {
+              ...(newFsi != null ? { fsi: newFsi } : {}),
+              ...(newGroundCover != null ? { ground_cover: newGroundCover } : {}),
+            },
+          }
+        : {}),
     }
 
     if (duplicateFromId) {
@@ -213,6 +264,8 @@ export default function OptionList({
     setDuplicateFromId('')
     setNewBuildingIds([])
     setNewPhaseCount(DEFAULT_PHASE_COUNT)
+    setNewFsi(null)
+    setNewGroundCover(null)
     loadOptions()
     onSelectOption?.(inserted.id)
   }
@@ -229,14 +282,16 @@ export default function OptionList({
     if (id === selectedOptionId && onSetOptionSettings) {
       setEditBuildingIds([...(openBuildingIds ?? [])])
       setEditPhaseCount(openPhaseCount)
+      setEditFsi(openFsi)
+      setEditGroundCover(openGroundCover)
       return
     }
     onSelectOption?.(id)
   }
 
-  // Both settings go in one call: one Save, one undo step, one write.
-  function applySettings(buildingIds, phaseCount) {
-    onSetOptionSettings({ buildingIds, phaseCount })
+  // All four settings go in one call: one Save, one undo step, one write.
+  function applySettings(buildingIds, phaseCount, fsi, groundCover) {
+    onSetOptionSettings({ buildingIds, phaseCount, fsi, groundCover })
     setEditBuildingIds(null)
   }
 
@@ -251,12 +306,14 @@ export default function OptionList({
 
     // Nothing to lose, so nothing to ask about.
     if (losingBuildings === 0 && losingPhases === 0) {
-      applySettings(editBuildingIds, editPhaseCount)
+      applySettings(editBuildingIds, editPhaseCount, editFsi, editGroundCover)
       return
     }
     setConfirmDrop({
       ids: [...editBuildingIds],
       phases: editPhaseCount,
+      fsi: editFsi,
+      groundCover: editGroundCover,
       losingBuildings,
       losingPhases,
     })
@@ -385,6 +442,15 @@ export default function OptionList({
                   note="One phase is an option built in one go."
                 />
               </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <AreaMetricsFields
+                  fsi={newFsi}
+                  groundCover={newGroundCover}
+                  onChangeFsi={setNewFsi}
+                  onChangeGroundCover={setNewGroundCover}
+                />
+              </div>
             </>
           )}
 
@@ -429,6 +495,15 @@ export default function OptionList({
             </p>
           </div>
 
+          <div style={{ marginTop: 12 }}>
+            <AreaMetricsFields
+              fsi={editFsi}
+              groundCover={editGroundCover}
+              onChangeFsi={setEditFsi}
+              onChangeGroundCover={setEditGroundCover}
+            />
+          </div>
+
           <button type="button" onClick={commitSettings}>
             Save
           </button>
@@ -439,7 +514,7 @@ export default function OptionList({
         <ConfirmModal
           title="Remove from this option?"
           onConfirm={() => {
-            applySettings(confirmDrop.ids, confirmDrop.phases)
+            applySettings(confirmDrop.ids, confirmDrop.phases, confirmDrop.fsi, confirmDrop.groundCover)
             setConfirmDrop(null)
           }}
           onCancel={() => setConfirmDrop(null)}

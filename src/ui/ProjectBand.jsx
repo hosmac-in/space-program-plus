@@ -29,6 +29,8 @@ export default function ProjectBand({
   // chip that is already selected opens the dialog — see OptionList.
   openBuildingIds,
   openPhaseCount,
+  openFsi,
+  openGroundCover,
   onSetOptionSettings,
   departmentCountByBuilding,
   departmentCountByPhase,
@@ -59,6 +61,8 @@ export default function ProjectBand({
             onSelectOption={onSelectOption}
             openBuildingIds={openBuildingIds}
             openPhaseCount={openPhaseCount}
+            openFsi={openFsi}
+            openGroundCover={openGroundCover}
             onSetOptionSettings={onSetOptionSettings}
             departmentCountByBuilding={departmentCountByBuilding}
             departmentCountByPhase={departmentCountByPhase}

@@ -15,6 +15,7 @@ import {
 } from '../../data/tree.js'
 import { withBuildingFactor } from '../../data/factors.js'
 import { loadProjectSite, loadProjectWeather } from '../../data/weather.js'
+import { siteAreas } from '../map/area.js'
 import {
   buildInstanceData,
   DEPARTMENT_FACTORS,
@@ -43,6 +44,9 @@ const EMPTY_OPTION = {
   // Per-building factor overrides, keyed by building id — see data/factors.js.
   buildingFactors: {},
   phaseCount: DEFAULT_PHASE_COUNT,
+  // FSI and ground cover, typed on the same dialog as buildings and phases.
+  // Neither has a catalog default to inherit — see data/optionData.js.
+  areaMetrics: { fsi: null, groundCover: null },
 }
 
 // Structural edits — a building, section or department added or removed, or the
@@ -91,7 +95,8 @@ export default function InstanceBuilder({
   // departments: an option may hold an empty section, and a building with no
   // sections.
   const [history, setHistory] = useState({ past: [], present: EMPTY_OPTION, future: [] })
-  const { departments, sectionIds, buildingIds, buildingFactors, phaseCount } = history.present
+  const { departments, sectionIds, buildingIds, buildingFactors, phaseCount, areaMetrics } = history.present
+  const { fsi, groundCover } = areaMetrics ?? {}
   const [optionName, setOptionName] = useState('')
   const [loadError, setLoadError] = useState(null)
   const onToast = useToast()
@@ -125,6 +130,10 @@ export default function InstanceBuilder({
   const weatherRef = useRef(null)
   // Same treatment for the project's site and context polygons — see weatherRef.
   const siteRef = useRef(null)
+  // The last known plot area, measured from siteRef's geojson. Kept apart from
+  // siteRef itself so a write can fall back to it when the site hasn't resolved
+  // yet — recomputing from null geometry would write the plot area away.
+  const plotAreaSqftRef = useRef(null)
 
   historyRef.current = history
   presentRef.current = history.present
@@ -262,7 +271,11 @@ export default function InstanceBuilder({
           present.phaseCount,
           present.buildingFactors,
           weatherRef.current,
-          siteRef.current
+          siteRef.current,
+          {
+            ...present.areaMetrics,
+            plotAreaSqft: siteAreas(siteRef.current?.site_geojson)?.sqft ?? plotAreaSqftRef.current,
+          }
         ),
         version: at + 1,
       })
@@ -437,8 +450,10 @@ export default function InstanceBuilder({
           buildingIds: loaded.buildingIds ?? buildingIdsOf(openSectionIds),
           buildingFactors: loaded.buildingFactors ?? {},
           phaseCount: loaded.phaseCount,
+          areaMetrics: { fsi: loaded.areaMetrics?.fsi ?? null, groundCover: loaded.areaMetrics?.groundCover ?? null },
         }
         resetOption(present)
+        plotAreaSqftRef.current = loaded.areaMetrics?.plotAreaSqft ?? null
         setOptionName(row.option_name ?? '')
         lastSavedNameRef.current = row.option_name ?? ''
         versionRef.current = row.version
@@ -459,7 +474,11 @@ export default function InstanceBuilder({
         // it answers.
         siteRef.current = loaded.site
         loadProjectSite(row.project_id).then((s) => {
-          if (!cancelled && s) siteRef.current = s
+          if (!cancelled && s) {
+            siteRef.current = s
+            const areas = siteAreas(s.site_geojson)
+            if (areas) plotAreaSqftRef.current = areas.sqft
+          }
         })
       })
 
@@ -625,13 +644,19 @@ export default function InstanceBuilder({
   // anywhere left to be shown: a dropped building takes its sections and their
   // departments, a dropped phase takes every entry staged in it. The dialog
   // confirms first.
-  function setOptionSettings({ buildingIds: nextBuildingIds, phaseCount: nextPhaseCount }) {
+  function setOptionSettings({
+    buildingIds: nextBuildingIds,
+    phaseCount: nextPhaseCount,
+    fsi: nextFsi,
+    groundCover: nextGroundCover,
+  }) {
     const kept = new Set(nextBuildingIds)
     const doomedSectionIds = new Set(sections.filter((s) => !kept.has(s.building_id)).map((s) => s.id))
     mutateOption(
       (o) => ({
         phaseCount: nextPhaseCount,
         buildingIds: [...nextBuildingIds],
+        areaMetrics: { fsi: nextFsi ?? null, groundCover: nextGroundCover ?? null },
         sectionIds: o.sectionIds.filter((id) => !doomedSectionIds.has(id)),
         departments: o.departments.filter((d) => {
           if (d.phase > nextPhaseCount) return false
@@ -786,6 +811,8 @@ export default function InstanceBuilder({
       buildingIds,
       buildingFactors,
       phaseCount,
+      fsi,
+      groundCover,
       departmentDefs,
       optionName,
       addDepartments,
@@ -811,6 +838,8 @@ export default function InstanceBuilder({
     buildingIds,
     buildingFactors,
     phaseCount,
+    fsi,
+    groundCover,
     departmentDefs,
     optionName,
     history.past.length,

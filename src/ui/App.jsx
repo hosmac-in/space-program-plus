@@ -327,6 +327,8 @@ function SignedInApp({ session }) {
                 onSelectOption={openOption}
                 openBuildingIds={builderState.buildingIds}
                 openPhaseCount={builderState.phaseCount}
+                openFsi={builderState.fsi}
+                openGroundCover={builderState.groundCover}
                 // One guarded action, not two: the dialog sets both with one
                 // Save, and `guard` holds a single pending action — two calls
                 // would leave only the second waiting behind the prompt. It can

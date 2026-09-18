@@ -31,6 +31,8 @@ const NOT_LOADED = {
   addSection: () => {},
   removeSection: () => {},
   phaseCount: 1,
+  fsi: null,
+  groundCover: null,
   setOptionSettings: () => {},
   undo: () => {},
   redo: () => {},

@@ -18,6 +18,11 @@
 //       "site_geojson": { ... },       <- Grasshopper reads these, same reason
 //       "context_geojson": { ... }     <- as weather: it has no client for sp_project
 //     },
+//     "area_metrics": {                <- fsi and ground_cover are typed on this
+//       "fsi": 1.5,                    <- option's settings dialog; plot_area_sqft
+//       "ground_cover": 0.4,           <- is measured from site.site_geojson and
+//       "plot_area_sqft": 43560        <- copied in the same way site itself is
+//     },
 //     "departments": [{
 //       "instance_id": "...",
 //       "department_def_id": "...",
@@ -135,6 +140,13 @@
 // SCHEMA VERSIONS. Every older row still loads, and absence always means the
 // behaviour that version had, so none of these needs a migration.
 //
+// 18  `area_metrics`: `fsi` and `ground_cover`, typed by the person setting up
+//     the option, plus `plot_area_sqft` — COPIED in from `site.site_geojson` on
+//     every save, the same discipline as `site` and `weather` themselves, since
+//     it is a measurement of that geometry rather than a fact this document
+//     invents. Absent: nobody has set either figure, which is what every older
+//     row means. Written only when at least one of the three is known, so an
+//     option nobody has touched this on keeps the payload it always wrote.
 // 17  `site`: the project's site and context polygons, COPIED in on every save
 //     for the same reason `weather` is — Grasshopper reads this document alone
 //     and has no client for `sp_project`. Absent: no site geometry drawn for
@@ -213,7 +225,7 @@ import {
 } from './factors.js'
 import { catalogRoomsForNode, deptNodeIndex } from './tree.js'
 
-export const SCHEMA_VERSION = 17
+export const SCHEMA_VERSION = 18
 
 // Re-exported because this is where every other option figure is imported from.
 export {
@@ -249,7 +261,8 @@ export function buildInstanceData(
   phaseCount = DEFAULT_PHASE_COUNT,
   buildingFactors = {},
   weather = null,
-  site = null
+  site = null,
+  areaMetrics = null
 ) {
   return {
     // Copied from the project on every save, not resolved on read: Grasshopper
@@ -258,6 +271,24 @@ export function buildInstanceData(
     // Same discipline: copied in, never resolved live, and absent when the
     // project has none.
     ...(site?.site_geojson ? { site } : {}),
+    // `fsi` and `groundCover` are typed here; `plotAreaSqft` is a measurement of
+    // `site.site_geojson`, copied in the same way `site` itself is. Written only
+    // when there is something to say, and each figure only when it is finite —
+    // absence of one must not blank out the others.
+    ...(areaMetrics &&
+    (Number.isFinite(areaMetrics.fsi) ||
+      Number.isFinite(areaMetrics.groundCover) ||
+      Number.isFinite(areaMetrics.plotAreaSqft))
+      ? {
+          area_metrics: {
+            ...(Number.isFinite(areaMetrics.plotAreaSqft)
+              ? { plot_area_sqft: areaMetrics.plotAreaSqft }
+              : {}),
+            ...(Number.isFinite(areaMetrics.fsi) ? { fsi: areaMetrics.fsi } : {}),
+            ...(Number.isFinite(areaMetrics.groundCover) ? { ground_cover: areaMetrics.groundCover } : {}),
+          },
+        }
+      : {}),
     // Written as given, not clamped: the builder already holds a valid count,
     // and a legacy option using more phases than the input offers must keep them.
     phase_count: Number.isInteger(phaseCount) && phaseCount > 0 ? phaseCount : DEFAULT_PHASE_COUNT,
@@ -536,6 +567,15 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
     // already stored rather than dropping it. The project is the source.
     weather: data?.weather ?? null,
     site: data?.site ?? null,
+    // Read back the same way: `fsi` and `groundCover` so the settings dialog
+    // opens on what was last typed, `plotAreaSqft` so a save that cannot
+    // recompute it (no site on the project) keeps the last known figure rather
+    // than dropping it.
+    areaMetrics: {
+      fsi: Number.isFinite(data?.area_metrics?.fsi) ? data.area_metrics.fsi : null,
+      groundCover: Number.isFinite(data?.area_metrics?.ground_cover) ? data.area_metrics.ground_cover : null,
+      plotAreaSqft: Number.isFinite(data?.area_metrics?.plot_area_sqft) ? data.area_metrics.plot_area_sqft : null,
+    },
   }
 }
 
