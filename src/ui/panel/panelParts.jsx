@@ -599,7 +599,7 @@ export function ObjectRow({
           line up: one is the room, the rest are what is in it. */}
       {area !== undefined && (
         <span style={{ ...AREA_FIGURE, color: tone === 'warn' ? '#c11' : '#555' }}>
-          {area != null ? `${formatArea(toDisplay(area), 1)} ${AREA_UNIT}` : 'no area'}
+          {area != null ? `${formatArea(toDisplay(area))} ${AREA_UNIT}` : 'no area'}
         </span>
       )}
     </div>
@@ -638,6 +638,19 @@ export function RoomAreaRow({
   // `value` is held in sqft everywhere upstream (see CLAUDE.md, Area); this
   // field only converts what it shows and what it hands back, at its own edge.
   const { label: AREA_UNIT, toDisplay, toStored } = useAreaUnit()
+
+  // TYPING NOTHING MUST STORE NOTHING, and in m² that takes saying so.
+  //
+  // The field shows one decimal, so 200 sqft reads 18.6 m²; converting that
+  // straight back gives 200.2, which is a different area from the one that
+  // produced it. CountField commits on every blur, changed or not — so merely
+  // clicking into a room's area and out again rewrote it, a whole-section jsonb
+  // write and an undo step on the Tree tab, and a dirty Save Data on the other.
+  //
+  // So: if what is in the field still ROUNDS TO THE FIGURE ALREADY SHOWN, it is
+  // the same area, and the stored sqft goes back untouched.
+  const back = (n) => (Math.round(toDisplay(value) * 10) === Math.round(n * 10) ? value : toStored(n))
+
   return (
     <div
       className="spp-row"
@@ -656,8 +669,8 @@ export function RoomAreaRow({
       <CountField
         value={toDisplay(value)}
         canEdit={canEdit}
-        onChange={(n) => onChange?.(toStored(n))}
-        onCommit={onCommit ? (n) => onCommit(toStored(n)) : undefined}
+        onChange={(n) => onChange?.(back(n))}
+        onCommit={onCommit ? (n) => onCommit(back(n)) : undefined}
         // Muted ink for a figure nobody stated on this placement — see the
         // note on `isDefault` above. Still italic: CountField always is.
         colour={isDefault ? '#999' : '#555'}

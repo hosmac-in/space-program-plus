@@ -69,10 +69,18 @@ export const AREA_UNIT = 'ft²'
 // Every number the app prints goes through here, so thousands separators and
 // rounding are the same wherever a figure appears. It was defined four times
 // under three names.
-// `minDigits` pads: a multiplier shows 1.00 rather than 1, so a column of them
-// keeps one width and the steppers beside it do not shuffle as it is nudged.
-// Default 0, which is every figure that is simply printed.
-export function formatArea(n, digits = 0, minDigits = 0) {
+//
+// ONE DECIMAL PLACE, ALWAYS, AND ALWAYS WRITTEN. Every caller that leaves the
+// precision to this default is printing an AREA — and areas are read down a
+// column against each other: a room's typed 20.0 beside a card header's 20 read
+// as two different quantities, which is what sent this to 1. `minDigits`
+// defaults to `digits` for the same reason: a whole number has to keep the
+// place, or the column jitters between "20" and "20.5" as the rooms change.
+//
+// A caller measuring something else states its own precision — a percentage,
+// acres, a multiplier showing 1.00 — and CountField passes both, which is what
+// keeps a COUNT reading "×3" rather than "×3.0".
+export function formatArea(n, digits = 1, minDigits = digits) {
   return Number(n ?? 0).toLocaleString(undefined, {
     maximumFractionDigits: digits,
     minimumFractionDigits: minDigits,

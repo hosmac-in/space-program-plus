@@ -101,7 +101,10 @@
 // A room node may carry `area_sqft`: the usual size of ONE of this room in this
 // placement — a Consulting Room off an OPD is not the size of one off an
 // Executive Health Check, and those are the same sp_room row. Absent or 0 both
-// mean the catalog states none.
+// mean this placement states none, and then sp_room.area_sqm is what answers —
+// the room's generic size, converted, and 0 when that column is empty too. See
+// catalogRoomAreaSqft, which is the only definition of that chain, and
+// roomAreaIsStated, which is how a panel knows to draw the fallback muted.
 //
 //   >>> This is COPIED into an option when the room is added, NOT inherited
 //   >>> live like a schedule or a factor. An option's area is the measured
@@ -111,8 +114,8 @@
 //
 // It is an area, which the rule above otherwise forbids storing — but a
 // denormalised area is one COPIED from a definition row, which this is not.
-// sp_room has no size: how big a room is depends on where it sits, and the
-// placement is the only level that can say so.
+// sp_room states only a GENERIC size; how big a room is depends on where it
+// sits, and the placement is the only level that can say so.
 //
 // SUGGESTED DIMENSIONS, AND NOTES — CATALOG-ONLY, NEITHER OVERRIDABLE
 //
