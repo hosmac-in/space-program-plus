@@ -14,6 +14,7 @@ import {
   resolveNodePlacement,
 } from '../../data/tree.js'
 import { withBuildingFactor } from '../../data/factors.js'
+import { sqmToSqft } from '../../data/units.js'
 import { loadProjectSite, loadProjectWeather } from '../../data/weather.js'
 import { siteAreas } from '../map/area.js'
 
@@ -702,7 +703,7 @@ export default function InstanceBuilder({
           defId: def.id,
           name: def.name,
           type: def.type,
-          areaSqft: def.area_sqft ?? null,
+          areaSqft: sqmToSqft(def.area_sqm),
           count: catalogObjectCount(node),
         },
       ]

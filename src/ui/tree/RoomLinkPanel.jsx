@@ -18,6 +18,7 @@
 import { useEffect, useState } from 'react'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { useCatalog } from '../../data/catalog.jsx'
+import { sqmToSqft } from '../../data/units.js'
 import {
   catalogObjectCount,
   catalogRoomAreaSqft,
@@ -243,7 +244,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 .filter((e) => e.kind === 'object')
                 .map((e) => ({
                   defId: e.def.id,
-                  areaSqft: e.def.area_sqft ?? null,
+                  areaSqft: sqmToSqft(e.def.area_sqm),
                   count: catalogObjectCount(e.node),
                 })),
               equipment: linked
@@ -429,11 +430,11 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                             `${entry.def.name}: ×${count}`
                           )
                         }
-                        area={
-                          entry.def.area_sqft != null
-                            ? entry.def.area_sqft * catalogObjectCount(entry.node)
-                            : null
-                        }
+                        area={(() => {
+                          const perOne =
+                            entry.kind === 'equipment' ? entry.def.area_sqft ?? null : sqmToSqft(entry.def.area_sqm)
+                          return perOne != null ? perOne * catalogObjectCount(entry.node) : null
+                        })()}
                         canEdit={canEdit}
                         onRemove={() =>
                           setConfirmTarget({

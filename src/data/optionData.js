@@ -231,6 +231,7 @@ import {
   GROSSING,
 } from './factors.js'
 import { catalogRoomsForNode, deptNodeIndex } from './tree.js'
+import { sqmToSqft } from './units.js'
 
 export const SCHEMA_VERSION = 18
 
@@ -503,7 +504,7 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
               name: roomDef?.name,
               type: roomDef?.type,
               treeRoomNodeId: r.tree_room_node_id ?? null,
-              count: Number.isInteger(r.count) && r.count > 0 ? r.count : DEFAULT_ROOM_COUNT,
+              count: Number.isFinite(r.count) && r.count > 0 ? r.count : DEFAULT_ROOM_COUNT,
               // Negative is not an area.
               areaSqft:
                 Number.isFinite(r.area_sqft) && r.area_sqft >= 0 ? r.area_sqft : DEFAULT_ROOM_AREA_SQFT,
@@ -530,7 +531,7 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
                     defId: o.object_def_id,
                     name: objectDef?.name,
                     type: objectDef?.type,
-                    areaSqft: objectDef?.area_sqft ?? null,
+                    areaSqft: sqmToSqft(objectDef?.area_sqm),
                     count: o.count,
                   }
                 }),

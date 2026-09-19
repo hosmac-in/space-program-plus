@@ -13,7 +13,8 @@
 import AddButton from '../primitives/AddButton.jsx'
 import RemoveButton, { removeHint } from '../primitives/RemoveButton.jsx'
 import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
-import { AREA_UNIT, formatArea } from '../map/area.js'
+import { formatArea } from '../map/area.js'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   AREA_WIDTH,
@@ -280,6 +281,14 @@ export function CountField({
   // each sizes to its own digits and sits against the text it follows.
   width = null,
 }) {
+  // FLOATS ARE ALLOWED EVERYWHERE. `decimals` still fixes the precision of a
+  // field that wants trailing zeros always shown — a multiplier reads "1.00" —
+  // but a field left at the default (0) used to floor to a whole number on
+  // every keystroke; it now keeps up to 2 decimal places and simply doesn't pad
+  // them, so "3" still reads as "3" and "3.5" is no longer thrown away.
+  const displayDigits = decimals > 0 ? decimals : 2
+  const minDigits = decimals > 0 ? decimals : 0
+
   // At rest a figure is shown at its full precision — "1.00", not "1" — and
   // SEPARATED: 5,400, the way formatArea prints every other number in the app. A
   // field that showed 5400 beside a total reading 5,400 made the two look like
@@ -289,7 +298,7 @@ export function CountField({
   // caret out from under them, so while the field is focused the draft is left
   // exactly as typed and the separators return on blur — which is also why
   // `settle` has to strip them back out again.
-  const format = (n) => (n == null || n === '' ? '' : formatArea(Number(n), decimals, decimals))
+  const format = (n) => (n == null || n === '' ? '' : formatArea(Number(n), displayDigits, minDigits))
 
   // Back the other way: what is in the field, as a number. Separators are
   // display only and must come off before anything parses it — Number('5,400')
@@ -314,8 +323,8 @@ export function CountField({
   }, [value, focused])
 
   // Rounded to the allowed precision, so a pasted 1.4372 settles rather than
-  // being reported as typed. decimals: 0 floors, exactly as this always did.
-  const quantise = (n) => (decimals > 0 ? Math.round(n * 10 ** decimals) / 10 ** decimals : Math.floor(n))
+  // being reported as typed.
+  const quantise = (n) => Math.round(n * 10 ** displayDigits) / 10 ** displayDigits
 
   // Whatever is in the field, as a legal value.
   const settle = (raw) => {
@@ -537,6 +546,7 @@ export function ObjectRow({
   onCountCommit,
   onRemove,
 }) {
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   // No wrapping: the row is narrow, so the name takes whatever the figure on the
   // right doesn't need and ellipsises rather than pushing it out of the panel.
   // spp-row highlights the whole row under the pointer, tying the name to the
@@ -589,7 +599,7 @@ export function ObjectRow({
           line up: one is the room, the rest are what is in it. */}
       {area !== undefined && (
         <span style={{ ...AREA_FIGURE, color: tone === 'warn' ? '#c11' : '#555' }}>
-          {area != null ? `${formatArea(area)} ${AREA_UNIT}` : 'no area'}
+          {area != null ? `${formatArea(toDisplay(area))} ${AREA_UNIT}` : 'no area'}
         </span>
       )}
     </div>
@@ -612,6 +622,9 @@ export function ObjectRow({
 // room's own row rather than one of its children, so it carries no branch — the
 // tree runs past it on the way to the objects.
 export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChange, onCommit, title }) {
+  // `value` is held in sqft everywhere upstream (see CLAUDE.md, Area); this
+  // field only converts what it shows and what it hands back, at its own edge.
+  const { unit, label: AREA_UNIT, toDisplay, toStored } = useAreaUnit()
   return (
     <div
       className="spp-row"
@@ -628,13 +641,16 @@ export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChan
     >
       <span style={{ ...ellipsis, fontSize: 13 }}>{label}</span>
       <CountField
-        value={value}
+        value={toDisplay(value)}
         canEdit={canEdit}
-        onChange={onChange ?? (() => {})}
-        onCommit={onCommit}
+        onChange={(n) => onChange?.(toStored(n))}
+        onCommit={onCommit ? (n) => onCommit(toStored(n)) : undefined}
         // A room may legitimately have no area entered yet, so unlike a count
         // this floors at zero.
         min={0}
+        // m² wants a finer step than sqft — typing to a whole square metre is
+        // coarser than the figures this app is usually measured in.
+        decimals={unit === 'm2' ? 2 : 0}
         prefix=""
         suffix={AREA_UNIT}
         // Typed, never nudged — a measurement read off a drawing.
@@ -744,6 +760,7 @@ export function RoomBlock({
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   const [asked, setAsked] = useState({ size: false, note: false })
   const extras = {
     showSize: hasSize || asked.size,
@@ -975,7 +992,7 @@ export function RoomBlock({
             title={count != null ? `${count} × the area of one ${name}` : `Area of ${name}`}
             style={{ ...AREA_FIGURE, color: 'inherit' }}
           >
-            {formatArea(totalAreaSqft)} {AREA_UNIT}
+            {formatArea(toDisplay(totalAreaSqft))} {AREA_UNIT}
           </span>
         )}
 
@@ -1051,6 +1068,7 @@ export function RoomGroupBlock({
   const [open, setOpen] = useState(true)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name ?? '')
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
 
   const commitName = () => {
     if (!editing) return
@@ -1172,7 +1190,7 @@ export function RoomGroupBlock({
           <span style={{ flex: 1, minWidth: 0 }} />
           {totalAreaSqft != null && (
             <span title={`Everything in ${shown}`} style={{ ...AREA_FIGURE, color: '#555' }}>
-              {formatArea(totalAreaSqft)} {AREA_UNIT}
+              {formatArea(toDisplay(totalAreaSqft))} {AREA_UNIT}
             </span>
           )}
         </div>

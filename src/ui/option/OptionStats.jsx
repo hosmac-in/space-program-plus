@@ -11,7 +11,8 @@
 import { phaseRows, summarize } from '../../data/optionData.js'
 import { useCatalog } from '../../data/catalog.jsx'
 import { Stat, StatCard } from '../primitives/Stat.jsx'
-import { AREA_UNIT, formatArea } from '../map/area.js'
+import { formatArea } from '../map/area.js'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
 
 export default function OptionStats({
   name,
@@ -26,6 +27,7 @@ export default function OptionStats({
   // Sections as well as departments: a grossing factor may be inherited from
   // the catalog — see data/factors.js.
   const { sections, buildings } = useCatalog()
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   const { departmentCount, roomCount, objectCount, areaSqft, perPhase } = summarize(departments ?? [], {
     sections,
     buildings,
@@ -44,9 +46,9 @@ export default function OptionStats({
       <Stat label={phaseCount > 1 ? 'Departments (all phases)' : 'Departments'} value={departmentCount} />
       <Stat label="Rooms" value={roomCount} />
       <Stat label="Objects" value={objectCount} />
-      <Stat label="Programmed area" value={formatArea(areaSqft)} unit={AREA_UNIT} />
+      <Stat label="Programmed area" value={formatArea(toDisplay(areaSqft))} unit={AREA_UNIT} />
       {phases.map(({ key, label, totals }) => (
-        <Stat key={key} label={label} value={formatArea(totals.areaSqft)} unit={AREA_UNIT} />
+        <Stat key={key} label={label} value={formatArea(toDisplay(totals.areaSqft))} unit={AREA_UNIT} />
       ))}
       {coverage != null && <Stat label="Of site area" value={formatArea(coverage, 1)} unit="%" />}
     </StatCard>

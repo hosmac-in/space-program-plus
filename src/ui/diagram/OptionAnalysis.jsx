@@ -9,7 +9,8 @@
 import { useMemo } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
 import { summarize } from '../../data/optionData.js'
-import { AREA_UNIT, formatArea } from '../map/area.js'
+import { formatArea } from '../map/area.js'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
 
 const PALETTE = ['#4f7cac', '#e08e45', '#5fa777', '#c0563f', '#8266a8', '#c9a227', '#4a9b9b', '#a6588a']
 
@@ -32,6 +33,7 @@ function arcPath(startAngle, endAngle) {
 
 export default function OptionAnalysis({ departments, buildingFactors }) {
   const { sections, buildings } = useCatalog()
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
 
   const slices = useMemo(() => {
     const { perDepartment } = summarize(departments, { sections, buildings, buildingFactors })
@@ -78,7 +80,7 @@ export default function OptionAnalysis({ departments, buildingFactors }) {
             <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
             <span style={{ flex: 1 }}>{s.name}</span>
             <span style={{ color: '#666' }}>
-              {formatArea(s.areaSqft)} {AREA_UNIT} ({Math.round(s.fraction * 100)}%)
+              {formatArea(toDisplay(s.areaSqft))} {AREA_UNIT} ({Math.round(s.fraction * 100)}%)
             </span>
           </div>
         ))}

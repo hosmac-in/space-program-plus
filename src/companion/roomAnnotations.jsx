@@ -11,7 +11,8 @@
 // model.
 
 import { useMemo } from 'react'
-import { AREA_UNIT, formatArea } from '../ui/map/area.js'
+import { formatArea } from '../ui/map/area.js'
+import { useAreaUnit } from '../ui/AreaUnitContext.jsx'
 import { ROOM_CONTROL } from '../ui/panel/panelLayout.js'
 import LinkButton, { LINK_MET, LINK_OVER, linkState } from './LinkButton.jsx'
 import LinkedCount from './LinkedCount.jsx'
@@ -45,9 +46,9 @@ function departmentHeld(census, dept) {
 // object count is there because an object with no `.ffft2` is counted and adds
 // nothing — a ring stuck at empty over three tagged objects means UNMEASURED,
 // not unlinked, and nothing else would tell those two apart.
-function title(name, linked, total, objects) {
-  const has = `${formatArea(linked)} ${AREA_UNIT}`
-  const asks = `${formatArea(total)} ${AREA_UNIT}`
+function title(name, linked, total, objects, toDisplay, AREA_UNIT) {
+  const has = `${formatArea(toDisplay(linked))} ${AREA_UNIT}`
+  const asks = `${formatArea(toDisplay(total))} ${AREA_UNIT}`
   const from = objects > 0 ? ` (${objects} object${objects === 1 ? '' : 's'})` : ''
   if (!(total > 0) && linked <= 0) return `Tag the selected Rhino objects as ${name}`
   // Through linkState, never its own comparison: the tooltip must call a room
@@ -63,6 +64,7 @@ function title(name, linked, total, objects) {
 // AnnotationsProvider. Memoised on both, so the panel re-renders when the
 // document changes and not otherwise.
 export function useRoomAnnotations(census, link) {
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   return useMemo(
     () => ({
       department: (dept, areaSqft, path) => {
@@ -75,7 +77,7 @@ export function useRoomAnnotations(census, link) {
             size={ROOM_CONTROL}
             linked={held.areaSqft}
             total={areaSqft}
-            title={title(dept.name, held.areaSqft, areaSqft, held.count)}
+            title={title(dept.name, held.areaSqft, areaSqft, held.count, toDisplay, AREA_UNIT)}
             onLink={() => link({ kind: 'department', instanceId: dept.instanceId, name: dept.name, path })}
           />
         )
@@ -94,7 +96,7 @@ export function useRoomAnnotations(census, link) {
             size={ROOM_CONTROL}
             linked={held.areaSqft}
             total={wants}
-            title={title(shown, held.areaSqft, wants, held.count)}
+            title={title(shown, held.areaSqft, wants, held.count, toDisplay, AREA_UNIT)}
             onLink={() => link({ kind: 'room', instanceId: room.instanceId, name: shown, path })}
           />
         )
@@ -108,6 +110,6 @@ export function useRoomAnnotations(census, link) {
         />
       ),
     }),
-    [census, link]
+    [census, link, toDisplay, AREA_UNIT]
   )
 }

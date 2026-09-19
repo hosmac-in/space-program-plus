@@ -37,8 +37,10 @@ import {
   findCirculationDef,
 } from '../../data/optionData.js'
 import { resolveFactors, withFactor } from '../../data/factors.js'
+import { sqmToSqft } from '../../data/units.js'
 import ResetButton from '../primitives/ResetButton.jsx'
-import { AREA_UNIT, formatArea } from '../map/area.js'
+import { formatArea } from '../map/area.js'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
 import { functionColours } from '../../data/functions.js'
 import { resolveRoomSchedules, roomWithSchedule } from '../../data/schedules.js'
 import {
@@ -112,6 +114,7 @@ export default function DepartmentBlock({
   // annotation is not affected — it does not write to the database and is the
   // one thing such an app is for. See src/readOnly.jsx.
   const readOnly = useReadOnly()
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
 
   // This placement's own allowed rooms. Null when the tree node is gone, which
   // the filters treat as unrestricted rather than as "nothing allowed".
@@ -202,7 +205,9 @@ export default function DepartmentBlock({
             // sp_equipment has no `type` column. undefined rather than a
             // stand-in: ObjectRow already draws a row without one.
             type: def.type,
-            areaSqft: def.area_sqft,
+            // sp_object states area in m²; sp_equipment still in sqft. See
+            // data/units.js.
+            areaSqft: def.kind === 'equipment' ? def.area_sqft : sqmToSqft(def.area_sqm),
             count: DEFAULT_OBJECT_COUNT,
           },
         ],
@@ -564,18 +569,18 @@ export default function DepartmentBlock({
                 style={{ fontSize: 13, fontStyle: 'italic', color: '#555', marginBottom: 4 }}
               >
                 <span style={{ fontStyle: 'normal' }}>department area </span>
-                {formatArea(deptArea)} {AREA_UNIT}
+                {formatArea(toDisplay(deptArea))} {AREA_UNIT}
               </div>
               <div
                 title="Net area × the building's built-area grossing factor"
                 style={{ fontSize: 13, fontStyle: 'italic', color: '#999' }}
               >
                 <span style={{ fontStyle: 'normal' }}>built area </span>
-                {formatArea(departmentBuiltAreaSqft(dept, buildingRow, buildingOverrides))} {AREA_UNIT}
+                {formatArea(toDisplay(departmentBuiltAreaSqft(dept, buildingRow, buildingOverrides)))} {AREA_UNIT}
               </div>
               <div title="The rooms alone, before any grossing" style={{ fontSize: 13, fontStyle: 'italic', color: '#999' }}>
                 <span style={{ fontStyle: 'normal' }}>net area </span>
-                {formatArea(departmentNetAreaSqft(dept))} {AREA_UNIT}
+                {formatArea(toDisplay(departmentNetAreaSqft(dept)))} {AREA_UNIT}
               </div>
             </div>
           }

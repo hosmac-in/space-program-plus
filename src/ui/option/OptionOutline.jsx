@@ -18,7 +18,8 @@ import { CountField } from '../panel/panelParts.jsx'
 import ResetButton from '../primitives/ResetButton.jsx'
 import { useReadOnly } from '../../readOnly.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
-import { AREA_UNIT, formatArea } from '../map/area.js'
+import { formatArea } from '../map/area.js'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
 
 // Deliberately NOT a local sum. This file kept its own — objects added up
 // across a department's rooms — and it went silently wrong the day area became
@@ -44,19 +45,20 @@ function buildingTotalOf(entries, building, overrides) {
   return buildingAreaSqft(totalAreaOf(entries), building, overrides)
 }
 
-function summaryOf(entries, area = null) {
+function summaryOf(entries, area, toDisplay, unitLabel) {
   const n = entries.length
   const sqft = area == null ? totalAreaOf(entries) : area
-  return `${n} department${n === 1 ? '' : 's'} · ${formatArea(sqft)} ${AREA_UNIT}`
+  return `${n} department${n === 1 ? '' : 's'} · ${formatArea(toDisplay(sqft))} ${unitLabel}`
 }
 
 // A group or section heading inside a larger outline, with its own subtotal.
 function SubHeading({ name, entries }) {
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
       <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: '#555' }}>{name}</div>
       <span style={{ fontSize: 11, color: '#777', whiteSpace: 'nowrap' }}>
-        {formatArea(totalAreaOf(entries))} {AREA_UNIT}
+        {formatArea(toDisplay(totalAreaOf(entries)))} {AREA_UNIT}
       </span>
     </div>
   )
@@ -188,6 +190,7 @@ function DepartmentEntry({
 }) {
   const rooms = dept.rooms ?? []
   const colours = functionColours(functions, departmentDefs.find((d) => d.id === dept.defId)?.function_id)
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
 
   return (
     <div
@@ -223,7 +226,7 @@ function DepartmentEntry({
           </span>
         )}
         <span style={{ fontSize: 11, opacity: 0.8, whiteSpace: 'nowrap' }}>
-          {formatArea(departmentAreaSqft(dept, node, building, overrides))} {AREA_UNIT}
+          {formatArea(toDisplay(departmentAreaSqft(dept, node, building, overrides)))} {AREA_UNIT}
         </span>
       </div>
 
@@ -310,6 +313,7 @@ export default function OptionOutline({
   //
   // Sorted by phase within a name, so the several phases of one department read
   // as one run down the list rather than scattered through it.
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   const catalogNodes = deptNodeIndex(sections)
   const placed = departments
     .map((d) => {
@@ -344,7 +348,12 @@ export default function OptionOutline({
           name={building?.name ?? selection.name ?? 'Building'}
           colours={functionColours(functions, building?.function_id)}
           // The building's floor-area factor lands here and nowhere else.
-          right={summaryOf(inBuilding, buildingTotalOf(inBuilding, building, buildingFactors[selection.id]))}
+          right={summaryOf(
+            inBuilding,
+            buildingTotalOf(inBuilding, building, buildingFactors[selection.id]),
+            toDisplay,
+            AREA_UNIT
+          )}
         />
         <BuildingFactors
           building={building}
@@ -393,7 +402,7 @@ export default function OptionOutline({
           label="Group"
           name={group?.name ?? selection.name ?? 'Group'}
           colours={functionColours(functions, group?.function_id)}
-          right={summaryOf(inGroup)}
+          right={summaryOf(inGroup, null, toDisplay, AREA_UNIT)}
         />
         {inGroup.length === 0 ? (
           <PanelNote>Nothing from this group is in the option yet. Add a department on the canvas.</PanelNote>
@@ -428,7 +437,7 @@ export default function OptionOutline({
         label="Section"
         name={section?.name ?? 'Section'}
         colours={functionColours(functions, section?.function_id)}
-        right={summaryOf(inSection)}
+        right={summaryOf(inSection, null, toDisplay, AREA_UNIT)}
       />
       {groupNodes.length === 0 ? (
         <PanelNote>This section is empty. Add a department on the canvas.</PanelNote>

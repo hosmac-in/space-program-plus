@@ -17,14 +17,17 @@ import App from './ui/App.jsx'
 import CompanionApp from './companion/CompanionApp.jsx'
 import { inRhino } from './companion/bridge.js'
 import { ToastProvider } from './ui/primitives/Toast.jsx'
+import { AreaUnitProvider } from './ui/AreaUnitContext.jsx'
 import './index.css'
 
 const Root = inRhino() ? CompanionApp : App
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <ToastProvider>
-      <Root />
-    </ToastProvider>
+    <AreaUnitProvider>
+      <ToastProvider>
+        <Root />
+      </ToastProvider>
+    </AreaUnitProvider>
   </React.StrictMode>,
 )

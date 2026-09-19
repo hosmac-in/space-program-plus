@@ -696,7 +696,7 @@ export function cleanObjectNode(objectNode) {
 // counts existed here, which is what it displayed and totalled.
 export function catalogObjectCount(objectNode) {
   const stated = objectNode?.count
-  return Number.isInteger(stated) && stated > 0 ? stated : DEFAULT_CATALOG_OBJECT_COUNT
+  return Number.isFinite(stated) && stated > 0 ? stated : DEFAULT_CATALOG_OBJECT_COUNT
 }
 
 // --- Equipment ---------------------------------------------------------------
@@ -733,7 +733,9 @@ export function roomWithEquipmentCount(room, equipmentInstanceId, count) {
   return {
     ...room,
     equipment: room.equipment.map((e) =>
-      e.instance_id === equipmentInstanceId ? { ...e, count: Math.max(1, Math.round(count) || 1) } : e
+      e.instance_id === equipmentInstanceId
+        ? { ...e, count: Number.isFinite(count) && count > 0 ? count : 1 }
+        : e
     ),
   }
 }
@@ -746,7 +748,7 @@ export function roomWithObjectCount(room, objectInstanceId, count) {
     ...room,
     objects: (room.objects || []).map((o) =>
       o.instance_id === objectInstanceId
-        ? { ...o, count: Number.isInteger(count) && count > 0 ? count : DEFAULT_CATALOG_OBJECT_COUNT }
+        ? { ...o, count: Number.isFinite(count) && count > 0 ? count : DEFAULT_CATALOG_OBJECT_COUNT }
         : o
     ),
   }

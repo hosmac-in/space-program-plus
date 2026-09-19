@@ -27,7 +27,8 @@ import {
   SECTION_BORDER,
   SECTION_SHADOW,
 } from './canvasLayout.js'
-import { AREA_UNIT, formatArea } from '../map/area.js'
+import { formatArea } from '../map/area.js'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
 import DisclosureCaret from '../primitives/DisclosureCaret.jsx'
 import { withRemoveHint } from '../primitives/RemoveButton.jsx'
 
@@ -75,10 +76,11 @@ import { withRemoveHint } from '../primitives/RemoveButton.jsx'
 // than a row in the column, and its figure is set against 30px type.
 const FIGURE_SIZE = 11
 export function CanvasFigure({ areaSqft }) {
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   if (areaSqft == null) return null
   return (
     <span style={{ flexShrink: 0, fontSize: FIGURE_SIZE, fontWeight: 700, whiteSpace: 'nowrap' }}>
-      {formatArea(areaSqft)} {AREA_UNIT}
+      {formatArea(toDisplay(areaSqft))} {AREA_UNIT}
     </span>
   )
 }

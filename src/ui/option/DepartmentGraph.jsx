@@ -44,7 +44,8 @@ import { guideNodeTypes } from '../canvas/CanvasGuides.jsx'
 // and need the width more than the air.
 const PHASE_INSET = 10
 import { applyMotion, buildLayout, NODE_HEIGHT, NODE_WIDTH } from './departmentGraphLayout.js'
-import { AREA_UNIT, formatArea } from '../map/area.js'
+import { formatArea } from '../map/area.js'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
 
 // Stable identity so React Flow doesn't see a new edge array every render.
 // Containment is drawn by nesting boxes and by stacking buildings down the
@@ -92,6 +93,7 @@ const REORDER_DELAY_MS = GROW_MS + PAUSE_MS
 // turned one card into a row of competing blocks.
 function PhaseStrip({ data, entry, addable }) {
   const [hover, setHover] = useState(false)
+  const { toDisplay } = useAreaUnit()
   const ghost = !entry.isReal
   const roomy = data.phaseCount <= 4
   const selected = entry.isReal && data.isHighlighted && data.selectedPhase === entry.phase
@@ -157,7 +159,7 @@ function PhaseStrip({ data, entry, addable }) {
             overflow: 'hidden',
           }}
         >
-          {formatArea(entry.areaSqft)}
+          {formatArea(toDisplay(entry.areaSqft))}
         </span>
       )}
 
@@ -428,6 +430,7 @@ function ContainerNode({
 // swallow every click meant for the space around a card. CanvasBandHeading puts
 // the handler on the name and paints the selected wash there.
 function BuildingNode({ data }) {
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   return (
     <CanvasBandHeading
       colours={data.colours}
@@ -437,7 +440,7 @@ function BuildingNode({ data }) {
       gutter={data.gutter}
       right={
         <span style={{ fontWeight: 400, fontSize: 13, whiteSpace: 'nowrap', opacity: 0.75, flexShrink: 0 }}>
-          {formatArea(data.totalAreaSqft)} {AREA_UNIT}
+          {formatArea(toDisplay(data.totalAreaSqft))} {AREA_UNIT}
         </span>
       }
     />

@@ -10,8 +10,10 @@
 // through the brand. The only tab left is Tree, in the footer.
 
 import { RULE } from './layout.js'
+import { useAreaUnit } from './AreaUnitContext.jsx'
 
 export default function AppHeader({ onHome, email, onSignOut }) {
+  const { unit, toggleUnit } = useAreaUnit()
   return (
     <header
       style={{
@@ -51,6 +53,24 @@ export default function AppHeader({ onHome, email, onSignOut }) {
       <div style={{ flex: 1 }} />
 
       <span style={{ fontSize: 13, color: '#666' }}>{email}</span>
+      {/* Global display toggle — every area in the app is held in sqft and
+          this only changes how it is printed. Next to sign out for now. */}
+      <button
+        type="button"
+        onClick={toggleUnit}
+        title="Toggle the unit every area is shown in"
+        style={{
+          padding: '6px 12px',
+          fontSize: 13,
+          border: '1px solid #ccc',
+          borderRadius: 6,
+          background: '#fff',
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      >
+        {unit === 'm2' ? 'ft²' : 'm²'}
+      </button>
       <button
         type="button"
         onClick={onSignOut}

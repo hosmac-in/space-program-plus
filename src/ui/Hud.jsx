@@ -16,7 +16,8 @@
 
 import { phaseRows, summarize } from '../data/optionData.js'
 import { useCatalog } from '../data/catalog.jsx'
-import { AREA_UNIT, siteAreas, formatArea } from './map/area.js'
+import { siteAreas, formatArea } from './map/area.js'
+import { useAreaUnit } from './AreaUnitContext.jsx'
 import { RULE } from './layout.js'
 
 function Figure({ label, value, unit, muted = false }) {
@@ -58,6 +59,7 @@ export default function Hud({
   // the one stated on its tree node rather than one set here, and a total that
   // skipped that would disagree with every panel — see data/factors.js.
   const { sections, buildings } = useCatalog()
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   const { areaSqft, roomCount, objectCount, perPhase } = summarize(departments ?? [], {
     sections,
     buildings,
@@ -103,10 +105,10 @@ export default function Hud({
       {/* Wraps rather than scrolls sideways: side is narrow, and a figure half
           off the edge is worse than one on a second row. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', minWidth: 0 }}>
-        <Figure label="Programmed" value={formatArea(areaSqft)} unit={AREA_UNIT} muted={areaSqft === 0} />
+        <Figure label="Programmed" value={formatArea(toDisplay(areaSqft))} unit={AREA_UNIT} muted={areaSqft === 0} />
         <Figure
           label="Site"
-          value={site ? formatArea(site.sqft) : '—'}
+          value={site ? formatArea(toDisplay(site.sqft)) : '—'}
           unit={site ? AREA_UNIT : undefined}
           muted={!site}
         />
@@ -122,7 +124,7 @@ export default function Hud({
           <Figure
             key={key}
             label={label}
-            value={formatArea(totals.areaSqft)}
+            value={formatArea(toDisplay(totals.areaSqft))}
             unit={AREA_UNIT}
             // A phase nothing is staged in yet reads as a quiet zero rather
             // than as a figure among the ones that matter.

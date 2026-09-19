@@ -6,7 +6,7 @@
 
 import L from 'leaflet'
 
-const SQM_PER_SQFT = 0.09290304
+export const SQM_PER_SQFT = 0.09290304
 const SQM_PER_ACRE = 4046.8564224
 
 function ringArea(ring) {
