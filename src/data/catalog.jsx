@@ -6,7 +6,7 @@
 //
 //   sp_department     id, name, type, is_duplicable, function_id
 //   sp_group          id, name, is_duplicable, function_id
-//   sp_room           id, name, type, function_id
+//   sp_room           id, name, type, function_id, area_sqm
 //   sp_object         id, name, type, area_sqm
 //   sp_equipment      id, name, area_sqft
 //   sp_section        id, name, tree, function_id, building_id, is_core, version  <- tree.js
@@ -44,7 +44,7 @@ import { PLACEHOLDER_SCHEDULES } from './schedules.js'
 const TABLES = {
   departments: { table: 'sp_department', columns: 'id, name, type, is_duplicable, function_id', order: 'name' },
   groups: { table: 'sp_group', columns: 'id, name, is_duplicable, function_id', order: 'name' },
-  rooms: { table: 'sp_room', columns: 'id, name, type, function_id', order: 'name' },
+  rooms: { table: 'sp_room', columns: 'id, name, type, function_id, area_sqm', order: 'name' },
   objects: { table: 'sp_object', columns: 'id, name, type, area_sqm', order: 'name' },
   // The second kind of thing that stands in a room. It is drawn in ONE list with
   // the objects — see panelParts.jsx — and stored in a list of its own, because

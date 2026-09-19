@@ -167,6 +167,7 @@
 // object — takes a tree, returns a new tree, touches nothing else.
 
 import { supabase } from './supabase.js'
+import { sqmToSqft } from './units.js'
 
 // --- Pruning deleted definitions --------------------------------------------
 
@@ -404,11 +405,25 @@ export function roomWithArea(room, areaSqft) {
   return next
 }
 
-// What an option starts a room at. 0 for a node that states none, so a caller
-// seeding from it never has to handle an absence.
-export function catalogRoomAreaSqft(roomNode) {
+// Whether THIS PLACEMENT states its own default area — as opposed to falling
+// back to sp_room.area_sqm or to 0. Callers use this to draw the fallback
+// figure differently: it is the catalog's generic size for the room, not
+// something anyone typed for this placement.
+export function roomAreaIsStated(roomNode) {
   const stated = Number(roomNode?.area_sqft)
-  return Number.isFinite(stated) && stated > 0 ? stated : 0
+  return Number.isFinite(stated) && stated > 0
+}
+
+// What an option starts a room at. The placement's own area_sqft first — see
+// AREA above — and when this placement states none, sp_room's own area_sqm
+// (converted; that column is stated in m², see data/units.js). 0 when neither
+// is set, so a caller seeding from it never has to handle an absence.
+//
+// `roomDef` is optional so every existing call that only has the node still
+// works; without it this is exactly what it always was.
+export function catalogRoomAreaSqft(roomNode, roomDef = null) {
+  if (roomAreaIsStated(roomNode)) return Number(roomNode.area_sqft)
+  return sqmToSqft(roomDef?.area_sqm) ?? 0
 }
 
 // The suggested shape, in feet: { widthFt, lengthFt }, each 0 when unstated.

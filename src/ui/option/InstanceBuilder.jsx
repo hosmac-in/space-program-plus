@@ -770,7 +770,7 @@ export default function InstanceBuilder({
               // Seeded from the catalog placement, and 0 when it states none.
               // COPIED, not inherited: from here the figure belongs to this
               // option, and editing the catalog never moves it. See tree.js.
-              areaSqft: catalogRoomAreaSqft(node),
+              areaSqft: catalogRoomAreaSqft(node, def),
               // This option's own note, separate from the catalog's. Empty, not
               // seeded: the catalog's note is shown beside it, not copied.
               notes: '',

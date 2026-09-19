@@ -64,6 +64,13 @@ export const CANVAS_STYLE = `
     100% { box-shadow: 0 0 0 16px transparent; }
   }
   .tree-drop-pulse { animation: treeDropPulse 450ms ease-out; }
+  /* A search landing on one room row, inside an already-pulsing card — a
+     background wash rather than a ring, since a text row has no box to ring. */
+  @keyframes treeRoomPulse {
+    0% { background-color: rgba(26,115,232,0.35); }
+    100% { background-color: transparent; }
+  }
+  .tree-room-pulse { animation: treeRoomPulse 900ms ease-out; border-radius: 3px; }
   .tree-carousel-item {
     transition: transform 100ms ease, box-shadow 150ms ease, border-color 150ms ease;
   }
@@ -105,6 +112,7 @@ function HDepartmentCard({ data }) {
         onToggleRooms={data.onToggleRooms}
         onRemove={data.onRemove}
         removeTitle={removeHint('from this group')}
+        highlightRoomKey={data.highlightRoomKey}
       />
     </CanvasCard>
   )

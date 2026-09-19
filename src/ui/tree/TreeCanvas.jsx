@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, { Background, ReactFlowProvider, useNodesState, useReactFlow } from 'reactflow'
-import CanvasFrame, { useCanvasInput } from '../canvas/CanvasFrame.jsx'
+import CanvasFrame, { GUTTER, useCanvasInput } from '../canvas/CanvasFrame.jsx'
 import 'reactflow/dist/style.css'
 import { useCatalog } from '../../data/catalog.jsx'
 import { byName } from '../../data/tree.js'
@@ -17,6 +17,8 @@ import { CANVAS_STYLE, COLLAPSE_MS, CarouselRow, nodeTypes } from './treeNodes.j
 import { useTreeEditorContext } from './useTreeEditor.jsx'
 import { Band } from '../primitives/Band.jsx'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
+import { useToast } from '../primitives/Toast.jsx'
+import { Z } from '../primitives/zIndex.js'
 
 // Stable identity so React Flow doesn't see a new edge array every render. The
 // tree draws containment by nesting boxes, so it has no edges at all.
@@ -25,6 +27,112 @@ const NO_EDGES = []
 // Above every resting node (sections 0, groups 10, departments 20) while a drag
 // is in flight.
 const DRAG_Z = 1000
+
+// A stand-in for `expandedGroups`/`expandedRooms` that answers every `.has()`
+// with true — buildTreeLayout never iterates either set, only tests
+// membership, so this is enough to make it emit every department and every
+// room row regardless of what is actually open on screen. Used ONLY to build
+// the search index below: a search has to find something behind a shut group,
+// which the real, current layout would simply not contain.
+const ALWAYS_EXPANDED = { has: () => true }
+
+// buildTreeLayout wants a full callback set; the index it builds is thrown
+// away, so every one of these is a no-op.
+const INDEX_CALLBACKS = {
+  onSelectDepartment: () => {},
+  onSelectBuilding: () => {},
+  onRemoveDepartment: () => {},
+  onRemoveGroup: () => {},
+  onToggleRooms: () => {},
+  onToggleGroup: () => {},
+}
+
+// THE SEARCH ICON'S OWN CORNER, absolutely positioned inside the canvas pane —
+// not the gutter, which is a scrollbar and has no room for a control on it.
+// Bottom-left because side and the carousels already own the right and the
+// top; this is the one corner of the drawing nothing else has claimed.
+function CanvasSearch({ onSearch }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus()
+  }, [open])
+
+  return (
+    <div
+      // nodrag/nopan: without these, React Flow's own pointer handling on the
+      // pane claims the click before it reaches the input or the button.
+      className="nodrag nopan"
+      style={{
+        position: 'absolute',
+        left: GUTTER + 12,
+        bottom: GUTTER + 12,
+        zIndex: Z.mapControls,
+        display: 'flex',
+        alignItems: 'center',
+        background: '#fff',
+        borderRadius: open ? 8 : '50%',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+      }}
+    >
+      {open ? (
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          placeholder="Search a room, department, group…"
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onSearch(query)
+            else if (e.key === 'Escape') {
+              setQuery('')
+              setOpen(false)
+            }
+          }}
+          // Closes itself once abandoned empty — a search box left open over
+          // the canvas with nothing typed is a control nobody is using.
+          onBlur={() => {
+            if (!query) setOpen(false)
+          }}
+          style={{
+            width: 220,
+            boxSizing: 'border-box',
+            padding: '8px 10px',
+            fontSize: 13,
+            border: 'none',
+            outline: 'none',
+            borderRadius: 8,
+            background: 'transparent',
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Search for a room, department, group, room group or section"
+          aria-label="Search the catalog"
+          style={{
+            width: 36,
+            height: 36,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: 'none',
+            background: 'transparent',
+            borderRadius: '50%',
+            cursor: 'pointer',
+            fontSize: 16,
+            lineHeight: 1,
+          }}
+        >
+          🔍
+        </button>
+      )}
+    </div>
+  )
+}
 
 
 function TreeCanvasInner({
@@ -38,8 +146,9 @@ function TreeCanvasInner({
   const { departments, groups, rooms, sections, functions, buildings } = useCatalog()
   const editor = useTreeEditorContext()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const { getIntersectingNodes, screenToFlowPosition } = useReactFlow()
+  const { getIntersectingNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow()
   const canvasInput = useCanvasInput()
+  const onToast = useToast()
 
   const hoveredIdRef = useRef(null)
   const draggingCarouselRef = useRef(null)
@@ -48,6 +157,10 @@ function TreeCanvasInner({
   const dragRef = useRef(null)
   const nodesRef = useRef([])
   const computedRef = useRef(null)
+  // A search hit that needed a shut group or a shut room list opened first —
+  // set on the way in, read and cleared the moment the layout that follows
+  // lands, since only THAT layout has a position for the thing it names.
+  const pendingSearchRef = useRef(null)
   // Section widths and building heights only ever grow. Without these floors,
   // removing a department would shrink its section and slide every section to
   // the right of it, or shorten its building and drag every building below it
@@ -171,6 +284,127 @@ function TreeCanvasInner({
     ]
   )
 
+  const pulseTarget = useCallback(
+    (targetId) => {
+      const mark = (pulse) =>
+        setNodes((nds) => nds.map((n) => (n.id === targetId ? { ...n, data: { ...n.data, pulse } } : n)))
+      mark(true)
+      setTimeout(() => mark(false), 450)
+    },
+    [setNodes]
+  )
+
+  // THE SAME IDEA, on one row of a department's own room list rather than on a
+  // card — see CardRoomList's note. `deptId` is the card carrying the row;
+  // there is no separate canvas node for a room or a room group to pulse.
+  const pulseRoom = useCallback(
+    (deptId, roomKey) => {
+      const mark = (highlightRoomKey) =>
+        setNodes((nds) => nds.map((n) => (n.id === deptId ? { ...n, data: { ...n.data, highlightRoomKey } } : n)))
+      mark(roomKey)
+      setTimeout(() => mark(null), 900)
+    },
+    [setNodes]
+  )
+
+  // --- Search ----------------------------------------------------------------
+  //
+  // EVERY ROOM, DEPARTMENT, GROUP, ROOM GROUP AND SECTION IN THE CATALOG, flat —
+  // built from a layout where nothing is collapsed (ALWAYS_EXPANDED), because a
+  // search has to find something behind a shut group exactly as well as
+  // something already on screen. Only used to look a name up: the real
+  // positions this canvas draws come from `computed`, below.
+  const searchIndex = useMemo(() => {
+    const layout = buildTreeLayout(
+      {
+        sections,
+        groups,
+        departments,
+        rooms,
+        buildings,
+        functions,
+        canEdit,
+        expandedRooms: ALWAYS_EXPANDED,
+        expandedGroups: ALWAYS_EXPANDED,
+      },
+      null,
+      INDEX_CALLBACKS,
+      new Map(),
+      new Map(),
+      null
+    )
+    const idx = []
+    layout.nodes.forEach((n) => {
+      if (n.type === 'tSectionBox') idx.push({ kind: 'section', name: n.data.name, id: n.id })
+      else if (n.type === 'tGroupBox') idx.push({ kind: 'group', name: n.data.name, id: n.id, groupId: n.id })
+      else if (n.type === 'tDepartment') {
+        idx.push({ kind: 'department', name: n.data.name, id: n.id, deptId: n.id, groupId: n.data.groupInstanceId })
+        ;(n.data.rooms || []).forEach((r) => {
+          idx.push({
+            kind: r.group ? 'roomGroup' : 'room',
+            name: r.name,
+            deptId: n.id,
+            groupId: n.data.groupInstanceId,
+            roomKey: r.key,
+          })
+        })
+      }
+    })
+    return idx
+  }, [sections, groups, departments, rooms, buildings, functions, canEdit])
+
+  // Pan to whatever a search matched and pulse it — the card for a section,
+  // group or department, the card plus its own row for a room or room group.
+  // `nodesList` is passed explicitly right after a group or a room list has
+  // just been opened for this, when the fresh layout is in hand but has not
+  // necessarily reached `computedRef` yet.
+  const focusHit = useCallback(
+    (hit, nodesList) => {
+      const list = nodesList ?? computedRef.current?.nodes ?? []
+      const isRoom = hit.kind === 'room' || hit.kind === 'roomGroup'
+      const targetId = isRoom ? hit.deptId : hit.id
+      const node = list.find((n) => n.id === targetId)
+      if (!node) return
+      // A department's position is relative to its group box — see
+      // childrenOf's own `absolute` helper, which does the same thing.
+      const parent = node.parentNode ? list.find((n) => n.id === node.parentNode) : null
+      const x = (parent?.position.x ?? 0) + node.position.x + (node.width ?? NODE_WIDTH) / 2
+      const y = (parent?.position.y ?? 0) + node.position.y + (node.height ?? NODE_HEIGHT) / 2
+      setCenter(x, y, { zoom: getZoom(), duration: 600 })
+      pulseTarget(targetId)
+      if (isRoom) pulseRoom(hit.deptId, hit.roomKey)
+    },
+    [setCenter, getZoom, pulseTarget, pulseRoom]
+  )
+
+  const runSearch = useCallback(
+    (query) => {
+      const q = query.trim().toLowerCase()
+      if (!q) return
+      const hit = searchIndex.find((e) => e.name?.toLowerCase().includes(q))
+      if (!hit) {
+        onToast(`Nothing in the catalog matches "${query.trim()}"`, 'error')
+        return
+      }
+      // A group that's shut emits no department nodes at all, and a card whose
+      // room list is shut lists nothing to pulse — either has to open before
+      // there is anything to pan to. See ALWAYS_EXPANDED above for why the
+      // index still found it.
+      const needsGroupOpen = hit.groupId && !expandedGroups.has(hit.groupId)
+      const needsRoomsOpen = (hit.kind === 'room' || hit.kind === 'roomGroup') && !expandedRooms.has(hit.deptId)
+      if (needsGroupOpen || needsRoomsOpen) {
+        if (needsGroupOpen) setExpandedGroups((cur) => new Set(cur).add(hit.groupId))
+        if (needsRoomsOpen) setExpandedRooms((cur) => new Set(cur).add(hit.deptId))
+        // Picked up by the layout effect below, the moment the reopened
+        // catalog has a position for this again.
+        pendingSearchRef.current = hit
+      } else {
+        focusHit(hit)
+      }
+    },
+    [searchIndex, expandedGroups, expandedRooms, onToast, focusHit]
+  )
+
   // Every node is nested inside a section by construction, so there are no
   // free-floating positions to preserve: any real data change snaps everything
   // back to its computed slot.
@@ -188,7 +422,15 @@ function TreeCanvasInner({
     })
     setNodes(computed.nodes)
     computedRef.current = computed
-  }, [computed, setNodes])
+    // A search that had to open a shut group or a shut room list first: this is
+    // the layout that opening produced, so it is the first one with a position
+    // for what was found. See runSearch/focusHit above.
+    if (pendingSearchRef.current) {
+      const hit = pendingSearchRef.current
+      pendingSearchRef.current = null
+      focusHit(hit, computed.nodes)
+    }
+  }, [computed, setNodes, focusHit])
 
   // --- Carousels ------------------------------------------------------------
   //
@@ -388,16 +630,6 @@ function TreeCanvasInner({
           return n
         })
       )
-    },
-    [setNodes]
-  )
-
-  const pulseTarget = useCallback(
-    (targetId) => {
-      const mark = (pulse) =>
-        setNodes((nds) => nds.map((n) => (n.id === targetId ? { ...n, data: { ...n.data, pulse } } : n)))
-      mark(true)
-      setTimeout(() => mark(false), 450)
     },
     [setNodes]
   )
@@ -709,6 +941,8 @@ function TreeCanvasInner({
             <Background />
           </ReactFlow>
         </CanvasFrame>
+
+        <CanvasSearch onSearch={runSearch} />
       </div>
 
       {/* THE CATALOG IS SHARED, so this is not "your" card going away — it is

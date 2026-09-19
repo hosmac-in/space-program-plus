@@ -29,6 +29,7 @@ import {
   newObjectNode,
   newRoomNode,
   resolveNodePlacement,
+  roomAreaIsStated,
   roomWithArea,
   roomWithDimension,
   roomWithLabel,
@@ -225,7 +226,12 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
             // Once per room: the block wears it and the schedule band is
             // painted a pale wash of it.
             const roomColours = functionColours(functions, def.function_id)
-            const areaSqft = catalogRoomAreaSqft(node)
+            const areaSqft = catalogRoomAreaSqft(node, def)
+            // Nobody has typed a default area on THIS placement — the figure
+            // shown is sp_room's own area_sqm (or 0 if that's empty too), not
+            // something this placement states. Drawn muted so it reads as a
+            // borrowed figure rather than an authored one.
+            const areaIsDefault = !roomAreaIsStated(node)
             // What this placement is called here — its own label, or the
             // definition's name. Resolved once and used for the header, every
             // title and every undo message, so a department holding two Toilets
@@ -398,7 +404,12 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 <RoomAreaRow
                   value={areaSqft}
                   canEdit={canEdit}
-                  title={`Default area of one ${shown}`}
+                  isDefault={areaIsDefault}
+                  title={
+                    areaIsDefault
+                      ? `${shown}'s generic area from sp_room — nobody has set one for this placement`
+                      : `Default area of one ${shown}`
+                  }
                   onCommit={(next) =>
                     next !== areaSqft &&
                     editRoom(node.instance_id, (r) => roomWithArea(r, next), `${shown}: default area set`)
@@ -607,7 +618,10 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 // the sum of what is on screen under it, which is the only
                 // figure it could honestly state. An option sizes them; this is
                 // what it starts from.
-                totalAreaSqft={entry.rooms.reduce((sum, n) => sum + catalogRoomAreaSqft(n), 0)}
+                totalAreaSqft={entry.rooms.reduce(
+                  (sum, n) => sum + catalogRoomAreaSqft(n, rooms.find((r) => r.id === n.room_def_id)),
+                  0
+                )}
                 onNameCommit={canEdit ? (next) => renameGroup(entry.group, next) : undefined}
                 onRemove={canEdit ? () => askDissolve(entry.group, entry.rooms.length) : null}
                 removeTitle={removeHint('this group')}

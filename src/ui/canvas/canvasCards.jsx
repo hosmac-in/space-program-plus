@@ -193,7 +193,7 @@ export function CanvasRow({
     </div>
   )
 }
-export function CardRoomList({ rooms }) {
+export function CardRoomList({ rooms, highlightKey = null }) {
   if (!rooms?.length) return null
   return (
     <div
@@ -218,6 +218,10 @@ export function CardRoomList({ rooms }) {
         <div
           key={room.key}
           title={room.count > 1 ? `${room.count} × ${room.name}` : room.name}
+          // A search landing on this exact row — see TreeCanvas's CanvasSearch.
+          // Transient, cleared a moment after it's set; nothing else ever reads
+          // room.key against anything, so this is the row's only use of it.
+          className={room.key === highlightKey ? 'tree-room-pulse' : undefined}
           style={{
             paddingLeft: room.depth ? ROOM_GROUP_STEP : 0,
             // A group heading is the same size as the rooms under it and only
@@ -280,6 +284,9 @@ export function DepartmentCardFace({
   add = null,
   onRemove,
   removeTitle,
+  // A room or room group a search just landed on — see TreeCanvas's
+  // CanvasSearch and CardRoomList's own note. Null everywhere else.
+  highlightRoomKey = null,
 }) {
   const hasRooms = rooms?.length > 0
   const listed = hasRooms && expanded
@@ -320,7 +327,7 @@ export function DepartmentCardFace({
       />
       {listed && (
         <div style={{ paddingLeft: ROW_INSET, paddingRight: controlInset(DEPTH.card), minWidth: 0 }}>
-          <CardRoomList rooms={rooms} />
+          <CardRoomList rooms={rooms} highlightKey={highlightRoomKey} />
         </div>
       )}
     </div>

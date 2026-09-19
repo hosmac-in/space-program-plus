@@ -599,7 +599,7 @@ export function ObjectRow({
           line up: one is the room, the rest are what is in it. */}
       {area !== undefined && (
         <span style={{ ...AREA_FIGURE, color: tone === 'warn' ? '#c11' : '#555' }}>
-          {area != null ? `${formatArea(toDisplay(area))} ${AREA_UNIT}` : 'no area'}
+          {area != null ? `${formatArea(toDisplay(area), 1)} ${AREA_UNIT}` : 'no area'}
         </span>
       )}
     </div>
@@ -621,10 +621,23 @@ export function ObjectRow({
 // label, and the area in AREA_WIDTH ending on the block's own edge. It is the
 // room's own row rather than one of its children, so it carries no branch — the
 // tree runs past it on the way to the objects.
-export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChange, onCommit, title }) {
+export function RoomAreaRow({
+  label = 'Room area',
+  value,
+  canEdit = true,
+  onChange,
+  onCommit,
+  title,
+  // True when `value` is not something stated for this placement — the
+  // catalog's generic sp_room.area_sqm (or 0, when that's empty too) rather
+  // than a figure this placement's own RoomAreaRow was typed into. Drawn
+  // muted, the same "borrowed, not authored" ink every other inherited figure
+  // in this app uses — see CLAUDE.md, "Defaults in the catalog".
+  isDefault = false,
+}) {
   // `value` is held in sqft everywhere upstream (see CLAUDE.md, Area); this
   // field only converts what it shows and what it hands back, at its own edge.
-  const { unit, label: AREA_UNIT, toDisplay, toStored } = useAreaUnit()
+  const { label: AREA_UNIT, toDisplay, toStored } = useAreaUnit()
   return (
     <div
       className="spp-row"
@@ -645,12 +658,16 @@ export function RoomAreaRow({ label = 'Room area', value, canEdit = true, onChan
         canEdit={canEdit}
         onChange={(n) => onChange?.(toStored(n))}
         onCommit={onCommit ? (n) => onCommit(toStored(n)) : undefined}
+        // Muted ink for a figure nobody stated on this placement — see the
+        // note on `isDefault` above. Still italic: CountField always is.
+        colour={isDefault ? '#999' : '#555'}
         // A room may legitimately have no area entered yet, so unlike a count
         // this floors at zero.
         min={0}
-        // m² wants a finer step than sqft — typing to a whole square metre is
-        // coarser than the figures this app is usually measured in.
-        decimals={unit === 'm2' ? 2 : 0}
+        // Always one decimal place, whichever unit this is shown in — a room
+        // area is a measurement read off a drawing, and a whole number alone
+        // looks more precise than it is.
+        decimals={1}
         prefix=""
         suffix={AREA_UNIT}
         // Typed, never nudged — a measurement read off a drawing.
