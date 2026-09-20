@@ -1,8 +1,8 @@
-// The one conversion this app's data layer needs: sp_object.area_sqm is
-// stated in m² while everything else here — every room and department area —
-// is held in sqft (see CLAUDE.md, Area). A catalog object's area is converted
-// once, at the point it is read off the definition row, so nothing downstream
-// has to know which table's column came in which unit.
+// The one conversion this app's data layer needs: the definition tables state
+// `area_sqm` in m² — sp_room, sp_object and sp_equipment — while everything
+// else here, every room and department area, is held in sqft (see CLAUDE.md,
+// Area). A definition's area is converted once, at the point it is read off the
+// row, so nothing downstream has to know which unit a column came in.
 //
 // Lives in data/, not ui/map/area.js, because data/ must not import from ui/
 // and this is read from data/optionData.js as well as from several panels.

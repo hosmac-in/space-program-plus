@@ -205,9 +205,8 @@ export default function DepartmentBlock({
             // sp_equipment has no `type` column. undefined rather than a
             // stand-in: ObjectRow already draws a row without one.
             type: def.type,
-            // sp_object states area in m²; sp_equipment still in sqft. See
-            // data/units.js.
-            areaSqft: def.kind === 'equipment' ? def.area_sqft : sqmToSqft(def.area_sqm),
+            // Both tables state area in m². See data/units.js.
+            areaSqft: sqmToSqft(def.area_sqm),
             count: DEFAULT_OBJECT_COUNT,
           },
         ],

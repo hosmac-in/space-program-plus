@@ -255,7 +255,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 })),
               equipment: linked
                 .filter((e) => e.kind === 'equipment')
-                .map((e) => ({ areaSqft: e.def.area_sqft ?? null, count: catalogObjectCount(e.node) })),
+                .map((e) => ({ areaSqft: sqmToSqft(e.def.area_sqm), count: catalogObjectCount(e.node) })),
             }
             const circulation = circulationSqft(asRoom, circulationDef?.id)
             // The circulation line only draws once an area has been entered.
@@ -442,8 +442,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                           )
                         }
                         area={(() => {
-                          const perOne =
-                            entry.kind === 'equipment' ? entry.def.area_sqft ?? null : sqmToSqft(entry.def.area_sqm)
+                          const perOne = sqmToSqft(entry.def.area_sqm)
                           return perOne != null ? perOne * catalogObjectCount(entry.node) : null
                         })()}
                         canEdit={canEdit}

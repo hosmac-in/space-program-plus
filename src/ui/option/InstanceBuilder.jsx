@@ -721,7 +721,7 @@ export default function InstanceBuilder({
           instanceId: crypto.randomUUID(),
           defId: def.id,
           name: def.name,
-          areaSqft: def.area_sqft ?? null,
+          areaSqft: sqmToSqft(def.area_sqm),
           count: catalogObjectCount(node),
         },
       ]

@@ -8,7 +8,7 @@
 //   sp_group          id, name, is_duplicable, function_id
 //   sp_room           id, name, type, function_id, area_sqm
 //   sp_object         id, name, type, area_sqm
-//   sp_equipment      id, name, area_sqft
+//   sp_equipment      id, name, area_sqm
 //   sp_section        id, name, tree, function_id, building_id, is_core, version  <- tree.js
 //   sp_building       id, name, function_id, sort_order,
 //                     built_area_grossing_factor, floor_area_grossing_factor  <- factors.js
@@ -50,7 +50,7 @@ const TABLES = {
   // the objects — see panelParts.jsx — and stored in a list of its own, because
   // a def id has to say which table it points at and a shared array could not.
   // No `type` column: this is deliberately the narrower table for now.
-  equipment: { table: 'sp_equipment', columns: 'id, name, area_sqft', order: 'name' },
+  equipment: { table: 'sp_equipment', columns: 'id, name, area_sqm', order: 'name' },
   // `version` is fetched because every tree write is conditional on it.
   sections: {
     table: 'sp_section',

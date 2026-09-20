@@ -553,7 +553,7 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
                     instanceId: e.instance_id ?? crypto.randomUUID(),
                     defId: e.equipment_def_id,
                     name: equipmentDef?.name,
-                    areaSqft: equipmentDef?.area_sqft ?? null,
+                    areaSqft: sqmToSqft(equipmentDef?.area_sqm),
                     count: e.count,
                   }
                 }),
