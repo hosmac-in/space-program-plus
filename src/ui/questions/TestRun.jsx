@@ -24,7 +24,7 @@ import Toggle from '../primitives/Toggle.jsx'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
 import { Branch, BranchRoot, BRANCH_ORIGIN_CONTENT, TreeLayer, useRootAnchor } from '../panel/PanelTree.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, setLabel, SUPPORTING } from './questionModel.js'
+import { buildModel, SUPPORTING } from './questionModel.js'
 import { useTestRun } from './useTestRun.jsx'
 
 const RAIL_WIDTH = 240
@@ -127,7 +127,7 @@ function groupTouched(group, run) {
     department.questions.some(
       (node) =>
         run.answers.questions[node.id] !== undefined ||
-        node.sets.some((set) => (run.answers.sets[set.instance_id] ?? 0) > 0)
+        node.connections.some((c) => (run.answers.counts[c.instance_id] ?? 0) > 0)
     )
   )
 }
@@ -425,17 +425,17 @@ function Eyebrow({ children }) {
 const GATE_ROW = 34
 const DEPT_ROW = 26
 const QUESTION_ROW = 26
-const SET_ROW = 26
+const CONNECTION_ROW = 26
 
 // THE TYPE LADDER, largest first, one step per level of the tree: the group is
 // what the section asks, a department is what that opened, a question is asked
-// about the department and a set is its answer. Each level smaller than the one
-// it hangs off — a set set larger than its question read as the subject of the
-// card rather than as the reply to it.
+// about the department and a connection is its answer. Each level smaller than
+// the one it hangs off — an answer set larger than its question read as the
+// subject of the card rather than as the reply to it.
 const GATE_TYPE = 22
 const DEPT_TYPE = 17
 const QUESTION_TYPE = 15
-const SET_TYPE = 14
+const CONNECTION_TYPE = 14
 
 // WHERE EVERY ANSWER SITS, from the card's own left edge. The switches and the
 // counters are a COLUMN, so it is set once on the box the whole tree is drawn
@@ -645,8 +645,8 @@ function SectionCard({ step, run, revealedOf, onReveal }) {
   )
 }
 
-// ONE DEPARTMENT, INSIDE ITS GROUP'S ROW: its questions, and under each yes the
-// room sets with their counters. This is where most of a run is spent.
+// ONE DEPARTMENT, INSIDE ITS GROUP'S ROW: its questions, and under each yes what
+// it connects to, with their counters. This is where most of a run is spent.
 //
 // Its name is a heading rather than a card: it sits inside the group that is
 // already boxed, and a box inside a box inside the section's own card is three
@@ -696,17 +696,18 @@ function DepartmentBlock({ department, run }) {
               </div>
             )}
 
-            {/* The follow-up, and it is always the same thing: the sets, one
-                counter each. */}
-            {asked && node.sets.length === 0 && <PanelNote>This question connects to no rooms yet.</PanelNote>}
+            {/* The follow-up, and it is always the same thing: what the question
+                connects to, one counter each. */}
+            {asked && node.connections.length === 0 && (
+              <PanelNote>This question connects to no rooms yet.</PanelNote>
+            )}
             {asked &&
-              node.sets.map((set) => (
-                <Branch key={set.instance_id} endpoint="dot" head={SET_ROW / 2}>
-                  <SetRow
-                    set={set}
-                    department={department}
-                    count={run.countOf(set.instance_id)}
-                    onCount={(n) => run.setCount(set.instance_id, n)}
+              node.connections.map((connection) => (
+                <Branch key={connection.instance_id} endpoint="dot" head={CONNECTION_ROW / 2}>
+                  <ConnectionRow
+                    connection={connection}
+                    count={run.countOf(connection.instance_id)}
+                    onCount={(n) => run.setCount(connection.instance_id, n)}
                   />
                 </Branch>
               ))}
@@ -717,18 +718,28 @@ function DepartmentBlock({ department, run }) {
   )
 }
 
-// One room set, and the counter that is its whole answer. 0 is "not chosen" and
-// the row is greyed at it — the same reading the designer draws.
+// One connection — a catalog room group or a single room — and the counter that
+// is its whole answer. 0 is "not chosen" and the row is greyed at it, the same
+// reading the designer draws.
 //
-// >>> THE ROOMS A SET BRINGS ARE NOT LISTED HERE. A run is answered by what a
+// >>> THE ROOMS A GROUP BRINGS ARE NOT LISTED HERE. A run is answered by what a
 // >>> thing IS — two 3 Tesla MRIs — not by which rooms that buys, and the list
 // >>> sat under the one row on the card that already had a number to read. Side
 // >>> is where the rooms appear, as they are counted.
-function SetRow({ set, department, count, onCount }) {
+function ConnectionRow({ connection, count, onCount }) {
   const chosen = count > 0
 
   return (
-    <div style={{ height: SET_ROW, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0, fontSize: SET_TYPE }}>
+    <div
+      style={{
+        height: CONNECTION_ROW,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 16,
+        minWidth: 0,
+        fontSize: CONNECTION_TYPE,
+      }}
+    >
       <span
         style={{
           flex: 1,
@@ -739,7 +750,7 @@ function SetRow({ set, department, count, onCount }) {
           color: chosen ? '#222' : '#aaa',
         }}
       >
-        {setLabel(set, department)}
+        {connection.name}
       </span>
       <CountField
         value={count}
@@ -748,7 +759,7 @@ function SetRow({ set, department, count, onCount }) {
         prefix=""
         width={84}
         colour={chosen ? '#333' : '#bbb'}
-        title={`How many ${setLabel(set, department)}`}
+        title={`How many ${connection.name}`}
         onChange={onCount}
       />
     </div>

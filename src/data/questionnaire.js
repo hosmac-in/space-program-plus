@@ -20,11 +20,10 @@
 //                   "instance_id": "...",
 //                   "prompt": "Is there an MRI?",
 //                   "comment": "",
-//                   "room_sets": [           <- THE FOLLOW-UP, always this
-//                     { "instance_id": "...",
-//                       "name": "3 Tesla",   <- authored, see ROOM SETS
-//                       "rooms": [{ "instance_id": "...", "label": "Console" }]
-//                     }
+//                   "connections": [         <- THE FOLLOW-UP, always this
+//                     { "kind": "room_group",   <- or "room"
+//                       "instance_id": "...",   <- a CATALOG id, see below
+//                       "label": "3 Tesla" }    <- frozen, display-only
 //                   ]
 //                 }]
 //               }
@@ -54,36 +53,36 @@
 // department is programmed by asking about it, and being sized by a rule is the
 // departure.
 //
-// THE FOLLOW-UP TO A QUESTION IS ALWAYS ITS ROOM SETS, one counter each. So a
+// THE FOLLOW-UP TO A QUESTION IS ALWAYS ITS CONNECTIONS, one counter each. So a
 // question has no number of its own and no sub-questions:
 //
 //   Is there an MRI?                     yes/no
-//     3 Tesla        [ 2 ]               a SET, and its counter
+//     3 Tesla        [ 2 ]               a ROOM GROUP, and its counter
 //       Therapy Room                       the rooms it brings, all at once
 //       Console Room
 //       Machine Room
 //     5 Tesla        [ 0 ]               0 = not chosen, drawn greyed
 //
-// A SET IS ONE OR MORE ROOMS ANSWERED BY ONE NUMBER — two of a 3 Tesla MRI is
-// two of each room in it. Most sets hold one room and read as that room; the
-// set exists for the case where a thing you count is several rooms at once.
+// A CONNECTION IS A CATALOG ROOM GROUP OR A SINGLE ROOM, answered by one number
+// — two of a 3 Tesla MRI is two of each room in the group. The grouping is
+// sp_section.tree's `room_groups`, authored on the Tree tab (see ROOM GROUPS in
+// data/tree.js), and this document only POINTS at one.
 //
-//   >>> THIS GROUPING IS THE QUESTIONNAIRE'S OWN. It is NOT sp_section.tree's
-//   >>> `room_groups`, which is the catalog's way of boxing a long room list for
-//   >>> reading, authored on the Tree tab and shared with every option. A set is
-//   >>> a statement about what one answer buys, so it is authored here and lives
-//   >>> nowhere else. Do not read one from the other.
+//   >>> THE QUESTIONNAIRE OWNS NO GROUPING OF ITS OWN. It had one briefly —
+//   >>> authored "room sets" — and that was two places to say which rooms belong
+//   >>> together, drifting apart the moment the catalog was rearranged. A group
+//   >>> is a fact about the department; a question names one.
 //
 // Two MRI machines differ by the SIZE OF THE ROOMS they need, which is why a
-// set holds rooms and never points at an object — an object target would be a
-// second way to say what the room already says. Both were proposed and both
-// were dropped; don't add either back.
+// connection is a room and never an object — an object target would be a second
+// way to say what the room already says. Both were proposed and both were
+// dropped; don't add either back.
 //
-// A set's rooms are placements inside the question's OWN department, never
-// elsewhere, and A ROOM IS USED ONCE PER DEPARTMENT: once a set has it, no
-// other set and no other question in that department may take it. The counter
-// is the ANSWER and is not stored here — this document is the form, not the
-// filled-in copy.
+// A connection points inside the question's OWN department, never elsewhere, and
+// A ROOM IS USED ONCE PER DEPARTMENT: once a question has it — on its own or
+// inside a group — no other connection and no other question in that department
+// may take it. The counter is the ANSWER and is not stored here: this document
+// is the form, not the filled-in copy.
 //
 // NOTHING IS KEYED BY A *_def_id. Every key is an instance_id (or a section's
 // own row id), for tree.js's reason: two placements of one duplicable
@@ -118,7 +117,7 @@ export const SUPPORTING = 'supporting'
 // always the same thing — its list of rooms, one counter each — so both were
 // removed rather than left as a second way to ask "how many".
 export function newQuestion(prompt = 'New question') {
-  return { instance_id: crypto.randomUUID(), prompt, comment: '', rooms: [] }
+  return { instance_id: crypto.randomUUID(), prompt, comment: '', connections: [] }
 }
 
 // The number a yes may go on to ask. Its answer is the count of the rooms this
@@ -134,8 +133,8 @@ export function newGate(prompt) {
 // A supporting department's rule: one term, driver × coefficient.
 //
 // The driver is a FIGURE THE QUESTIONNAIRE WILL HAVE, and since a question
-// itself no longer asks a number there are exactly two kinds: a room some
-// question counts (`room`), or a group gate's headline total (`gate`).
+// itself no longer asks a number there are exactly two kinds: a connection some
+// question counts (a room group or a room), or a gate's headline total.
 // `source_label` is frozen beside the id so a driver whose source has been
 // deleted still reads as something.
 export function newDriver() {
@@ -259,67 +258,58 @@ export function updateQuestion(definition, sectionId, groupId, deptId, questionI
   }))
 }
 
-// --- Room sets ----------------------------------------------------------------
+// --- Connections --------------------------------------------------------------
 
-// A SET READS AS ITS ONE ROOM until it holds more. `name` is authored only when
-// there is something a list of room names cannot say — "3 Tesla" over three
-// rooms — so an unnamed set is the normal case and not an unfinished one.
-export function newRoomSet(rooms = []) {
-  return { instance_id: crypto.randomUUID(), name: '', rooms }
+export const ROOM_GROUP = 'room_group'
+export const ROOM = 'room'
+
+// `label` is frozen beside the id for sp_path's reason: a group dissolved or a
+// room deleted on the Tree tab must still read as something.
+export function newConnection(kind, instanceId, label) {
+  return { kind, instance_id: instanceId, label: label ?? '' }
 }
 
-// THE ONE READER of a question's follow-up, and it is what makes the older
-// shape keep working: a question written before sets held a flat `rooms` array,
-// and each of those is exactly a set of one. Absence means the behaviour that
-// version had — no migration, as everywhere else here.
-export function questionRoomSets(question) {
-  if (Array.isArray(question?.room_sets)) return question.room_sets
-  return (question?.rooms ?? []).map((room) => ({
-    instance_id: `legacy:${room.instance_id}`,
-    name: '',
-    rooms: [room],
-  }))
+// THE ONE READER of a question's follow-up, and what makes both older shapes
+// keep working. A question written before this had `room_sets`, and one before
+// those a flat `rooms` array; each room in either is exactly a room connection.
+// An authored set of several has no catalog counterpart, so it FLATTENS to its
+// rooms — the grouping it carried is the Tree tab's to state now.
+export function questionConnections(question) {
+  if (Array.isArray(question?.connections)) return question.connections
+  const rooms = Array.isArray(question?.room_sets)
+    ? question.room_sets.flatMap((set) => set?.rooms ?? [])
+    : (question?.rooms ?? [])
+  return rooms.map((room) => newConnection(ROOM, room.instance_id, room.label))
 }
 
-// Every room the question spoken for, across all its sets — what the
-// once-per-department rule is checked against.
+// Every room the question has spoken for DIRECTLY. A group's members are added
+// by the caller, which is the only place the catalog is in hand.
 export function questionRoomIds(question) {
-  return questionRoomSets(question).flatMap((set) => (set.rooms ?? []).map((r) => r.instance_id))
+  return questionConnections(question)
+    .filter((c) => c.kind === ROOM)
+    .map((c) => c.instance_id)
 }
 
-// Writing always writes `room_sets`, so the first edit of a legacy question
-// settles it into the current shape.
-function withSets(question, sets) {
-  const next = { ...question, room_sets: sets }
+// Writing always writes `connections`, so the first edit of a question in either
+// older shape settles it into the current one.
+function withConnections(question, connections) {
+  const next = { ...question, connections }
   delete next.rooms
+  delete next.room_sets
   return next
 }
 
-export function questionWithSet(question, set) {
-  return withSets(question, [...questionRoomSets(question), set])
+export function questionWithConnection(question, connection) {
+  const already = questionConnections(question).some((c) => c.instance_id === connection.instance_id)
+  if (already) return question
+  return withConnections(question, [...questionConnections(question), connection])
 }
 
-export function questionWithoutSet(question, setId) {
-  return withSets(
+export function questionWithoutConnection(question, instanceId) {
+  return withConnections(
     question,
-    questionRoomSets(question).filter((s) => s.instance_id !== setId)
+    questionConnections(question).filter((c) => c.instance_id !== instanceId)
   )
-}
-
-export function questionWithSetUpdated(question, setId, updater) {
-  return withSets(
-    question,
-    questionRoomSets(question).map((s) => (s.instance_id === setId ? updater(s) : s))
-  )
-}
-
-export function setWithRoom(set, room) {
-  if ((set.rooms ?? []).some((r) => r.instance_id === room.instance_id)) return set
-  return { ...set, rooms: [...(set.rooms ?? []), room] }
-}
-
-export function setWithoutRoom(set, roomInstanceId) {
-  return { ...set, rooms: (set.rooms ?? []).filter((r) => r.instance_id !== roomInstanceId) }
 }
 
 // --- Writing ----------------------------------------------------------------

@@ -9,10 +9,10 @@
 //                because the split is a statement about the group.
 //   department   functioning: it holds the questions, which are added in the
 //                outline. Supporting: its RULE — one driver times a coefficient.
-//   question     the prompt, a comment, and ITS ROOMS — its own department's,
-//                and nothing wider. The rooms ARE the follow-up: a yes opens
-//                them and each takes a counter, so a question asks no number of
-//                its own.
+//   question     the prompt, a comment, and WHAT IT CONNECTS TO — the catalog's
+//                room groups and rooms in its own department, nothing wider.
+//                Those ARE the follow-up: a yes opens them and each takes a
+//                counter, so a question asks no number of its own.
 //
 // Every field writes when you leave it, not on every keystroke: each write is a
 // whole-document write of a jsonb column (see data/questionnaire.js), and a
@@ -20,14 +20,13 @@
 
 import { useEffect, useState } from 'react'
 import {
+  newConnection,
   newDriver,
   newNumber,
-  newRoomSet,
-  questionWithSet,
-  questionWithSetUpdated,
-  questionWithoutSet,
-  setWithoutRoom,
-  setWithRoom,
+  questionWithConnection,
+  questionWithoutConnection,
+  ROOM,
+  ROOM_GROUP,
 } from '../../data/questionnaire.js'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
 import ValuePicker from '../primitives/ValuePicker.jsx'
@@ -36,7 +35,7 @@ import { removeHint } from '../primitives/RemoveButton.jsx'
 import Toggle from '../primitives/Toggle.jsx'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, driverOptions, locate, roomLabel, setLabel, FUNCTIONING, SUPPORTING } from './questionModel.js'
+import { buildModel, driverOptions, locate, FUNCTIONING, SUPPORTING } from './questionModel.js'
 import { Counter } from './Counter.jsx'
 import { useCatalog } from '../../data/catalog.jsx'
 
@@ -272,27 +271,25 @@ function DepartmentFace({ department, group, model, canEdit, editor }) {
   )
 }
 
-// ONE SET: what it is called, the rooms it brings, and a + for another.
+// ONE CONNECTION: a catalog room group or a single room, and the counter that
+// will be its whole answer.
 //
-// A set of ONE reads as that room and offers no name field — naming "Console
-// Room" a second time is noise, and a name box on every row would make the
-// common case look like the complicated one. The field appears the moment a
-// second room joins, because that is when the list of names stops saying what
-// the thing is.
-function RoomSetBlock({ set, department, canEdit, options, onRename, onAddRoom, onRemoveSet, onRemoveRoom }) {
-  const rooms = set.rooms ?? []
-  const many = rooms.length > 1
+// A GROUP LISTS ITS ROOMS, read live off the tree — the membership is the Tree
+// tab's to state and nothing here can change it, so the list is a reading rather
+// than a control. A single room says its name once and draws nothing under it.
+function ConnectionBlock({ connection, canEdit, onRemove }) {
+  const group = connection.kind === ROOM_GROUP
 
   return (
     <div style={{ marginTop: 8, borderLeft: '2px solid #eee', paddingLeft: 8, minWidth: 0 }}>
       <div
         className="spp-row"
-        title={canEdit ? removeHint('this set') : undefined}
+        title={canEdit ? removeHint(group ? 'this group' : 'this room') : undefined}
         onContextMenu={
           canEdit
             ? (e) => {
                 e.preventDefault()
-                onRemoveSet()
+                onRemove()
               }
             : undefined
         }
@@ -306,65 +303,34 @@ function RoomSetBlock({ set, department, canEdit, options, onRename, onAddRoom, 
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             fontSize: 13,
-            fontWeight: many ? 600 : 400,
+            fontWeight: group ? 600 : 400,
+            color: connection.missing ? '#b3261e' : '#222',
           }}
         >
-          {setLabel(set, department)}
+          {connection.name}
+          {connection.missing && (
+            <span style={{ fontSize: 11 }}> — no longer in this department</span>
+          )}
         </span>
         <Counter />
       </div>
 
-      {many && (
-        <Field label="Called" value={set.name} canEdit={canEdit} onCommit={onRename} />
-      )}
-
-      {rooms.map((room) => {
-        const live = department.catalogRooms.find((r) => r.instance_id === room.instance_id)
-        return (
+      {group &&
+        connection.rooms.map((room) => (
           <div
             key={room.instance_id}
-            className="spp-row"
-            title={canEdit ? removeHint('this room') : undefined}
-            onContextMenu={
-              canEdit
-                ? (e) => {
-                    e.preventDefault()
-                    onRemoveRoom(room)
-                  }
-                : undefined
-            }
-            style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBlock: 2, minWidth: 0 }}
+            style={{
+              fontSize: 12,
+              color: '#666',
+              paddingBlock: 2,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
           >
-            <span
-              style={{
-                flex: 1,
-                minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                // A set of one already says the room's name above; repeating it
-                // is drawn quiet so the row reads as the detail it is.
-                fontSize: 12,
-                color: live ? '#666' : '#b3261e',
-              }}
-            >
-              {roomLabel(room, department)}
-              {!live && <span style={{ fontSize: 11 }}> — no longer in this department</span>}
-            </span>
+            {room.label}
           </div>
-        )
-      })}
-
-      {canEdit && (
-        <SearchAddPicker
-          options={options}
-          placeholder="Search this department's rooms..."
-          title="Add a room to this set"
-          label={many ? 'Add another room' : 'Make this a set of several'}
-          size={14}
-          onAdd={(r) => onAddRoom({ instance_id: r.id, label: r.name })}
-        />
-      )}
+        ))}
     </div>
   )
 }
@@ -376,27 +342,37 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
   // branches — there is no × on a row anywhere in this app.
   const [pendingRemove, setPendingRemove] = useState(null)
 
-  const sets = node.sets
+  const connections = node.connections
 
-  // EVERY ROOM THE DEPARTMENT PLACES IS OFFERED, and one already spoken for is
-  // drawn greyed with the question that took it. Filtering it out instead left
-  // you unable to tell a room that is used from one that was never in the
-  // catalog — see `disabled` in SearchAddPicker.
-  const roomOptions = (withinSetId) =>
-    department.catalogRooms.map((r) => {
-      const used = department.usage.get(r.instance_id)
-      const mine = used?.setId === withinSetId
+  const usedBy = (roomInstanceId) => {
+    const used = department.usage.get(roomInstanceId)
+    if (!used) return null
+    return `Used by “${used.prompt}”${used.via ? ` → ${used.via}` : ''}`
+  }
+
+  // THE CATALOG'S GROUPS FIRST, THEN THE ROOMS — one list, because a question
+  // names one thing and which kind it is is the catalog's business, not a choice
+  // to make before searching. Anything already spoken for is drawn greyed with
+  // the question that took it: filtering it out left you unable to tell a used
+  // room from one that was never in the catalog.
+  const targetOptions = () => [
+    ...department.catalogGroups.map((g) => {
+      const clash = g.rooms.map((r) => usedBy(r.instance_id)).find(Boolean)
       return {
-        id: r.instance_id,
-        name: r.label,
-        disabled: !!used,
-        reason: used
-          ? mine
-            ? 'Already in this set'
-            : `Used by “${used.prompt}”${used.setName ? ` → ${used.setName}` : ''}`
-          : undefined,
+        id: g.instance_id,
+        name: g.name,
+        path: `${g.rooms.length} room${g.rooms.length === 1 ? '' : 's'} — ${g.rooms.map((r) => r.label).join(' · ')}`,
+        disabled: !!clash,
+        reason: clash ?? undefined,
       }
-    })
+    }),
+    ...department.catalogRooms.map((r) => {
+      const reason = usedBy(r.instance_id)
+      return { id: r.instance_id, name: r.label, disabled: !!reason, reason: reason ?? undefined }
+    }),
+  ]
+
+  const kindOf = (id) => (department.catalogGroups.some((g) => g.instance_id === id) ? ROOM_GROUP : ROOM)
 
   return (
     <div style={{ minWidth: 0 }}>
@@ -412,7 +388,7 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
         canEdit={canEdit}
         onCommit={(prompt) => edit((q) => ({ ...q, prompt }))}
       />
-      <PanelNote>Answered yes or no. Yes opens the room sets below, each with its own counter.</PanelNote>
+      <PanelNote>Answered yes or no. Yes opens what it connects to below, each with its own counter.</PanelNote>
 
       <Field
         label="Comment"
@@ -423,30 +399,23 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
         onCommit={(comment) => edit((q) => ({ ...q, comment }))}
       />
 
-      {/* THE ROOM SETS — this department's placements and nothing wider, which
-          is what keeps one question one statement. One counter per SET, so a
-          3 Tesla MRI is one number over the three rooms it needs. */}
+      {/* WHAT IT CONNECTS TO — this department's room groups and rooms, from the
+          catalog, and nothing wider. One counter per connection, so a 3 Tesla
+          MRI is one number over the three rooms its group holds. */}
       <div style={{ marginTop: 18, borderTop: '1px solid #eee', paddingTop: 10 }}>
-        <Caption>Room sets, one counter each</Caption>
-        {sets.length === 0 ? (
-          <PanelNote>Nothing yet. Add a room and it becomes a set of one.</PanelNote>
+        <Caption>Connects to, one counter each</Caption>
+        {connections.length === 0 ? (
+          <PanelNote>Nothing yet. Add a room group or a single room from this department.</PanelNote>
         ) : (
           <PanelNote>A yes opens these. Each takes a count of its own, and 0 means that one was not chosen.</PanelNote>
         )}
 
-        {sets.map((set) => (
-          <RoomSetBlock
-            key={set.instance_id}
-            set={set}
-            department={department}
+        {connections.map((connection) => (
+          <ConnectionBlock
+            key={connection.instance_id}
+            connection={connection}
             canEdit={canEdit}
-            options={roomOptions(set.instance_id)}
-            onRename={(name) => edit((q) => questionWithSetUpdated(q, set.instance_id, (s) => ({ ...s, name })))}
-            onAddRoom={(room) =>
-              edit((q) => questionWithSetUpdated(q, set.instance_id, (s) => setWithRoom(s, room)))
-            }
-            onRemoveSet={() => setPendingRemove({ kind: 'set', set })}
-            onRemoveRoom={(room) => setPendingRemove({ kind: 'room', set, room })}
+            onRemove={() => setPendingRemove(connection)}
           />
         ))}
 
@@ -455,50 +424,36 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
             {department.catalogRooms.length === 0 ? (
               <PanelNote>This department places no rooms in the catalog yet — add them on the Tree tab.</PanelNote>
             ) : (
-              <SearchAddPicker
-                options={roomOptions(null)}
-                placeholder="Search this department's rooms..."
-                title="Add a room as a new set"
-                label="Add a room"
-                // A ROOM ADDED HERE IS ITS OWN SET. The common answer is one
-                // room, one counter, and making that the default is what keeps
-                // the set out of the way until something needs it.
-                onAdd={(r) => edit((q) => questionWithSet(q, newRoomSet([{ instance_id: r.id, label: r.name }])))}
-              />
+              <>
+                <SearchAddPicker
+                  options={targetOptions()}
+                  placeholder="Search this department's groups and rooms..."
+                  title="Connect a room group or a room"
+                  label="Connect a room group or a room"
+                  onAdd={(o) => edit((q) => questionWithConnection(q, newConnection(kindOf(o.id), o.id, o.name)))}
+                />
+                <PanelNote>
+                  Room groups are the catalog's, authored on the Tree tab. Group the rooms there and they are one answer
+                  here.
+                </PanelNote>
+              </>
             )}
           </div>
         )}
       </div>
 
-      {pendingRemove?.kind === 'set' && (
+      {pendingRemove && (
         <ConfirmModal
-          title="Remove this set?"
+          title="Disconnect this?"
+          confirmLabel="Yes, disconnect"
           onConfirm={() => {
-            edit((q) => questionWithoutSet(q, pendingRemove.set.instance_id))
+            edit((q) => questionWithoutConnection(q, pendingRemove.instance_id))
             setPendingRemove(null)
           }}
           onCancel={() => setPendingRemove(null)}
         >
-          <strong>{setLabel(pendingRemove.set, department)}</strong> stops being counted, and its rooms are free for
-          another question. They stay in the catalog.
-        </ConfirmModal>
-      )}
-
-      {pendingRemove?.kind === 'room' && (
-        <ConfirmModal
-          title="Take this room out of the set?"
-          confirmLabel="Yes, take it out"
-          onConfirm={() => {
-            edit((q) =>
-              questionWithSetUpdated(q, pendingRemove.set.instance_id, (s) =>
-                setWithoutRoom(s, pendingRemove.room.instance_id)
-              )
-            )
-            setPendingRemove(null)
-          }}
-          onCancel={() => setPendingRemove(null)}
-        >
-          It stops being counted by this question and is free for another. The room stays in the catalog.
+          <strong>{pendingRemove.name}</strong> stops being counted by this question and is free for another. It stays
+          in the catalog.
         </ConfirmModal>
       )}
     </div>

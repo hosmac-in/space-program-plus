@@ -11,27 +11,52 @@
 // tolerated, not pruned, because a placement moved and put back finds its
 // questions again.
 
-import { compareSections, resolveRoomLabel } from '../../data/tree.js'
-import { departmentRole, questionRoomSets, FUNCTIONING, SUPPORTING } from '../../data/questionnaire.js'
+import { compareSections, deptRoomGroups, readRoomGroups, resolveRoomLabel } from '../../data/tree.js'
+import { departmentRole, questionConnections, ROOM_GROUP, FUNCTIONING, SUPPORTING } from '../../data/questionnaire.js'
 
 export { FUNCTIONING, SUPPORTING }
 
 const defOf = (defs, id) => defs.find((d) => d.id === id) ?? null
 const nameOf = (defs, id, fallback) => defOf(defs, id)?.name || fallback
 
-// roomInstanceId -> { questionId, prompt, setId, setName }. First writer wins,
-// which is the same answer the picker enforces: nothing can become used twice.
+// A CONNECTION RESOLVED AGAINST THE CATALOG: what it is called now, and the
+// rooms it brings. A room group's membership is the Tree tab's to state, so it
+// is read live — dissolve the group there and this reads as gone rather than
+// quietly keeping a list nobody can see.
+function resolveConnection(connection, catalogGroups, catalogRooms) {
+  if (connection.kind === ROOM_GROUP) {
+    const live = catalogGroups.find((g) => g.instance_id === connection.instance_id)
+    return {
+      ...connection,
+      name: live?.name || connection.label || 'Unnamed group',
+      rooms: live?.rooms ?? [],
+      missing: !live,
+    }
+  }
+  const live = catalogRooms.find((r) => r.instance_id === connection.instance_id)
+  return {
+    ...connection,
+    name: live?.label ?? (typeof connection.label === 'string' ? connection.label : 'Unnamed room'),
+    rooms: live ? [live] : [],
+    missing: !live,
+  }
+}
+
+// roomInstanceId -> { questionId, prompt, via }. First writer wins, which is the
+// same answer the picker enforces: nothing can become used twice. A group's
+// members count as used, or a room could be taken twice — once on its own and
+// once inside the group that holds it.
 function roomUsage(questions) {
   const used = new Map()
   questions.forEach((question) =>
-    questionRoomSets(question).forEach((set) =>
-      (set.rooms ?? []).forEach((room) => {
+    question.connections.forEach((connection) =>
+      connection.rooms.forEach((room) => {
         if (used.has(room.instance_id)) return
         used.set(room.instance_id, {
-          questionId: question.instance_id,
-          prompt: question.prompt || 'Untitled question',
-          setId: set.instance_id,
-          setName: set.name || '',
+          questionId: question.id,
+          prompt: question.question.prompt || 'Untitled question',
+          connectionId: connection.instance_id,
+          via: connection.kind === ROOM_GROUP ? connection.name : '',
         })
       })
     )
@@ -70,6 +95,49 @@ export function buildModel({ buildingId, definition, sections, groups, departmen
           departments: (groupNode.departments ?? []).map((deptNode) => {
             const deptId = deptNode.instance_id
             const deptEntry = entry?.departments?.[deptId] ?? null
+            // Every room this department PLACES, in the catalog's order — what a
+            // question here may connect to, and nothing wider. A placement's own
+            // label is what tells two Toilets apart.
+            const catalogRooms = (deptNode.rooms ?? []).map((roomNode) => ({
+              instance_id: roomNode.instance_id,
+              // >>> `.name`. resolveRoomLabel returns { name, source,
+              // >>> inherited } — the panels need the source to ink an
+              // >>> inherited name muted, and nothing here does. Taking the
+              // >>> whole object put it in a React child and whited the tab
+              // >>> out the moment a room was drawn.
+              label: resolveRoomLabel(roomNode, null, nameOf(rooms, roomNode.room_def_id, 'Unnamed room')).name,
+            }))
+            const roomById = new Map(catalogRooms.map((r) => [r.instance_id, r]))
+            // THE CATALOG'S OWN GROUPING, read live off the tree node. A group
+            // split by a rearrangement comes back as two runs; they merge here,
+            // since a question names the group and not a run of it.
+            const catalogGroups = []
+            readRoomGroups(deptNode.rooms ?? [], deptRoomGroups(deptNode), { keepEmpty: true })
+              .filter((row) => row.kind === 'group')
+              .forEach((row) => {
+                const members = (row.rooms ?? []).map((r) => roomById.get(r.instance_id)).filter(Boolean)
+                const existing = catalogGroups.find((g) => g.instance_id === row.group.instance_id)
+                if (existing) existing.rooms.push(...members)
+                else
+                  catalogGroups.push({
+                    instance_id: row.group.instance_id,
+                    name: row.group.name || 'Unnamed group',
+                    rooms: members,
+                  })
+              })
+
+            const questions = (deptEntry?.questions ?? []).map((question) => ({
+              kind: 'question',
+              id: question.instance_id,
+              sectionId: section.id,
+              groupId,
+              deptId,
+              question,
+              connections: questionConnections(question).map((c) =>
+                resolveConnection(c, catalogGroups, catalogRooms)
+              ),
+            }))
+
             return {
               kind: 'department',
               id: deptId,
@@ -80,31 +148,13 @@ export function buildModel({ buildingId, definition, sections, groups, departmen
               functionId: defOf(departments, deptNode.department_def_id)?.function_id ?? null,
               role: departmentRole(definition, section.id, groupId, deptId),
               driver: deptEntry?.driver ?? null,
-              // Every room this department PLACES, in the catalog's order —
-              // what a question here may connect to, and nothing wider. A
-              // placement's own label is what tells two Toilets apart.
-              catalogRooms: (deptNode.rooms ?? []).map((roomNode) => ({
-                instance_id: roomNode.instance_id,
-                // >>> `.name`. resolveRoomLabel returns { name, source,
-                // >>> inherited } — the panels need the source to ink an
-                // >>> inherited name muted, and nothing here does. Taking the
-                // >>> whole object put it in a React child and whited the tab
-                // >>> out the moment a room was drawn.
-                label: resolveRoomLabel(roomNode, null, nameOf(rooms, roomNode.room_def_id, 'Unnamed room')).name,
-              })),
-              questions: (deptEntry?.questions ?? []).map((question) => ({
-                kind: 'question',
-                id: question.instance_id,
-                sectionId: section.id,
-                groupId,
-                deptId,
-                question,
-                sets: questionRoomSets(question),
-              })),
-              // A ROOM IS USED ONCE PER DEPARTMENT. Which question and which
-              // set spoke for it is what the picker greys a row with and says
-              // on hover — "already used" alone leaves you hunting for where.
-              usage: roomUsage(deptEntry?.questions ?? []),
+              catalogRooms,
+              catalogGroups,
+              questions,
+              // A ROOM IS USED ONCE PER DEPARTMENT. Which question spoke for it,
+              // and through which group, is what the picker greys a row with and
+              // says on hover — "already used" alone leaves you hunting for it.
+              usage: roomUsage(questions),
             }
           }),
         }
@@ -135,11 +185,11 @@ export function locate(model, id) {
 // EVERY FIGURE THIS QUESTIONNAIRE WILL HAVE, as driver candidates — a
 // supporting department's rule is one of these times a coefficient.
 //
-// A question asks no number of its own, so there are exactly two kinds. A ROOM
-// SET some question counts is the common one: "Laundry = 2.5 × beds" is a
+// A question asks no number of its own, so there are exactly two kinds. A
+// CONNECTION some question counts is the common one: "Laundry = 2.5 × beds" is a
 // statement about how many beds there are. A GATE's number is the other — a
-// headline total for the brief. The SET is the unit rather than the room,
-// because the set is what carries the counter.
+// headline total for the brief. The CONNECTION is the unit rather than the room,
+// because the connection is what carries the counter.
 export function driverOptions(model) {
   const out = []
   const seen = new Set()
@@ -156,13 +206,13 @@ export function driverOptions(model) {
       }
       group.departments.forEach((department) =>
         department.questions.forEach((node) =>
-          node.sets.forEach((set) => {
-            if (seen.has(set.instance_id)) return
-            seen.add(set.instance_id)
+          node.connections.forEach((connection) => {
+            if (seen.has(connection.instance_id)) return
+            seen.add(connection.instance_id)
             out.push({
-              id: set.instance_id,
-              kind: 'room set',
-              name: setLabel(set, department),
+              id: connection.instance_id,
+              kind: connection.kind === ROOM_GROUP ? 'room group' : 'room',
+              name: connection.name,
               path: `${section.name} → ${group.name} → ${department.name} → ${
                 node.question.prompt || 'Untitled question'
               }`,
@@ -173,17 +223,6 @@ export function driverOptions(model) {
     })
   )
   return out
-}
-
-// WHAT A SET IS CALLED. Its own name when it has one; otherwise its single
-// room's, which is the common case and the whole reason most sets go unnamed. A
-// set of several with no name counts them, so a row is never blank.
-export function setLabel(set, department) {
-  if (set.name) return set.name
-  const rooms = set.rooms ?? []
-  if (rooms.length === 0) return 'Empty set'
-  if (rooms.length === 1) return roomLabel(rooms[0], department)
-  return `${rooms.length} rooms`
 }
 
 // A room still placed resolves to its CURRENT label, so a rename on the Tree tab

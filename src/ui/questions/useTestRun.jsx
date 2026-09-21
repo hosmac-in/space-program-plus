@@ -20,12 +20,13 @@ import { createContext, useCallback, useContext, useMemo, useState } from 'react
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
 //   questions: { [questionInstanceId]: { yes } },
-//   sets:      { [setInstanceId]:      count },
+//   counts:    { [connectionInstanceId]: count },
 // }
 //
-// Keyed by instance_id and nothing else, exactly as the document is. A set's
-// count is the whole of its answer, so it is the value rather than an object.
-const EMPTY = { gates: {}, questions: {}, sets: {} }
+// Keyed by instance_id and nothing else, exactly as the document is — a
+// connection's is the catalog room group's or the room's. The count is the whole
+// of its answer, so it is the value rather than an object.
+const EMPTY = { gates: {}, questions: {}, counts: {} }
 
 const TestRunContext = createContext(null)
 
@@ -43,8 +44,8 @@ export function TestRunProvider({ children }) {
     }))
   }, [])
 
-  const setCount = useCallback((setId, count) => {
-    setAnswers((a) => ({ ...a, sets: { ...a.sets, [setId]: count } }))
+  const setCount = useCallback((connectionId, count) => {
+    setAnswers((a) => ({ ...a, counts: { ...a.counts, [connectionId]: count } }))
   }, [])
 
   const reset = useCallback(() => setAnswers(EMPTY), [])
@@ -62,7 +63,7 @@ export function TestRunProvider({ children }) {
       gateYes: (groupId) => !!answers.gates[groupId]?.yes,
       questionYes: (questionId) => !!answers.questions[questionId]?.yes,
       // 0 means not chosen — the same thing the designer draws greyed.
-      countOf: (setId) => answers.sets[setId] ?? 0,
+      countOf: (connectionId) => answers.counts[connectionId] ?? 0,
     }),
     [answers, setGate, setQuestion, setCount, reset]
   )
@@ -80,8 +81,8 @@ export function useTestRun() {
 // counted above zero. One function, read by side, so the tree and the carousel
 // can never disagree about what has been answered.
 //
-// A room appears with the count of the SET it belongs to: two of a 3 Tesla MRI
-// is two of each of its rooms.
+// A room appears with the count of the CONNECTION it came in on: two of a
+// 3 Tesla MRI is two of each room in that catalog room group.
 export function buildProgram(model, run) {
   return model
     .map((section) => ({
@@ -96,16 +97,16 @@ export function buildProgram(model, run) {
               rooms: department.questions
                 .filter((node) => run.questionYes(node.id))
                 .flatMap((node) =>
-                  node.sets
-                    .filter((set) => run.countOf(set.instance_id) > 0)
-                    .flatMap((set) =>
-                      (set.rooms ?? []).map((room) => ({
+                  node.connections
+                    .filter((connection) => run.countOf(connection.instance_id) > 0)
+                    .flatMap((connection) =>
+                      connection.rooms.map((room) => ({
                         instance_id: room.instance_id,
                         label: room.label,
-                        count: run.countOf(set.instance_id),
-                        // Which set brought it, so the tree can say "×2 from
-                        // 3 Tesla" rather than leaving a bare number.
-                        via: set,
+                        count: run.countOf(connection.instance_id),
+                        // What brought it, so the tree can say "×2 from 3 Tesla"
+                        // rather than leaving a bare number.
+                        via: connection,
                       }))
                     )
                 ),

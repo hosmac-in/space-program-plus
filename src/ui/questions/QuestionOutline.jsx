@@ -30,7 +30,8 @@ import { removeHint } from '../primitives/RemoveButton.jsx'
 import { Branch, TreeLayer } from '../panel/PanelTree.jsx'
 import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, roomLabel, setLabel, SUPPORTING } from './questionModel.js'
+import { buildModel, SUPPORTING } from './questionModel.js'
+import { ROOM_GROUP } from '../../data/questionnaire.js'
 import { Counter } from './Counter.jsx'
 
 // One row height for every level, so the tree's elbows land on a regular pitch
@@ -46,7 +47,7 @@ const LEVEL = {
   group: { size: 13, weight: 600, caps: false },
   department: { size: 13, weight: 500, caps: false },
   question: { size: 13, weight: 400, caps: false },
-  set: { size: 12, weight: 500, caps: false },
+  connection: { size: 12, weight: 500, caps: false },
   room: { size: 12, weight: 400, caps: false },
 }
 
@@ -137,17 +138,17 @@ function driverMarks(driver) {
   return `${driver.coefficient ?? 1} × ${driver.source_label || 'a figure'}`
 }
 
-// A question, with its ROOM SETS under it — the follow-up, always the same
-// shape: a set and a counter. A set of one reads as its room and draws nothing
-// under it; a set of several lists them, since "3 Tesla" alone does not say
+// A question, with WHAT IT CONNECTS TO under it — the follow-up, always the same
+// shape: a catalog room group or a room, and a counter. A single room draws
+// nothing under it; a group lists its rooms, since "3 Tesla" alone does not say
 // which three rooms it brings.
-function QuestionBranch({ node, department, canEdit, selectedId, onSelect, onRemove }) {
-  const sets = node.sets
+function QuestionBranch({ node, canEdit, selectedId, onSelect, onRemove }) {
+  const connections = node.connections
 
   return (
     <Branch
-      endpoint={sets.length > 0 ? 'caret' : 'dot'}
-      expanded={sets.length > 0}
+      endpoint={connections.length > 0 ? 'caret' : 'dot'}
+      expanded={connections.length > 0}
       head={ROW / 2}
       // RIGHT-CLICK ON THE BRANCH'S END, the one remove gesture in this app.
       // There is no × on a row here.
@@ -160,34 +161,34 @@ function QuestionBranch({ node, department, canEdit, selectedId, onSelect, onRem
         muted={!node.question.prompt}
         selected={selectedId === node.id}
         onSelect={() => onSelect(node.id)}
-        right={<Marks text={questionMarks(node.question, sets.length)} />}
+        right={<Marks text={questionMarks(node.question, connections.length)} />}
       />
 
-      {/* Nothing below the question is separately selectable: a set belongs to
-          the question above it, and side draws the whole thing when that
-          question is open. Clicking one selects the question. */}
-      {sets.map((set) => {
-        const rooms = set.rooms ?? []
-        const many = rooms.length > 1
+      {/* Nothing below the question is separately selectable: a connection
+          belongs to the question above it, and side draws the whole thing when
+          that question is open. Clicking one selects the question. */}
+      {connections.map((connection) => {
+        const group = connection.kind === ROOM_GROUP
         return (
-          <Branch key={set.instance_id} endpoint={many ? 'caret' : 'dot'} expanded={many} head={ROW / 2}>
+          <Branch
+            key={connection.instance_id}
+            endpoint={group ? 'caret' : 'dot'}
+            expanded={group}
+            head={ROW / 2}
+          >
             <Row
-              level="set"
-              label={setLabel(set, department)}
+              level="connection"
+              label={connection.name}
+              muted={connection.missing}
               onSelect={() => onSelect(node.id)}
               right={<Counter />}
             />
-            {/* Only when there are several: a set of one would say its room's
-                name twice, one line under the other. */}
-            {many &&
-              rooms.map((room) => (
+            {/* Only a group: a single room would say its name twice, one line
+                under the other. */}
+            {group &&
+              connection.rooms.map((room) => (
                 <Branch key={room.instance_id} endpoint="dot" head={ROW / 2}>
-                  <Row
-                    level="room"
-                    label={roomLabel(room, department)}
-                    muted={!department.catalogRooms.some((r) => r.instance_id === room.instance_id)}
-                    onSelect={() => onSelect(node.id)}
-                  />
+                  <Row level="room" label={room.label} onSelect={() => onSelect(node.id)} />
                 </Branch>
               ))}
           </Branch>
@@ -304,7 +305,6 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                               <QuestionBranch
                                 key={q.id}
                                 node={q}
-                                department={department}
                                 canEdit={canEdit}
                                 selectedId={selectedId}
                                 onSelect={onSelect}
