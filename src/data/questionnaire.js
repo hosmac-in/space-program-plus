@@ -1,210 +1,325 @@
-// THE QUESTIONNAIRE — sp_questionnaire.definition
-// ===============================================
+// THE QUESTIONNAIRE DESIGNER — sp_questionnaire.definition
+// ========================================================
 //
-// An option is meant to be created by answering questions rather than by
-// building it department by department on the canvas. This is the authored
-// question set that will do it — one row per building, the whole thing in one
-// jsonb column:
+// One row per building. The document is an OVERLAY ON THE CATALOG TREE, not a
+// structure of its own: the sections, the department groups and the departments
+// all come from sp_section.tree, and this column says only what has been
+// AUTHORED against them. So it is keyed maps, never arrays of copied nodes.
 //
 //   {
-//     "groups": [{
-//       "instance_id": "...",
-//       "name": "Clinical",                    <- authored, not a definition id
-//       "questions": [{
-//         "instance_id": "...",
-//         "prompt": "Are there inpatient beds?",
-//         "number": { … } | null,
-//         "questions": [{                      <- sub-questions, and that is the end
-//           "instance_id": "...",
-//           "prompt": "General ward?",
-//           "department_node_id": "...",       <- YES adds this placement
-//           "department_path": "Hospital → Inpatient → Wards",
-//           "number": { … } | null
-//         }]
-//       }]
-//     }]
+//     "sections": {
+//       "<sp_section.id>": {
+//         "groups": {
+//           "<group instance_id>": {
+//             "gate": { "prompt": "...", "number": {…}|null, "comment": "" },
+//             "departments": {
+//               "<department instance_id>": {
+//                 "role": "supporting",        <- ABSENT MEANS FUNCTIONING
+//                 "driver": {…},               <- supporting only, see below
+//                 "questions": [{
+//                   "instance_id": "...",
+//                   "prompt": "Is there an MRI?",
+//                   "comment": "",
+//                   "room_sets": [           <- THE FOLLOW-UP, always this
+//                     { "instance_id": "...",
+//                       "name": "3 Tesla",   <- authored, see ROOM SETS
+//                       "rooms": [{ "instance_id": "...", "label": "Console" }]
+//                     }
+//                   ]
+//                 }]
+//               }
+//             }
+//           }
+//         }
+//       }
+//     }
 //   }
-//
-//   number on a gate         = { "label": "Total beds" }
-//   number on a sub-question = { "label": "Beds", "target_node_id": "...",
-//                                "target_path": "…" }
 //
 // THE GRAMMAR
 //
-// Every question is a yes/no, and the two levels do different jobs:
+//   section        from the catalog. Read in order, top to bottom.
+//   group          from the catalog, and it carries ONE question — the gate.
+//                  Yes opens the departments under it and adds nothing itself.
+//   department     from the catalog, and it is one of TWO KINDS:
+//     functioning  carries the questions. Each is a yes/no; yes may ask a
+//                  number, may take a comment, and names WHICH ROOMS of that
+//                  department it connects to.
+//     supporting   carries no questions. It is sized by a rule: one DRIVER
+//                  (a question's number anywhere in this questionnaire) times a
+//                  COEFFICIENT.
 //
-//   top level    a GATE. Yes reveals its sub-questions and adds nothing itself.
-//                It may still carry a number — "Are there beds?" then "How many
-//                in total?" — but that number POINTS AT NOTHING, because a gate
-//                adds no department. It is a headline figure for the brief.
-//   sub-question YES ADDS ONE DEPARTMENT, the placement at department_node_id.
-//                Its number sets the COUNT OF ONE ROOM INSIDE THAT DEPARTMENT —
-//                never a room elsewhere, never an object, never the department.
+// The role lives HERE and not on the tree node because a building may have more
+// than one questionnaire in future, and the same department can be functioning
+// in one brief and supporting in another. Absence means functioning: a
+// department is programmed by asking about it, and being sized by a rule is the
+// departure.
 //
-// Sub-questions do not nest: two levels is the whole grammar, deliberately. A
-// tree of arbitrary depth is one to author, one to render and one to walk when
-// answering, and a facility brief has never needed one.
+// THE FOLLOW-UP TO A QUESTION IS ALWAYS ITS ROOM SETS, one counter each. So a
+// question has no number of its own and no sub-questions:
 //
-// The answer IS the count — twelve is twelve of that room, which is what a
-// room's `count` in sp_option.data is for. There is no multiplier, so nothing
-// has to interpret a rate. Scoping the target to the bound department keeps a
-// sub-question one statement rather than a question that adds one thing and
-// sizes another, which is why re-binding the department CLEARS the number's
-// target.
+//   Is there an MRI?                     yes/no
+//     3 Tesla        [ 2 ]               a SET, and its counter
+//       Therapy Room                       the rooms it brings, all at once
+//       Console Room
+//       Machine Room
+//     5 Tesla        [ 0 ]               0 = not chosen, drawn greyed
 //
-// `department_node_id` and `target_node_id` point at instance_ids inside
-// sp_section.tree, which no foreign key can reach into — the same situation as
-// sp_option.data.tree_node_id, and it gets the same treatment: a frozen *_path
-// string beside each id, display-only, so a deleted placement still reads as
-// something instead of going blank. That is the one reason a name is stored in
-// this document.
+// A SET IS ONE OR MORE ROOMS ANSWERED BY ONE NUMBER — two of a 3 Tesla MRI is
+// two of each room in it. Most sets hold one room and read as that room; the
+// set exists for the case where a thing you count is several rooms at once.
 //
-// Everything below is a pure function over a plain object except
-// writeQuestionnaire at the bottom.
+//   >>> THIS GROUPING IS THE QUESTIONNAIRE'S OWN. It is NOT sp_section.tree's
+//   >>> `room_groups`, which is the catalog's way of boxing a long room list for
+//   >>> reading, authored on the Tree tab and shared with every option. A set is
+//   >>> a statement about what one answer buys, so it is authored here and lives
+//   >>> nowhere else. Do not read one from the other.
+//
+// Two MRI machines differ by the SIZE OF THE ROOMS they need, which is why a
+// set holds rooms and never points at an object — an object target would be a
+// second way to say what the room already says. Both were proposed and both
+// were dropped; don't add either back.
+//
+// A set's rooms are placements inside the question's OWN department, never
+// elsewhere, and A ROOM IS USED ONCE PER DEPARTMENT: once a set has it, no
+// other set and no other question in that department may take it. The counter
+// is the ANSWER and is not stored here — this document is the form, not the
+// filled-in copy.
+//
+// NOTHING IS KEYED BY A *_def_id. Every key is an instance_id (or a section's
+// own row id), for tree.js's reason: two placements of one duplicable
+// department must not merge.
+//
+// DANGLING KEYS ARE TOLERATED. No foreign key reaches into jsonb, so a group
+// deleted from the catalog leaves its entry here forever. Nothing prunes it:
+// the outline draws what the CATALOG has, so an orphan entry is simply never
+// read, and a placement moved and put back finds its questions again. The
+// frozen `label` / `question_prompt` strings beside each stored id are the same
+// device sp_option.data.sp_path is — display-only, so a deleted target still
+// reads as something.
+//
+// >>> THE OLD DOCUMENT IS A ROOT-LEVEL `groups` ARRAY, from the free-form
+// >>> designer this replaced. It cannot be migrated — its groups were authored
+// >>> headings with no catalog node to attach to. Every writer below SPREADS
+// >>> the existing definition, so that key is carried through untouched rather
+// >>> than overwritten; it is unread, not destroyed.
+//
+// Everything is a pure function over a plain object except writeQuestionnaire.
 
 import { supabase } from './supabase.js'
 
-export const EMPTY_DEFINITION = { groups: [] }
+export const EMPTY_DEFINITION = { sections: {} }
+
+export const FUNCTIONING = 'functioning'
+export const SUPPORTING = 'supporting'
 
 // --- Making nodes -----------------------------------------------------------
-//
-// Identity is instance_id, as in tree.js: two questions may carry the same
-// prompt, and a group's name is authored text that can be edited to match
-// another's at any moment. Nothing may be keyed by either.
 
-export function newGroup(name = 'New group') {
-  return { instance_id: crypto.randomUUID(), name, questions: [] }
-}
-
+// A QUESTION HAS NO NUMBER OF ITS OWN AND NO SUB-QUESTIONS. Its follow-up is
+// always the same thing — its list of rooms, one counter each — so both were
+// removed rather than left as a second way to ask "how many".
 export function newQuestion(prompt = 'New question') {
-  return { instance_id: crypto.randomUUID(), prompt, number: null, questions: [] }
+  return { instance_id: crypto.randomUUID(), prompt, comment: '', rooms: [] }
 }
 
-export function newSubQuestion(prompt = 'New question') {
-  return {
-    instance_id: crypto.randomUUID(),
-    prompt,
-    department_node_id: null,
-    department_path: null,
-    number: null,
-  }
-}
-
-// On a sub-question this is bound to a room inside that question's department;
-// on a gate it points at nothing and both target keys stay null.
+// The number a yes may go on to ask. Its answer is the count of the rooms this
+// question connects to — there is no multiplier, exactly as before.
 export function newNumber(label = 'How many?') {
-  return { label, target_node_id: null, target_path: null }
+  return { label }
+}
+
+export function newGate(prompt) {
+  return { prompt: prompt ?? '', number: null, comment: '' }
+}
+
+// A supporting department's rule: one term, driver × coefficient.
+//
+// The driver is a FIGURE THE QUESTIONNAIRE WILL HAVE, and since a question
+// itself no longer asks a number there are exactly two kinds: a room some
+// question counts (`room`), or a group gate's headline total (`gate`).
+// `source_label` is frozen beside the id so a driver whose source has been
+// deleted still reads as something.
+export function newDriver() {
+  return { source_kind: null, source_id: null, source_label: null, coefficient: 1 }
 }
 
 // --- Reading ----------------------------------------------------------------
 
-// One node and everything above it: { kind, node, group, question }, where
-// `question` is set only for a sub-question. A caller can then render one
-// selection without walking the document or comparing ids.
-export function findNode(definition, instanceId) {
-  if (!instanceId) return null
-  for (const group of definition?.groups || []) {
-    if (group.instance_id === instanceId) return { kind: 'group', node: group, group, question: null }
-    for (const question of group.questions || []) {
-      if (question.instance_id === instanceId) {
-        return { kind: 'question', node: question, group, question: null }
-      }
-      for (const sub of question.questions || []) {
-        if (sub.instance_id === instanceId) {
-          return { kind: 'subQuestion', node: sub, group, question }
-        }
-      }
-    }
-  }
-  return null
+export function sectionEntry(definition, sectionId) {
+  return definition?.sections?.[sectionId] ?? null
+}
+
+export function groupEntry(definition, sectionId, groupId) {
+  return sectionEntry(definition, sectionId)?.groups?.[groupId] ?? null
+}
+
+export function deptEntry(definition, sectionId, groupId, deptId) {
+  return groupEntry(definition, sectionId, groupId)?.departments?.[deptId] ?? null
+}
+
+// Absent means functioning — see the note above. Anything not literally
+// SUPPORTING reads as functioning, so a value from a future role that this
+// build does not know still draws as a department with questions rather than as
+// a blank.
+export function departmentRole(definition, sectionId, groupId, deptId) {
+  return deptEntry(definition, sectionId, groupId, deptId)?.role === SUPPORTING ? SUPPORTING : FUNCTIONING
+}
+
+export function departmentQuestions(definition, sectionId, groupId, deptId) {
+  return deptEntry(definition, sectionId, groupId, deptId)?.questions ?? []
+}
+
+export function departmentDriver(definition, sectionId, groupId, deptId) {
+  return deptEntry(definition, sectionId, groupId, deptId)?.driver ?? null
+}
+
+// Every question in the document, with where it sits. Two callers: locating a
+// selection without knowing which department it is in, and the driver picker,
+// which offers the whole questionnaire's numbers.
+export function questionIndex(definition) {
+  const index = new Map()
+  Object.entries(definition?.sections ?? {}).forEach(([sectionId, section]) => {
+    Object.entries(section?.groups ?? {}).forEach(([groupId, group]) => {
+      Object.entries(group?.departments ?? {}).forEach(([deptId, dept]) => {
+        ;(dept?.questions ?? []).forEach((question) => {
+          index.set(question.instance_id, { sectionId, groupId, deptId, question })
+        })
+      })
+    })
+  })
+  return index
 }
 
 // --- Editing ----------------------------------------------------------------
 //
-// One function per level per verb rather than a generic walker taking a path:
-// the document is three levels deep and will not get deeper, so the explicit
-// version is shorter than the machinery to avoid it.
+// One auto-vivifying setter per level. The document is sparse — most groups have
+// nothing authored against them — so an edit has to be able to write into a
+// branch that does not exist yet, and every writer spreads what it found so an
+// unknown key is carried through rather than dropped.
 
-export function insertGroup(definition, group) {
-  return { ...definition, groups: [...(definition?.groups || []), group] }
+export function updateSectionEntry(definition, sectionId, updater) {
+  const base = definition ?? EMPTY_DEFINITION
+  const current = base.sections?.[sectionId] ?? { groups: {} }
+  return { ...base, sections: { ...(base.sections ?? {}), [sectionId]: updater(current) } }
 }
 
-export function removeGroup(definition, groupId) {
-  return { ...definition, groups: (definition?.groups || []).filter((g) => g.instance_id !== groupId) }
+export function updateGroupEntry(definition, sectionId, groupId, updater) {
+  return updateSectionEntry(definition, sectionId, (section) => {
+    const current = section.groups?.[groupId] ?? { departments: {} }
+    return { ...section, groups: { ...(section.groups ?? {}), [groupId]: updater(current) } }
+  })
 }
 
-export function updateGroup(definition, groupId, updater) {
-  return {
-    ...definition,
-    groups: (definition?.groups || []).map((g) => (g.instance_id === groupId ? updater(g) : g)),
-  }
+export function updateDeptEntry(definition, sectionId, groupId, deptId, updater) {
+  return updateGroupEntry(definition, sectionId, groupId, (group) => {
+    const current = group.departments?.[deptId] ?? { questions: [] }
+    return { ...group, departments: { ...(group.departments ?? {}), [deptId]: updater(current) } }
+  })
 }
 
-export function insertQuestion(definition, groupId, question) {
-  return updateGroup(definition, groupId, (g) => ({ ...g, questions: [...(g.questions || []), question] }))
+// --- The gate ---------------------------------------------------------------
+
+export function setGate(definition, sectionId, groupId, gate) {
+  return updateGroupEntry(definition, sectionId, groupId, (group) => ({ ...group, gate }))
 }
 
-// The id alone is enough: an instance_id is unique across the document, so
-// nothing has to say which group to look in.
-export function removeQuestion(definition, questionId) {
-  return {
-    ...definition,
-    groups: (definition?.groups || []).map((g) => ({
-      ...g,
-      questions: (g.questions || []).filter((q) => q.instance_id !== questionId),
-    })),
-  }
+// --- Role, and the rule that comes with it ----------------------------------
+
+// Switching to supporting does NOT throw the questions away. A role is a
+// classification, and re-classifying a department by mistake must not be
+// destructive — the questions stop being drawn and come back if the role does.
+// The same for the driver in the other direction.
+export function setDepartmentRole(definition, sectionId, groupId, deptId, role) {
+  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({ ...dept, role }))
 }
 
-export function updateQuestion(definition, questionId, updater) {
-  return {
-    ...definition,
-    groups: (definition?.groups || []).map((g) => ({
-      ...g,
-      questions: (g.questions || []).map((q) => (q.instance_id === questionId ? updater(q) : q)),
-    })),
-  }
+export function setDriver(definition, sectionId, groupId, deptId, driver) {
+  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({ ...dept, driver }))
 }
 
-export function insertSubQuestion(definition, questionId, sub) {
-  return updateQuestion(definition, questionId, (q) => ({ ...q, questions: [...(q.questions || []), sub] }))
+// --- Questions --------------------------------------------------------------
+
+export function insertQuestion(definition, sectionId, groupId, deptId, question) {
+  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({
+    ...dept,
+    questions: [...(dept.questions ?? []), question],
+  }))
 }
 
-export function removeSubQuestion(definition, subId) {
-  return {
-    ...definition,
-    groups: (definition?.groups || []).map((g) => ({
-      ...g,
-      questions: (g.questions || []).map((q) => ({
-        ...q,
-        questions: (q.questions || []).filter((s) => s.instance_id !== subId),
-      })),
-    })),
-  }
+export function removeQuestion(definition, sectionId, groupId, deptId, questionId) {
+  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({
+    ...dept,
+    questions: (dept.questions ?? []).filter((q) => q.instance_id !== questionId),
+  }))
 }
 
-export function updateSubQuestion(definition, subId, updater) {
-  return {
-    ...definition,
-    groups: (definition?.groups || []).map((g) => ({
-      ...g,
-      questions: (g.questions || []).map((q) => ({
-        ...q,
-        questions: (q.questions || []).map((s) => (s.instance_id === subId ? updater(s) : s)),
-      })),
-    })),
-  }
+export function updateQuestion(definition, sectionId, groupId, deptId, questionId, updater) {
+  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({
+    ...dept,
+    questions: (dept.questions ?? []).map((q) => (q.instance_id === questionId ? updater(q) : q)),
+  }))
 }
 
-// A question or a sub-question, whichever holds this id — the detail panel edits
-// both through one set of handlers, since a prompt and a number exist at either
-// level.
-export function updateAnyQuestion(definition, id, updater) {
-  const found = findNode(definition, id)
-  if (!found) return definition
-  return found.kind === 'subQuestion'
-    ? updateSubQuestion(definition, id, updater)
-    : updateQuestion(definition, id, updater)
+// --- Room sets ----------------------------------------------------------------
+
+// A SET READS AS ITS ONE ROOM until it holds more. `name` is authored only when
+// there is something a list of room names cannot say — "3 Tesla" over three
+// rooms — so an unnamed set is the normal case and not an unfinished one.
+export function newRoomSet(rooms = []) {
+  return { instance_id: crypto.randomUUID(), name: '', rooms }
+}
+
+// THE ONE READER of a question's follow-up, and it is what makes the older
+// shape keep working: a question written before sets held a flat `rooms` array,
+// and each of those is exactly a set of one. Absence means the behaviour that
+// version had — no migration, as everywhere else here.
+export function questionRoomSets(question) {
+  if (Array.isArray(question?.room_sets)) return question.room_sets
+  return (question?.rooms ?? []).map((room) => ({
+    instance_id: `legacy:${room.instance_id}`,
+    name: '',
+    rooms: [room],
+  }))
+}
+
+// Every room the question spoken for, across all its sets — what the
+// once-per-department rule is checked against.
+export function questionRoomIds(question) {
+  return questionRoomSets(question).flatMap((set) => (set.rooms ?? []).map((r) => r.instance_id))
+}
+
+// Writing always writes `room_sets`, so the first edit of a legacy question
+// settles it into the current shape.
+function withSets(question, sets) {
+  const next = { ...question, room_sets: sets }
+  delete next.rooms
+  return next
+}
+
+export function questionWithSet(question, set) {
+  return withSets(question, [...questionRoomSets(question), set])
+}
+
+export function questionWithoutSet(question, setId) {
+  return withSets(
+    question,
+    questionRoomSets(question).filter((s) => s.instance_id !== setId)
+  )
+}
+
+export function questionWithSetUpdated(question, setId, updater) {
+  return withSets(
+    question,
+    questionRoomSets(question).map((s) => (s.instance_id === setId ? updater(s) : s))
+  )
+}
+
+export function setWithRoom(set, room) {
+  if ((set.rooms ?? []).some((r) => r.instance_id === room.instance_id)) return set
+  return { ...set, rooms: [...(set.rooms ?? []), room] }
+}
+
+export function setWithoutRoom(set, roomInstanceId) {
+  return { ...set, rooms: (set.rooms ?? []).filter((r) => r.instance_id !== roomInstanceId) }
 }
 
 // --- Writing ----------------------------------------------------------------
@@ -239,14 +354,13 @@ export async function writeQuestionnaire(id, definition, atVersion) {
   return { error: null, version: data[0].version }
 }
 
-// NOTHING READS THIS DOCUMENT YET. The Questions tab authors it; the wizard that
-// asks these questions and the engine that applies the answers to sp_option.data
-// are the next piece. The restrictions above are what keep that engine to three
-// lines:
+// NOTHING READS THIS DOCUMENT YET. The wizard that asks these questions and the
+// engine that applies the answers are still the next piece:
 //
-//   sub-question yes   add the department at department_node_id, phase 1
-//   its number         set that room's `count` to the answer
-//   gate yes           ask the questions under it; record its number
+//   gate yes                open the departments in that group
+//   question yes + number   set that count on each room the question connects to
+//   supporting department   driver's answer × coefficient
 //
-// The one thing still open is what a gate's number is FOR — it is recorded and
-// nothing consumes it.
+// Still open, as before: what a gate's number is FOR, and what unit a
+// supporting department's rule produces — a count, an area or a multiplier on
+// the catalog's own figure. See Open questions in CLAUDE.md.

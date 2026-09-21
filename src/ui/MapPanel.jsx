@@ -6,6 +6,7 @@ import DrawControl from './map/DrawControl.jsx'
 import SiteClusterLayer from './map/SiteClusterLayer.jsx'
 import TreeCanvas from './tree/TreeCanvas.jsx'
 import QuestionOutline from './questions/QuestionOutline.jsx'
+import TestRun from './questions/TestRun.jsx'
 import { RULE } from './layout.js'
 import { Z } from './primitives/zIndex.js'
 
@@ -110,7 +111,10 @@ export default function MapPanel({
         overflow: 'visible',
       }}
     >
-          {band}
+          {/* Test run has no band: it is a run of the questionnaire from the
+              top, and the project, option and building rows all switch between
+              things that would restart it. See TestRun.jsx. */}
+          {view !== 'testrun' && band}
 
           {/* Whatever the band leaves: every screen fills this box. */}
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
@@ -140,6 +144,12 @@ export default function MapPanel({
                 onLeave={onLeaveQuestions}
                 canEdit={isAdmin}
               />
+            </div>
+          )}
+
+          {view === 'testrun' && (
+            <div style={{ position: 'absolute', inset: 0 }}>
+              <TestRun buildingId={questionBuildingId} />
             </div>
           )}
 

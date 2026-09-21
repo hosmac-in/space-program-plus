@@ -6,6 +6,7 @@
 //   #/project?p=7f3a1c2e…&o=b21c4f90…
 //   #/tree
 //   #/questions?b=1d9e5a30…
+//   #/test-run?b=1d9e5a30…
 //
 //   p = sp_project.id      o = sp_option.id      b = sp_building.id
 //
@@ -13,7 +14,8 @@
 //
 // The Questions tab takes `b`, because a questionnaire is authored one building
 // at a time and a link to one should open that one. Absent or unrecognised falls
-// back to the first building.
+// back to the first building. Test run — the same questionnaire answered rather
+// than authored — takes it for the same reason.
 //
 // The tab is a path segment named by its visible label; the ids are query
 // parameters, present only when something is selected. Anything unrecognised
@@ -31,8 +33,24 @@ import { useCallback, useEffect, useState } from 'react'
 // URL slug <-> the view value the app uses internally. They match apart from
 // UHDP, whose internal name is older than its label. The former slugs `canvas`
 // and `hierarchy` are deliberately not read: one name per screen, not two.
-const VIEW_BY_SLUG = { uhdp: 'map', project: 'project', tree: 'tree', questions: 'questions' }
-const SLUG_BY_VIEW = { map: 'uhdp', project: 'project', tree: 'tree', questions: 'questions' }
+const VIEW_BY_SLUG = {
+  uhdp: 'map',
+  project: 'project',
+  tree: 'tree',
+  questions: 'questions',
+  'test-run': 'testrun',
+}
+const SLUG_BY_VIEW = {
+  map: 'uhdp',
+  project: 'project',
+  tree: 'tree',
+  questions: 'questions',
+  testrun: 'test-run',
+}
+
+// The tabs that author or answer ONE building's questionnaire, and so the ones
+// `b` means anything on.
+const BUILDING_VIEWS = new Set(['questions', 'testrun'])
 
 const DEFAULT_VIEW = 'map'
 
@@ -54,9 +72,9 @@ function buildHash({ view, projectId, optionId, buildingId }) {
   const params = new URLSearchParams()
   if (projectId) params.set('p', projectId)
   if (optionId) params.set('o', optionId)
-  // Only the Questions tab reads it, so it is dropped everywhere else rather
-  // than trailing behind the project and option on every other link.
-  if (buildingId && view === 'questions') params.set('b', buildingId)
+  // Only the two questionnaire tabs read it, so it is dropped everywhere else
+  // rather than trailing behind the project and option on every other link.
+  if (buildingId && BUILDING_VIEWS.has(view)) params.set('b', buildingId)
 
   const query = params.toString()
   return `#/${SLUG_BY_VIEW[view] ?? 'uhdp'}${query ? `?${query}` : ''}`

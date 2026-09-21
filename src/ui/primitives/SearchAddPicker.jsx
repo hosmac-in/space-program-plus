@@ -245,7 +245,9 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                 // the list to one. Counted over the real rows: a divider riding
                 // along with the last match must not be what stops this firing.
                 const pick = active >= 0 ? only[active] : only.length === 1 ? only[0] : null
-                if (pick) {
+                // A disabled row is navigable but not choosable, or Enter would
+                // add what the list has just said cannot be added.
+                if (pick && !pick.disabled) {
                   onAdd(pick)
                   close()
                 }
@@ -296,11 +298,20 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                   <div
                     key={opt.id}
                     ref={(el) => (rowRefs.current[row] = el)}
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      onAdd(opt)
-                      close()
-                    }}
+                    // A DISABLED OPTION IS STILL DRAWN, and that is the point of
+                    // it: a row that vanishes once it is spoken for leaves you
+                    // wondering whether it ever existed. `opt.reason` is on the
+                    // title, so hovering says who took it.
+                    title={opt.disabled ? opt.reason : undefined}
+                    onMouseDown={
+                      opt.disabled
+                        ? (e) => e.preventDefault()
+                        : (e) => {
+                            e.preventDefault()
+                            onAdd(opt)
+                            close()
+                          }
+                    }
                     // The highlight is a style, not a mutation on the element:
                     // the keyboard's row is decided by state, and setting
                     // background by hand on hover would be wiped by the next
@@ -308,19 +319,29 @@ export function SearchAddPicker({ options, placeholder, onAdd, label, title = 'A
                     style={{
                       padding: '6px 10px',
                       fontSize: 13,
-                      cursor: 'pointer',
-                      background: isActive ? '#f2f7ff' : '#fff',
+                      cursor: opt.disabled ? 'default' : 'pointer',
+                      background: isActive && !opt.disabled ? '#f2f7ff' : '#fff',
                     }}
                     onMouseEnter={() => setActive(row)}
                   >
                     {/* A row with no name still has to be a row you can see and
                         aim at — see the filter above. Drawn as what it is, so
                         the definition that needs naming can be found. */}
-                    <div style={opt.name ? undefined : { color: '#c17', fontStyle: 'italic' }}>
+                    <div
+                      style={
+                        opt.disabled
+                          ? { color: '#aaa' }
+                          : opt.name
+                            ? undefined
+                            : { color: '#c17', fontStyle: 'italic' }
+                      }
+                    >
                       {opt.name || 'Unnamed'}
                     </div>
-                    {opt.path && (
-                      <div style={{ fontSize: 11, color: '#999', overflowWrap: 'anywhere' }}>{opt.path}</div>
+                    {(opt.disabled ? opt.reason : opt.path) && (
+                      <div style={{ fontSize: 11, color: opt.disabled ? '#bbb' : '#999', overflowWrap: 'anywhere' }}>
+                        {opt.disabled ? opt.reason : opt.path}
+                      </div>
                     )}
                   </div>
                   )

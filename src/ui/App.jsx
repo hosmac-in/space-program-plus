@@ -32,6 +32,8 @@ import BuildingPanel from './tree/BuildingPanel.jsx'
 import { TreeEditorProvider } from './tree/useTreeEditor.jsx'
 import QuestionDetail from './questions/QuestionDetail.jsx'
 import { QuestionnaireEditorProvider } from './questions/useQuestionnaireEditor.jsx'
+import TestRunTree from './questions/TestRunTree.jsx'
+import { TestRunProvider } from './questions/useTestRun.jsx'
 import LoadingOverlay from './primitives/LoadingOverlay.jsx'
 import AppFooter from './AppFooter.jsx'
 import AppHeader from './AppHeader.jsx'
@@ -242,6 +244,11 @@ function SignedInApp({ session }) {
         outline and its detail panel are one editing session and must share one
         write queue. See the note in useQuestionnaireEditor.jsx. */}
     <QuestionnaireEditorProvider buildingId={questionBuildingId}>
+    {/* The test run's answers, held above both columns for the same reason:
+        main asks and side reports what the answers built. Mounted at the top so
+        stepping through the carousel and back does not lose them — leaving the
+        tab does, deliberately, since nothing here is saved. */}
+    <TestRunProvider>
     {/* The four regions — header, main, side, footer — and the three
         regulating lines between them. See CLAUDE.md. */}
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' }}>
@@ -421,7 +428,19 @@ function SignedInApp({ session }) {
 
           {view === 'questions' && (
             <div style={{ padding: 16, minWidth: 0 }}>
-              <QuestionDetail selectedId={selectedQuestionId} canEdit={isAdmin} />
+              <QuestionDetail
+                buildingId={questionBuildingId}
+                selectedId={selectedQuestionId}
+                canEdit={isAdmin}
+              />
+            </div>
+          )}
+
+          {/* Side reports on main here too: the carousel asks, this shows what
+              the answers have built. Nothing on that tab is saved. */}
+          {view === 'testrun' && (
+            <div style={{ padding: 16, minWidth: 0 }}>
+              <TestRunTree buildingId={questionBuildingId} />
             </div>
           )}
         </div>
@@ -482,6 +501,7 @@ function SignedInApp({ session }) {
 
       <LoadingOverlay />
     </div>
+    </TestRunProvider>
     </QuestionnaireEditorProvider>
     </TreeEditorProvider>
     </ReadOnlyProvider>

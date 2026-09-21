@@ -1,4 +1,4 @@
-// Every edit the Questions tab can make to a questionnaire.
+// Every edit the questionnaire designer can make.
 //
 // Each handler: mutate the definition (data/questionnaire.js) -> write the row,
 // conditional on the version it was read at -> reload questionnaires.
@@ -19,27 +19,26 @@
 //   action queues, not just the write: by the time the next runs, the previous
 //   has written AND reloaded.
 //
+// Nothing here adds or removes a section, a group or a department: those come
+// from the catalog and are authored on the Tree tab. This document only says
+// what has been authored AGAINST them — see data/questionnaire.js.
+//
 // There is no undo stack here, unlike the Tree tab. Deliberate for now: this tab
 // edits a document nothing reads yet, every edit is one small field, and the
-// footer's ribbon is already wired to two histories. It is the obvious next
-// thing to add, not something the design forecloses.
+// footer's ribbon is already wired to two histories.
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
 import { useToast } from '../primitives/Toast.jsx'
 import {
   EMPTY_DEFINITION,
-  insertGroup,
   insertQuestion,
-  insertSubQuestion,
-  newGroup,
   newQuestion,
-  newSubQuestion,
-  removeGroup,
   removeQuestion,
-  removeSubQuestion,
-  updateAnyQuestion,
-  updateGroup,
+  setDepartmentRole,
+  setDriver,
+  setGate,
+  updateQuestion,
   writeQuestionnaire,
 } from '../../data/questionnaire.js'
 
@@ -49,10 +48,8 @@ export function useQuestionnaireEditor(buildingId) {
   const pushToast = useToast()
 
   const catalogRef = useRef(catalog)
-  const buildingIdRef = useRef(buildingId)
   useEffect(() => {
     catalogRef.current = catalog
-    buildingIdRef.current = buildingId
   })
 
   // The row for the building being authored. Read through the ref at call time
@@ -96,8 +93,6 @@ export function useQuestionnaireEditor(buildingId) {
     return true
   }, [])
 
-  // Every action below is the same three lines — compute, write, toast — which
-  // is what makes this one helper worth having rather than four copies of it.
   const apply = useCallback(async (next, message) => {
     if (!(await write(next))) return false
     if (message) pushToast(message)
@@ -106,37 +101,37 @@ export function useQuestionnaireEditor(buildingId) {
 
   const currentDefinition = () => rowRef.current?.definition ?? EMPTY_DEFINITION
 
-  // --- Groups ---------------------------------------------------------------
+  // --- The group's gate -------------------------------------------------------
 
-  const addGroup = useCallback(
-    serialise(async () => {
-      const group = newGroup()
-      if (await apply(insertGroup(currentDefinition(), group), 'Group added')) return group.instance_id
-      return null
+  const setGroupGate = useCallback(
+    serialise(async (sectionId, groupId, gate) => {
+      await apply(setGate(currentDefinition(), sectionId, groupId, gate))
     }),
     []
   )
 
-  const renameGroup = useCallback(
-    serialise(async (groupId, name) => {
-      await apply(updateGroup(currentDefinition(), groupId, (g) => ({ ...g, name })))
+  // --- Functioning or supporting ----------------------------------------------
+
+  const setRole = useCallback(
+    serialise(async (sectionId, groupId, deptId, role) => {
+      await apply(setDepartmentRole(currentDefinition(), sectionId, groupId, deptId, role))
     }),
     []
   )
 
-  const deleteGroup = useCallback(
-    serialise(async (groupId) => {
-      await apply(removeGroup(currentDefinition(), groupId), 'Group removed')
+  const setDepartmentDriver = useCallback(
+    serialise(async (sectionId, groupId, deptId, driver) => {
+      await apply(setDriver(currentDefinition(), sectionId, groupId, deptId, driver))
     }),
     []
   )
 
-  // --- Questions ------------------------------------------------------------
+  // --- Questions --------------------------------------------------------------
 
   const addQuestion = useCallback(
-    serialise(async (groupId) => {
+    serialise(async (sectionId, groupId, deptId) => {
       const question = newQuestion()
-      if (await apply(insertQuestion(currentDefinition(), groupId, question), 'Question added')) {
+      if (await apply(insertQuestion(currentDefinition(), sectionId, groupId, deptId, question), 'Question added')) {
         return question.instance_id
       }
       return null
@@ -144,37 +139,16 @@ export function useQuestionnaireEditor(buildingId) {
     []
   )
 
-  const addSubQuestion = useCallback(
-    serialise(async (questionId) => {
-      const sub = newSubQuestion()
-      if (await apply(insertSubQuestion(currentDefinition(), questionId, sub), 'Question added')) {
-        return sub.instance_id
-      }
-      return null
-    }),
-    []
-  )
-
   const deleteQuestion = useCallback(
-    serialise(async (questionId) => {
-      await apply(removeQuestion(currentDefinition(), questionId), 'Question removed')
+    serialise(async (sectionId, groupId, deptId, questionId) => {
+      await apply(removeQuestion(currentDefinition(), sectionId, groupId, deptId, questionId), 'Question removed')
     }),
     []
   )
 
-  const deleteSubQuestion = useCallback(
-    serialise(async (subId) => {
-      await apply(removeSubQuestion(currentDefinition(), subId), 'Question removed')
-    }),
-    []
-  )
-
-  // One setter for both levels: everything the detail panel edits — the prompt,
-  // the number, a sub-question's binding — is reached the same way, and
-  // updateAnyQuestion is what knows which level an id names.
   const setQuestion = useCallback(
-    serialise(async (id, updater) => {
-      await apply(updateAnyQuestion(currentDefinition(), id, updater))
+    serialise(async (sectionId, groupId, deptId, questionId, updater) => {
+      await apply(updateQuestion(currentDefinition(), sectionId, groupId, deptId, questionId, updater))
     }),
     []
   )
@@ -185,13 +159,11 @@ export function useQuestionnaireEditor(buildingId) {
     // False until the row for this building has arrived. Nothing may be written
     // before then — the write refuses anyway, but the UI should not offer it.
     ready: !!row,
-    addGroup,
-    renameGroup,
-    deleteGroup,
+    setGroupGate,
+    setRole,
+    setDepartmentDriver,
     addQuestion,
-    addSubQuestion,
     deleteQuestion,
-    deleteSubQuestion,
     setQuestion,
     // The write's own refusal, or the catalog read failing under it. One field:
     // to the outline they are the same thing — the tab cannot be trusted.
@@ -200,13 +172,9 @@ export function useQuestionnaireEditor(buildingId) {
 }
 
 // The Questions tab is split across the two columns — the outline in main, the
-// selected question's detail in side — but they are one editing session with one
-// write queue, so the editor is held above both rather than inside either. The
-// same argument, and the same shape, as TreeEditorProvider.
-//
-// Two instances of the hook would mean two `serialise` queues, and an edit in
-// one column could then be computed from a document the other had already
-// replaced — which is the exact failure serialise exists to prevent.
+// selection's detail in side — but they are one editing session with one write
+// queue, so the editor is held above both rather than inside either. The same
+// argument, and the same shape, as TreeEditorProvider.
 const QuestionnaireEditorContext = createContext(null)
 
 export function QuestionnaireEditorProvider({ buildingId, children }) {

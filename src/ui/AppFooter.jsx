@@ -42,6 +42,14 @@ export default function AppFooter({ view, canEdit, builder, onViewChange }) {
     <UndoRedoRibbon {...props}>
       {/* Pushes the tabs to the far right of the band. */}
       <div style={{ flex: 1 }} />
+      {/* Left to right is furthest-back step first: Test run answers the
+          questionnaire, Questions authors it, Tree holds the catalog both draw
+          from. */}
+      <TabButton
+        label="Test run"
+        active={view === 'testrun'}
+        onClick={() => onViewChange(view === 'testrun' ? 'project' : 'testrun')}
+      />
       {/* Questions sits left of Tree: it is the further-back step — what the
           catalog is asked FOR — and the one reached less often. */}
       <TabButton
