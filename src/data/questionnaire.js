@@ -16,14 +16,17 @@
 //               "<department instance_id>": {
 //                 "role": "supporting",        <- ABSENT MEANS FUNCTIONING
 //                 "driver": {…},               <- supporting only, see below
+//                 "variables": [{…}],          <- supporting only, see below
 //                 "questions": [{
 //                   "instance_id": "...",
-//                   "prompt": "Is there an MRI?",
+//                   "prompt": "How many beds?",
+//                   "unit": "beds",          <- what the one number IS
 //                   "comment": "",
 //                   "connections": [         <- THE FOLLOW-UP, always this
 //                     { "kind": "room_group",   <- or "room"
 //                       "instance_id": "...",   <- a CATALOG id, see below
-//                       "label": "3 Tesla" }    <- frozen, display-only
+//                       "label": "3 Tesla",     <- frozen, display-only
+//                       "formula": "ceil(x/4)" } <- HOW MANY, see FORMULAS
 //                   ]
 //                 }]
 //               }
@@ -40,12 +43,12 @@
 //   group          from the catalog, and it carries ONE question — the gate.
 //                  Yes opens the departments under it and adds nothing itself.
 //   department     from the catalog, and it is one of TWO KINDS:
-//     functioning  carries the questions. Each is a yes/no; yes may ask a
-//                  number, may take a comment, and names WHICH ROOMS of that
-//                  department it connects to.
-//     supporting   carries no questions. It is sized by a rule: one DRIVER
-//                  (a question's number anywhere in this questionnaire) times a
-//                  COEFFICIENT.
+//     functioning  carries the questions. EACH ASKS ONE NUMBER — x — and names
+//                  which rooms of that department it connects to, each with a
+//                  FORMULA over x saying how many of that room x buys.
+//     supporting   carries no questions. It names other departments as
+//                  VARIABLES, and each of its own rooms carries a formula over
+//                  their AREAS.
 //
 // The role lives HERE and not on the tree node because a building may have more
 // than one questionnaire in future, and the same department can be functioning
@@ -53,15 +56,24 @@
 // department is programmed by asking about it, and being sized by a rule is the
 // departure.
 //
-// THE FOLLOW-UP TO A QUESTION IS ALWAYS ITS CONNECTIONS, one counter each. So a
-// question has no number of its own and no sub-questions:
+// A QUESTION ASKS ONE NUMBER, AND EVERY ROOM IS A FUNCTION OF IT. There is no
+// yes/no on a question and no counter typed by hand — 0 is the no, and the
+// formulas are the brief's real content:
 //
-//   Is there an MRI?                     yes/no
-//     3 Tesla        [ 2 ]               a ROOM GROUP, and its counter
-//       Therapy Room                       the rooms it brings, all at once
-//       Console Room
-//       Machine Room
-//     5 Tesla        [ 0 ]               0 = not chosen, drawn greyed
+//   How many beds?                       [ 10 ]     <- the ONE answer, x
+//     resuscitation bay   ceil(x/4)         3
+//     patient ward        ceil(x/10)        1
+//     toilet - patient    2                 2       <- a constant is a rule too
+//
+//   >>> THE COUNTER IS A READING, NOT AN INPUT. This reverses the earlier
+//   >>> "don't add a number back onto a question": the number IS the question
+//   >>> now, and the yes/no went in its place. A brief states one figure and
+//   >>> everything else falls out of it.
+//
+// The rules themselves are data/formula.js, which is the ONE evaluator — the
+// engine that turns answers into an sp_option.data calls it rather than writing
+// its own. An ABSENT formula is "nobody has written a rule", drawn as such and
+// contributing nothing; it is never read as 0.
 //
 // A CONNECTION IS A CATALOG ROOM GROUP OR A SINGLE ROOM, answered by one number
 // — two of a 3 Tesla MRI is two of each room in the group. The grouping is
@@ -81,8 +93,42 @@
 // A connection points inside the question's OWN department, never elsewhere, and
 // A ROOM IS USED ONCE PER DEPARTMENT: once a question has it — on its own or
 // inside a group — no other connection and no other question in that department
-// may take it. The counter is the ANSWER and is not stored here: this document
-// is the form, not the filled-in copy.
+// may take it. The answer is not stored here: this document is the form, not the
+// filled-in copy.
+//
+// A SUPPORTING DEPARTMENT NAMES OTHER DEPARTMENTS AS VARIABLES:
+//
+//   variables: [{ name: "ipd",          <- AUTHORED and stable, see below
+//                 kind: "department",
+//                 instance_id: "...",   <- a department in this building
+//                 label: "IPD" }]       <- frozen, display-only
+//
+// The LIST is not stored — it is every FUNCTIONING department in this one's own
+// group, read off the catalog — and only a name somebody changed is. Beside them
+// is `area`, the whole group summed, which is what most rules want; the
+// per-department names are for the rule that has to weight them.
+//
+//   sorting room    ceil(area/750)
+//   linen store     ceil((ipd*0.4 + icu)/900)
+//
+// A VARIABLE IS THAT DEPARTMENT'S NET ROOM AREA IN m², as the run has built it.
+// Net, because a rule is written against rooms someone can count and a grossing
+// factor edited on the Tree tab would otherwise move every supporting department
+// silently. m² ALWAYS, whatever the reader's area toggle says: that toggle is
+// per-browser, so a variable following it would make one stored formula mean two
+// different things to two readers.
+//
+//   >>> THE NAME IS AUTHORED, NOT POSITIONAL. a1/a2 silently change meaning when
+//   >>> one is removed. It is seeded from the department's name — slugged,
+//   >>> because "24×7 Pharmacy" is not an identifier — and renaming it does NOT
+//   >>> rewrite the formulas: they then name something unknown and READ as
+//   >>> broken, where a silent rewrite would not.
+//
+// >>> `driver` IS RETIRED. A supporting department was sized by one driver times
+// >>> a coefficient; those keys are left in place, UNREAD, never deleted — the
+// >>> precedent the old root-level `groups` array set. Every such department
+// >>> needs its rule re-authoring, and a driver could name a COUNT where a
+// >>> variable names an area only. That reach is not replaced yet.
 //
 // NOTHING IS KEYED BY A *_def_id. Every key is an instance_id (or a section's
 // own row id), for tree.js's reason: two placements of one duplicable
@@ -113,15 +159,14 @@ export const SUPPORTING = 'supporting'
 
 // --- Making nodes -----------------------------------------------------------
 
-// A QUESTION HAS NO NUMBER OF ITS OWN AND NO SUB-QUESTIONS. Its follow-up is
-// always the same thing — its list of rooms, one counter each — so both were
-// removed rather than left as a second way to ask "how many".
-export function newQuestion(prompt = 'New question') {
-  return { instance_id: crypto.randomUUID(), prompt, comment: '', connections: [] }
+// A QUESTION IS ONE NUMBER AND THE RULES THAT READ IT. `unit` is what that
+// number is — beds, machines, chairs — and is the only thing naming x for a
+// reader, so a rule can be checked against what it was written about.
+export function newQuestion(prompt = 'How many?') {
+  return { instance_id: crypto.randomUUID(), prompt, unit: '', comment: '', connections: [] }
 }
 
-// The number a yes may go on to ask. Its answer is the count of the rooms this
-// question connects to — there is no multiplier, exactly as before.
+// The number a gate may go on to ask. Nothing reads it — see the closing note.
 export function newNumber(label = 'How many?') {
   return { label }
 }
@@ -130,15 +175,53 @@ export function newGate(prompt) {
   return { prompt: prompt ?? '', number: null, comment: '' }
 }
 
-// A supporting department's rule: one term, driver × coefficient.
-//
-// The driver is a FIGURE THE QUESTIONNAIRE WILL HAVE, and since a question
-// itself no longer asks a number there are exactly two kinds: a connection some
-// question counts (a room group or a room), or a gate's headline total.
-// `source_label` is frozen beside the id so a driver whose source has been
-// deleted still reads as something.
-export function newDriver() {
-  return { source_kind: null, source_id: null, source_label: null, coefficient: 1 }
+// --- A supporting department's variables --------------------------------------
+
+// THE ONE VARIABLE NAME EVERY QUESTION USES. Reserved, so a supporting
+// department cannot name one of its own `x` and make two rules that look alike
+// mean different things.
+export const QUESTION_VAR = 'x'
+
+// THE WHOLE GROUP, SUMMED — every functioning department beside this one, in one
+// number. It is what most rules want ("one sorting room per 750 m² served"), and
+// the per-department names are there for the rule that has to weight them.
+export const GROUP_VAR = 'area'
+
+// A department name into something the language can read: lower case, words
+// joined by _, anything else dropped, and never starting with a digit. "24×7
+// Pharmacy" -> `n24_7_pharmacy`, which is ugly and editable, where `24×7` is a
+// parse error the author never asked for.
+export function slugVariable(name) {
+  const base = String(name ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  if (!base) return 'area'
+  return /^[0-9]/.test(base) ? `n${base}` : base
+}
+
+// Unique WITHIN one supporting department's own list — two placements of the
+// same sp_department in different groups are two ids with one name, so the
+// collision is reachable rather than hypothetical.
+export function uniqueVariableName(seed, taken) {
+  const used = new Set([...taken, QUESTION_VAR, GROUP_VAR])
+  if (!used.has(seed)) return seed
+  let n = 2
+  while (used.has(`${seed}_${n}`)) n += 1
+  return `${seed}_${n}`
+}
+
+export function newVariable(name, instanceId, label) {
+  return { name, kind: 'department', instance_id: instanceId, label: label ?? '' }
+}
+
+export function departmentVariables(definition, sectionId, groupId, deptId) {
+  const list = deptEntry(definition, sectionId, groupId, deptId)?.variables
+  return Array.isArray(list) ? list : []
+}
+
+export function setDepartmentVariables(definition, sectionId, groupId, deptId, variables) {
+  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({ ...dept, variables }))
 }
 
 // --- Reading ----------------------------------------------------------------
@@ -167,9 +250,8 @@ export function departmentQuestions(definition, sectionId, groupId, deptId) {
   return deptEntry(definition, sectionId, groupId, deptId)?.questions ?? []
 }
 
-export function departmentDriver(definition, sectionId, groupId, deptId) {
-  return deptEntry(definition, sectionId, groupId, deptId)?.driver ?? null
-}
+// `driver` has no reader any more and deliberately no writer either — see the
+// retirement note in the header. The key stays where it is.
 
 // Every question in the document, with where it sits. Two callers: locating a
 // selection without knowing which department it is in, and the driver picker,
@@ -231,9 +313,6 @@ export function setDepartmentRole(definition, sectionId, groupId, deptId, role) 
   return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({ ...dept, role }))
 }
 
-export function setDriver(definition, sectionId, groupId, deptId, driver) {
-  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({ ...dept, driver }))
-}
 
 // --- Questions --------------------------------------------------------------
 
@@ -264,9 +343,15 @@ export const ROOM_GROUP = 'room_group'
 export const ROOM = 'room'
 
 // `label` is frozen beside the id for sp_path's reason: a group dissolved or a
-// room deleted on the Tree tab must still read as something.
+// room deleted on the Tree tab must still read as something. `formula` starts
+// EMPTY — unauthored, not zero. Seeding it with `x` would quietly make every
+// room scale one-for-one with a number nobody meant it to.
 export function newConnection(kind, instanceId, label) {
-  return { kind, instance_id: instanceId, label: label ?? '' }
+  return { kind, instance_id: instanceId, label: label ?? '', formula: '' }
+}
+
+export function connectionFormula(connection) {
+  return typeof connection?.formula === 'string' ? connection.formula : ''
 }
 
 // THE ONE READER of a question's follow-up, and what makes both older shapes
@@ -312,6 +397,41 @@ export function questionWithoutConnection(question, instanceId) {
   )
 }
 
+// An INVALID formula is stored like any other. A rule half typed is work, and
+// refusing it at the field would throw it away the moment focus moved.
+export function questionWithFormula(question, instanceId, formula) {
+  return withConnections(
+    question,
+    questionConnections(question).map((c) => (c.instance_id === instanceId ? { ...c, formula } : c))
+  )
+}
+
+// A SUPPORTING DEPARTMENT'S OWN CONNECTIONS live beside its variables, in the
+// same shape a question's do — the row, the formula and the rules for both are
+// one thing, so the panel and the run draw them with one component.
+export function departmentConnections(entry) {
+  return Array.isArray(entry?.connections) ? entry.connections : []
+}
+
+export function setDepartmentConnections(definition, sectionId, groupId, deptId, connections) {
+  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({ ...dept, connections }))
+}
+
+// A SUPPORTING DEPARTMENT'S ROWS ARE THE CATALOG'S, not a list somebody picked —
+// every room it places is sized by a rule, so there is nothing to choose. This
+// writes a rule against one of them, adding the entry the first time and
+// REMOVING it again when the rule is cleared: the document holds what has been
+// authored and nothing else, so an empty rule stores no key at all.
+export function connectionsWithFormula(connections, target, formula) {
+  const kept = connections.filter((c) => c.instance_id !== target.instance_id)
+  if (!formula.trim()) return kept
+  const existing = connections.find((c) => c.instance_id === target.instance_id)
+  return [
+    ...kept,
+    { ...(existing ?? newConnection(target.kind, target.instance_id, target.name)), formula },
+  ]
+}
+
 // --- Writing ----------------------------------------------------------------
 
 // The whole document, written whole — jsonb has no narrow write — and
@@ -344,13 +464,16 @@ export async function writeQuestionnaire(id, definition, atVersion) {
   return { error: null, version: data[0].version }
 }
 
-// NOTHING READS THIS DOCUMENT YET. The wizard that asks these questions and the
-// engine that applies the answers are still the next piece:
+// NOTHING WRITES AN OPTION FROM THIS DOCUMENT YET. The Test run tab answers it
+// and computes what it builds — ui/questions/useTestRun.jsx — but saves nothing.
+// The engine that applies the answers is still the next piece:
 //
-//   gate yes                open the departments in that group
-//   question yes + number   set that count on each room the question connects to
-//   supporting department   driver's answer × coefficient
+//   gate yes              open the departments in that group
+//   question's number x   every connection's formula at x, in rooms
+//   supporting department its variables' areas, then its own formulas
 //
-// Still open, as before: what a gate's number is FOR, and what unit a
-// supporting department's rule produces — a count, an area or a multiplier on
-// the catalog's own figure. See Open questions in CLAUDE.md.
+// Still open: what a GATE's number is for. It used to be reachable as a driver
+// and now nothing can name it at all, so it is authored, answered and read by
+// nobody — and with it went a supporting department's ability to be sized off a
+// COUNT rather than an area. Both come back by giving a variable a `kind`. See
+// Open questions in CLAUDE.md.

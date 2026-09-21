@@ -20,23 +20,26 @@
 
 import { useEffect, useState } from 'react'
 import {
+  connectionsWithFormula,
   newConnection,
-  newDriver,
   newNumber,
+  newVariable,
   questionWithConnection,
+  questionWithFormula,
   questionWithoutConnection,
+  slugVariable,
+  uniqueVariableName,
   ROOM,
   ROOM_GROUP,
 } from '../../data/questionnaire.js'
+import { compileFormula, FORMULA_FUNCTIONS } from '../../data/formula.js'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
-import ValuePicker from '../primitives/ValuePicker.jsx'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { removeHint } from '../primitives/RemoveButton.jsx'
 import Toggle from '../primitives/Toggle.jsx'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, driverOptions, locate, FUNCTIONING, SUPPORTING } from './questionModel.js'
-import { Counter } from './Counter.jsx'
+import { buildModel, locate, FUNCTIONING, SUPPORTING } from './questionModel.js'
 import { useCatalog } from '../../data/catalog.jsx'
 
 function Caption({ children }) {
@@ -187,9 +190,8 @@ function GroupFace({ group, canEdit, editor }) {
   )
 }
 
-function DepartmentFace({ department, group, model, canEdit, editor }) {
+function DepartmentFace({ department, group, canEdit, editor }) {
   const supporting = department.role === SUPPORTING
-  const driver = department.driver
 
   if (!supporting) {
     return (
@@ -208,12 +210,58 @@ function DepartmentFace({ department, group, model, canEdit, editor }) {
     )
   }
 
-  const options = driverOptions(model)
-  const live = options.find((o) => o.id === driver?.source_id) ?? null
-  const set = (patch) => editor.setDepartmentDriver(department.sectionId, department.groupId, department.deptId, {
-    ...(driver ?? newDriver()),
-    ...patch,
-  })
+  return <SupportingFace department={department} group={group} canEdit={canEdit} editor={editor} />
+}
+
+// A SUPPORTING DEPARTMENT: the departments it scales off, and a rule per room
+// over their areas. It is the same shape as a question — names, then rules —
+// with an area where a counted number would be.
+function SupportingFace({ department, group, canEdit, editor }) {
+  // The sample, not stored. m², because that is what a variable always holds.
+  const [tryArea, setTryArea] = useState(1000)
+
+  const variables = department.variables
+  const connections = department.connections
+  const names = variables.map((v) => v.name)
+  const groupVar = variables.find((v) => v.kind === 'group') ?? null
+  const departmentVars = variables.filter((v) => v.kind !== 'group')
+
+  const where = { s: department.sectionId, g: department.groupId, d: department.deptId }
+  const writeConnections = (next) => editor.setSupportingConnections(where.s, where.g, where.d, next)
+
+  // THE ONLY THING AUTHORED ABOUT A VARIABLE IS ITS NAME — the list is the
+  // group's, so the document stores an override per department and nothing else.
+  const renameVariable = (variable, raw) => {
+    const name = uniqueVariableName(
+      slugVariable(raw),
+      names.filter((n) => n !== variable.name)
+    )
+    if (name === variable.name) return
+    // Only the departments are ever written — `area` is derived and belongs to
+    // nobody's document.
+    const rest = departmentVars
+      .filter((v) => v.instance_id !== variable.instance_id)
+      .map((v) => newVariable(v.name, v.instance_id, v.liveName ?? v.label))
+    editor.setVariables(where.s, where.g, where.d, [
+      ...rest,
+      newVariable(name, variable.instance_id, variable.liveName ?? variable.label),
+    ])
+  }
+
+  // The sample: every department at the same area, so `area` is that times how
+  // many there are — the same arithmetic the run does, or the preview would
+  // answer a different question from the thing it is previewing.
+  const scope = {
+    ...Object.fromEntries(departmentVars.map((v) => [v.name, tryArea])),
+    ...(groupVar ? { [groupVar.name]: tryArea * departmentVars.length } : {}),
+  }
+
+  // EVERY ROOM IS ALREADY HERE — there is no picker, because a supporting
+  // department sizes all of what it places and choosing which would be choosing
+  // which rooms it has. Writing a rule is the whole edit; clearing one takes the
+  // entry back out of the document.
+  const writeFormula = (connection, formula) =>
+    writeConnections(connectionsWithFormula(connections.map(stripped), connection, formula))
 
   return (
     <div style={{ minWidth: 0 }}>
@@ -223,77 +271,274 @@ function DepartmentFace({ department, group, model, canEdit, editor }) {
       </Where>
 
       <PanelNote>
-        Sized by a rule rather than by questions: one driver — a figure this questionnaire will have — times a
-        coefficient.
+        Sized by how big other departments turned out, not by a question. Name them below, then give each of this
+        department's rooms a rule over those areas.
       </PanelNote>
 
-      <div style={{ marginTop: 10 }}>
-        <ValuePicker
-          label="Driver"
-          set={!!driver?.source_id}
-          // The frozen label is what a driver whose source has been deleted
-          // reads as — the same device sp_option.data.sp_path is.
-          name={live?.name ?? driver?.source_label ?? 'Not in the questionnaire'}
-          suffix={
-            live && <span style={{ marginLeft: 6, fontWeight: 400, fontSize: 11, color: '#888' }}>{live.kind}</span>
-          }
-          detail={live?.path ?? (driver?.source_id ? 'That figure is no longer asked for' : null)}
-          detailTone={live || !driver?.source_id ? 'muted' : 'warn'}
-          options={options}
-          placeholder="Search rooms and totals..."
-          chooseLabel="Choose a driver"
-          emptyNote="Nothing is counted yet — connect a room to a question first."
-          canEdit={canEdit}
-          onPick={(o) => set({ source_kind: o.kind, source_id: o.id, source_label: o.name })}
-          onClear={() => set({ source_kind: null, source_id: null, source_label: null })}
-        />
+      <div style={{ marginTop: 14, borderTop: '1px solid #eee', paddingTop: 10 }}>
+        <Caption>Scales off</Caption>
+        <PanelNote>
+          Every functioning department in {group.name}, automatically — each its <strong>net room area in m²</strong>,
+          the rooms as counted, no grossing factors, and always m² whatever unit you are reading the app in.
+        </PanelNote>
+
+        {departmentVars.length === 0 && (
+          <PanelNote>This group has no functioning departments yet, so there is nothing to scale off.</PanelNote>
+        )}
+
+        {/* THE TOTAL FIRST, and set apart: it is what most rules are written
+            against, and the names under it are the same figure broken up for
+            the rule that has to weight them. */}
+        {groupVar && (
+          <div
+            className="spp-row"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBlock: 6, minWidth: 0 }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>All of {group.name}</span>
+              <span style={{ display: 'block', fontSize: 11, color: '#999' }}>
+                {departmentVars.length === 0
+                  ? 'Nothing in it yet, so this is 0'
+                  : `${departmentVars.length} department${departmentVars.length === 1 ? '' : 's'}, summed`}
+              </span>
+            </span>
+            <code style={{ fontSize: 12, color: '#555', flexShrink: 0 }}>{groupVar.name}</code>
+          </div>
+        )}
+
+        {departmentVars.map((variable) => (
+          <div
+            key={variable.instance_id}
+            className="spp-row"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              paddingBlock: 4,
+              minWidth: 0,
+              // Stepped in: these are what the total above is made of.
+              paddingLeft: 10,
+            }}
+          >
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span
+                style={{
+                  display: 'block',
+                  fontSize: 13,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  color: variable.missing ? '#b3261e' : '#222',
+                }}
+              >
+                {variable.liveName || 'Unnamed department'}
+              </span>
+              <span style={{ display: 'block', fontSize: 11, color: variable.orphaned ? '#8a6d1f' : '#999' }}>
+                {variable.missing
+                  ? 'No longer in this building — rules using it read as unresolved'
+                  : variable.unsupported
+                    ? 'Supporting, so its area is not known here — this reads 0'
+                    : variable.orphaned
+                      ? `No longer in ${group.name} — kept because a rule may still name it`
+                      : variable.path}
+              </span>
+            </span>
+            {canEdit ? (
+              <NameField value={variable.name} onCommit={(raw) => renameVariable(variable, raw)} />
+            ) : (
+              <code style={{ fontSize: 12, color: '#555' }}>{variable.name}</code>
+            )}
+          </div>
+        ))}
+
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
-        <span style={{ flex: 1, fontSize: 13 }}>Coefficient</span>
-        <CountField
-          value={driver?.coefficient ?? 1}
-          canEdit={canEdit}
-          min={0}
-          step={0.1}
-          decimals={2}
-          prefix="× "
-          title="How many of this per unit of the driver"
-          onCommit={(coefficient) => set({ coefficient })}
-        />
+      <div style={{ marginTop: 18, borderTop: '1px solid #eee', paddingTop: 10 }}>
+        <Caption>Its rooms, one rule each</Caption>
+        {connections.length === 0 && (
+          <PanelNote>This department places no rooms in the catalog yet — add them on the Tree tab.</PanelNote>
+        )}
+
+        {connections.length > 0 && (
+          <TryBar
+            label="Try every area ="
+            value={tryArea}
+            onChange={setTryArea}
+            suffix="m² each"
+            vars={names}
+            subject="each the net room area of that department, in m²"
+          />
+        )}
+
+        {connections.map((connection) => (
+          <ConnectionBlock
+            key={connection.instance_id}
+            connection={connection}
+            canEdit={canEdit}
+            allowedVars={names}
+            scope={scope}
+            onFormula={(formula) => writeFormula(connection, formula)}
+          />
+        ))}
       </div>
 
-      <PanelNote>
-        Nothing reads this yet. What the product is — a count, an area, or a multiplier on the catalog's own figure — is
-        the wizard's to settle.
-      </PanelNote>
     </div>
   )
 }
 
-// ONE CONNECTION: a catalog room group or a single room, and the counter that
-// will be its whole answer.
+// The model hangs `compiled`, `name`, `rooms` and `missing` off a connection for
+// drawing; only the stored keys may go back into the document.
+function stripped(connection) {
+  return {
+    kind: connection.kind,
+    instance_id: connection.instance_id,
+    label: connection.label ?? '',
+    formula: connection.formula ?? '',
+  }
+}
+
+// A variable's name, in the language's own type so it reads as what it is.
+function NameField({ value, onCommit }) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  return (
+    <input
+      type="text"
+      value={draft}
+      title="The name this department goes by in a rule"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => draft !== value && onCommit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') setDraft(value)
+      }}
+      style={{
+        flexShrink: 0,
+        width: 110,
+        padding: '3px 6px',
+        borderRadius: 4,
+        border: '1px solid #ddd',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: 12,
+      }}
+    />
+  )
+}
+
+// THE RULE ITSELF. Monospace, because it is read character by character rather
+// than as a phrase, and committed on blur like every field here — a write per
+// keystroke would be a write of the whole jsonb column per keystroke.
+//
+// AN INVALID RULE IS STORED ANYWAY. A half-typed rule is work, and refusing it
+// at the field throws it away the moment focus moves; it is drawn as broken
+// instead, which is the honest reading and a recoverable one.
+function FormulaField({ value, allowedVars, canEdit, onCommit }) {
+  const [draft, setDraft] = useState(value ?? '')
+  useEffect(() => setDraft(value ?? ''), [value])
+
+  // Parsed as typed, so the message answers the keystroke that caused it.
+  const compiled = compileFormula(draft, allowedVars)
+  const broken = compiled.authored && !compiled.ok
+
+  const common = {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: 12,
+  }
+
+  if (!canEdit) {
+    return (
+      <span style={{ ...common, color: compiled.authored ? '#444' : '#bbb' }}>
+        {compiled.authored ? value : 'no rule yet'}
+      </span>
+    )
+  }
+
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="no rule yet"
+      title={broken ? compiled.message : 'How many of this one answer buys'}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => draft !== (value ?? '') && onCommit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') setDraft(value ?? '')
+      }}
+      style={{
+        ...common,
+        width: '100%',
+        boxSizing: 'border-box',
+        padding: '4px 6px',
+        borderRadius: 4,
+        border: `1px solid ${broken ? '#e6a9a2' : '#ddd'}`,
+        background: broken ? '#fdf6f5' : '#fff',
+        color: '#222',
+      }}
+    />
+  )
+}
+
+// What a rule works out to at the sample number, or why it does not. The four
+// states are told apart here and nowhere else in this panel.
+function Result({ compiled, scope }) {
+  const { value, state, message } = compiled.evaluate(scope)
+
+  if (state === 'unauthored') return <Muted>—</Muted>
+  if (state !== 'ok') {
+    return (
+      <span title={message} style={{ flexShrink: 0, fontSize: 11, color: '#b3261e', fontWeight: 600 }}>
+        !
+      </span>
+    )
+  }
+  return (
+    <span
+      style={{
+        flexShrink: 0,
+        fontSize: 12,
+        fontVariantNumeric: 'tabular-nums',
+        color: value > 0 ? '#222' : '#bbb',
+        minWidth: 26,
+        textAlign: 'right',
+      }}
+    >
+      {value}
+    </span>
+  )
+}
+
+function Muted({ children }) {
+  return <span style={{ flexShrink: 0, fontSize: 12, color: '#ccc', minWidth: 26, textAlign: 'right' }}>{children}</span>
+}
+
+// ONE CONNECTION: a catalog room group or a single room, its rule, and what that
+// rule works out to at the sample number.
 //
 // A GROUP LISTS ITS ROOMS, read live off the tree — the membership is the Tree
 // tab's to state and nothing here can change it, so the list is a reading rather
 // than a control. A single room says its name once and draws nothing under it.
-function ConnectionBlock({ connection, canEdit, onRemove }) {
+function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, onRemove }) {
   const group = connection.kind === ROOM_GROUP
+  const compiled = connection.compiled
+  // A supporting department's rows are the catalog's and cannot be taken away —
+  // clearing the rule is the whole of it — so there is no remove gesture there.
+  const removable = canEdit && !!onRemove
 
   return (
-    <div style={{ marginTop: 8, borderLeft: '2px solid #eee', paddingLeft: 8, minWidth: 0 }}>
+    <div style={{ marginTop: 10, borderLeft: '2px solid #eee', paddingLeft: 8, minWidth: 0 }}>
       <div
         className="spp-row"
-        title={canEdit ? removeHint(group ? 'this group' : 'this room') : undefined}
+        title={removable ? removeHint(group ? 'this group' : 'this room') : undefined}
         onContextMenu={
-          canEdit
+          removable
             ? (e) => {
                 e.preventDefault()
                 onRemove()
               }
             : undefined
         }
-        style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBlock: 4, minWidth: 0 }}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBlock: 2, minWidth: 0 }}
       >
         <span
           style={{
@@ -308,12 +553,17 @@ function ConnectionBlock({ connection, canEdit, onRemove }) {
           }}
         >
           {connection.name}
-          {connection.missing && (
-            <span style={{ fontSize: 11 }}> — no longer in this department</span>
-          )}
+          {connection.missing && <span style={{ fontSize: 11 }}> — no longer in this department</span>}
         </span>
-        <Counter />
+        <Result compiled={compiled} scope={scope} />
       </div>
+
+      <div style={{ marginTop: 2 }}>
+        <FormulaField value={connection.formula ?? ''} allowedVars={allowedVars} canEdit={canEdit} onCommit={onFormula} />
+      </div>
+      {compiled.authored && !compiled.ok && (
+        <div style={{ fontSize: 11, color: '#b3261e', marginTop: 2 }}>{compiled.message}</div>
+      )}
 
       {group &&
         connection.rooms.map((room) => (
@@ -322,7 +572,7 @@ function ConnectionBlock({ connection, canEdit, onRemove }) {
             style={{
               fontSize: 12,
               color: '#666',
-              paddingBlock: 2,
+              paddingBlock: 1,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -335,6 +585,145 @@ function ConnectionBlock({ connection, canEdit, onRemove }) {
   )
 }
 
+// THE PREVIEW'S OWN NUMBER, which is not stored anywhere. A typed rule without
+// something to read it back against is unusable — this is the part that makes a
+// formula authorable at all. The `i` beside it is where the language is written
+// down: shut by default, because it is read once and then never again, and a
+// permanent paragraph above every rule is a paragraph nobody reads at all.
+function TryBar({ label, value, onChange, suffix, vars, subject }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+        {/* At the HEAD of the row, where every control on these panels lives —
+            the × and the + are there too. The figures stay on the right. */}
+        <button
+          type="button"
+          aria-expanded={open}
+          title={open ? 'Hide how rules are written' : 'How rules are written'}
+          onClick={() => setOpen((o) => !o)}
+          style={{
+            flexShrink: 0,
+            width: 18,
+            height: 18,
+            borderRadius: '50%',
+            border: `1px solid ${open ? '#1a73e8' : '#ccc'}`,
+            background: open ? '#1a73e8' : '#fff',
+            color: open ? '#fff' : '#888',
+            fontSize: 11,
+            fontStyle: 'italic',
+            fontWeight: 700,
+            fontFamily: 'Georgia, serif',
+            lineHeight: 1,
+            padding: 0,
+            cursor: 'pointer',
+          }}
+        >
+          i
+        </button>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#777' }}>{label}</span>
+        {/* The unit goes BEFORE the figure so the figure ends on the panel's own
+            right edge, in the column every result below it is read down. */}
+        {suffix && <span style={{ flexShrink: 0, fontSize: 11, color: '#999' }}>{suffix}</span>}
+        <CountField value={value} min={0} step={1} prefix="" width={90} onChange={onChange} />
+      </div>
+      {open && <FormulaHelp vars={vars} subject={subject} />}
+    </>
+  )
+}
+
+function Code({ children }) {
+  return (
+    <code
+      style={{
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: 11,
+        background: '#fff',
+        border: '1px solid #e6e6e6',
+        borderRadius: 3,
+        padding: '0 3px',
+      }}
+    >
+      {children}
+    </code>
+  )
+}
+
+function HelpLine({ children }) {
+  return <div style={{ marginTop: 6, lineHeight: 1.6 }}>{children}</div>
+}
+
+// THE LANGUAGE, written where it is used. It is short enough to state in full,
+// so it is stated in full rather than linked to — there is nowhere to link to.
+function FormulaHelp({ vars, subject }) {
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: '10px 12px',
+        borderRadius: 6,
+        background: '#f7f8fa',
+        border: '1px solid #e8e8ea',
+        fontSize: 12,
+        color: '#555',
+        minWidth: 0,
+      }}
+    >
+      <HelpLine>
+        A rule is arithmetic over {vars.length === 0 ? <em>nothing yet</em> : vars.map((v, i) => (
+          <span key={v}>
+            {i > 0 && ', '}
+            <Code>{v}</Code>
+          </span>
+        ))}
+        {subject && <> — {subject}</>}.
+      </HelpLine>
+
+      <HelpLine>
+        <Code>+</Code> <Code>-</Code> <Code>*</Code> <Code>/</Code> and brackets, in the usual order: <Code>*</Code> and{' '}
+        <Code>/</Code> before <Code>+</Code> and <Code>-</Code>.
+      </HelpLine>
+
+      <HelpLine>
+        {FORMULA_FUNCTIONS.map((f, i) => (
+          <span key={f}>
+            {i > 0 && ' '}
+            <Code>{f}(…)</Code>
+          </span>
+        ))}
+        {' — '}
+        <Code>min</Code> and <Code>max</Code> take any number of terms, <Code>clamp(v, low, high)</Code> takes three.
+      </HelpLine>
+
+      <HelpLine>
+        <strong>The answer is a whole number of rooms.</strong> It is never negative, and a fraction rounds — so{' '}
+        <Code>{vars[0] ?? 'x'}/3</Code> at 10 is 3. Write <Code>ceil(…)</Code> when it must always go up.
+      </HelpLine>
+
+      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e8e8ea' }}>
+        <Example rule={`ceil(${vars[0] ?? 'x'}/4)`}>one per four, rounded up</Example>
+        <Example rule="2">always two, whatever the answer</Example>
+        <Example rule={`max(1, ceil(${vars[0] ?? 'x'}/20))`}>one per twenty, but never none</Example>
+        <Example rule={`clamp(ceil(${vars[0] ?? 'x'}/10), 1, 4)`}>one per ten, between one and four</Example>
+      </div>
+
+      <HelpLine>
+        <span style={{ color: '#888' }}>Leave it empty and nothing is sized — an empty rule is not a zero.</span>
+      </HelpLine>
+    </div>
+  )
+}
+
+function Example({ rule, children }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginTop: 4, minWidth: 0 }}>
+      <Code>{rule}</Code>
+      <span style={{ flex: 1, minWidth: 0, color: '#888' }}>{children}</span>
+    </div>
+  )
+}
+
 function QuestionFace({ node, department, group, canEdit, editor }) {
   const question = node.question
   const edit = (updater) => editor.setQuestion(node.sectionId, node.groupId, node.deptId, node.id, updater)
@@ -343,6 +732,9 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
   const [pendingRemove, setPendingRemove] = useState(null)
 
   const connections = node.connections
+  // Not stored: a sample to read the rules back at. 10 rather than 1, because a
+  // ratio at 1 tells you almost nothing about whether you wrote it right.
+  const [tryX, setTryX] = useState(10)
 
   const usedBy = (roomInstanceId) => {
     const used = department.usage.get(roomInstanceId)
@@ -384,11 +776,20 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
       <Field
         label="Asked as"
         value={question.prompt}
-        placeholder="Is there an MRI?"
+        placeholder="How many beds?"
         canEdit={canEdit}
         onCommit={(prompt) => edit((q) => ({ ...q, prompt }))}
       />
-      <PanelNote>Answered yes or no. Yes opens what it connects to below, each with its own counter.</PanelNote>
+      <Field
+        label="Counted in"
+        value={node.unit}
+        placeholder="beds"
+        canEdit={canEdit}
+        onCommit={(unit) => edit((q) => ({ ...q, unit }))}
+      />
+      <PanelNote>
+        Answered with one number. Every room below is a rule over it — <code>x</code> is what this question asks.
+      </PanelNote>
 
       <Field
         label="Comment"
@@ -403,11 +804,20 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
           catalog, and nothing wider. One counter per connection, so a 3 Tesla
           MRI is one number over the three rooms its group holds. */}
       <div style={{ marginTop: 18, borderTop: '1px solid #eee', paddingTop: 10 }}>
-        <Caption>Connects to, one counter each</Caption>
-        {connections.length === 0 ? (
+        <Caption>Connects to, one rule each</Caption>
+        {connections.length === 0 && (
           <PanelNote>Nothing yet. Add a room group or a single room from this department.</PanelNote>
-        ) : (
-          <PanelNote>A yes opens these. Each takes a count of its own, and 0 means that one was not chosen.</PanelNote>
+        )}
+
+        {connections.length > 0 && (
+          <TryBar
+            label="Try x ="
+            value={tryX}
+            onChange={setTryX}
+            suffix={node.unit || null}
+            vars={['x']}
+            subject={`what this question asks${node.unit ? `, in ${node.unit}` : ''}`}
+          />
         )}
 
         {connections.map((connection) => (
@@ -415,6 +825,9 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
             key={connection.instance_id}
             connection={connection}
             canEdit={canEdit}
+            allowedVars={['x']}
+            scope={{ x: tryX }}
+            onFormula={(formula) => edit((q) => questionWithFormula(q, connection.instance_id, formula))}
             onRemove={() => setPendingRemove(connection)}
           />
         ))}
@@ -500,7 +913,7 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
 
   if (node.kind === 'department') {
     return (
-      <DepartmentFace department={department} group={group} model={model} canEdit={canEdit} editor={editor} />
+      <DepartmentFace department={department} group={group} canEdit={canEdit} editor={editor} />
     )
   }
 

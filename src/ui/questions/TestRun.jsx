@@ -25,7 +25,7 @@ import { CountField, PanelNote } from '../panel/panelParts.jsx'
 import { Branch, BranchRoot, BRANCH_ORIGIN_CONTENT, TreeLayer, useRootAnchor } from '../panel/PanelTree.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, SUPPORTING } from './questionModel.js'
-import { useTestRun } from './useTestRun.jsx'
+import { evaluateRun, useTestRun } from './useTestRun.jsx'
 
 const RAIL_WIDTH = 240
 const CARD_MAX = 860
@@ -124,11 +124,7 @@ function railSections(deck) {
 function groupTouched(group, run) {
   if (run.answers.gates[group.id] !== undefined) return true
   return group.departments.some((department) =>
-    department.questions.some(
-      (node) =>
-        run.answers.questions[node.id] !== undefined ||
-        node.connections.some((c) => (run.answers.counts[c.instance_id] ?? 0) > 0)
-    )
+    department.questions.some((node) => run.answers.questions[node.id] !== undefined)
   )
 }
 
@@ -536,7 +532,7 @@ function GateRow({ group, gate, yes, run }) {
 // It asks nothing. Next walks the groups in order, and this is what makes that
 // order visible and skippable — the one place you can see a whole section at
 // once and go back to the group you meant.
-function SectionCard({ step, run, revealedOf, onReveal }) {
+function SectionCard({ step, run, answered, revealedOf, onReveal }) {
   const { section } = step
   // EVERY GROUP IS ALWAYS VISIBLE. The gates are what the section asks, and a
   // section that showed one at a time would hide the question it exists to put.
@@ -596,7 +592,26 @@ function SectionCard({ step, run, revealedOf, onReveal }) {
                   )}
                   {yes &&
                     functioning.map((department) => (
-                      <DepartmentBlock key={department.id} department={department} run={run} />
+                      <DepartmentBlock
+                        key={department.id}
+                        department={department}
+                        run={run}
+                        results={answered.get(department.id)?.results ?? []}
+                      />
+                    ))}
+
+                  {/* THE SUPPORTING ONES COME LAST, and only once everything
+                      asked for is out — they are read FROM those answers, so
+                      showing them first would show a column of zeros that
+                      changes under you as you work up the card. */}
+                  {yes &&
+                    more === 0 &&
+                    supporting.map((department) => (
+                      <SupportingBlock
+                        key={department.id}
+                        department={department}
+                        entry={answered.get(department.id)}
+                      />
                     ))}
                 </BranchRoot>
               </TreeLayer>
@@ -631,10 +646,10 @@ function SectionCard({ step, run, revealedOf, onReveal }) {
                 </button>
               )}
 
-              {yes && supporting.length > 0 && (
+              {yes && more > 0 && supporting.length > 0 && (
                 <div style={{ fontSize: 12, color: '#aaa', marginTop: 10, paddingLeft: BRANCH_ORIGIN_CONTENT }}>
-                  {supporting.map((d) => d.name).join(', ')} {supporting.length === 1 ? 'is' : 'are'} sized by a rule
-                  and never asked for.
+                  {supporting.map((d) => d.name).join(', ')} {supporting.length === 1 ? 'is' : 'are'} sized by a rule,
+                  once the rest is answered.
                 </div>
               )}
             </div>
@@ -651,40 +666,65 @@ function SectionCard({ step, run, revealedOf, onReveal }) {
 // Its name is a heading rather than a card: it sits inside the group that is
 // already boxed, and a box inside a box inside the section's own card is three
 // borders saying one thing.
-function DepartmentBlock({ department, run }) {
+function DeptHeading({ children, note }) {
   return (
-    <Branch endpoint="dot" padTop={14} head={14 + DEPT_ROW / 2}>
+    <>
       <div
         style={{
           height: DEPT_ROW,
           display: 'flex',
           alignItems: 'center',
+          gap: 10,
           fontSize: DEPT_TYPE,
           fontWeight: 600,
           color: '#555',
         }}
       >
-        {department.name}
+        {children}
       </div>
+      {note && <div style={{ fontSize: 12, color: '#aaa', marginTop: 2 }}>{note}</div>}
+    </>
+  )
+}
+
+function DepartmentBlock({ department, run, results }) {
+  // The results come back in the order the connections were walked, so one
+  // cursor over them matches the questions as they are drawn. Keyed lookup
+  // instead would need a key that is unique across questions, and a connection's
+  // id is only unique within its department.
+  let cursor = 0
+
+  return (
+    <Branch endpoint="dot" padTop={14} head={14 + DEPT_ROW / 2}>
+      <DeptHeading>{department.name}</DeptHeading>
 
       {department.questions.length === 0 && (
         <PanelNote>Nothing is asked about this department yet — author it on the Questions tab.</PanelNote>
       )}
 
       {department.questions.map((node) => {
-        const asked = run.questionYes(node.id)
+        const mine = results.slice(cursor, cursor + node.connections.length)
+        cursor += node.connections.length
         return (
           <Branch key={node.id} endpoint="dot" padTop={10} head={10 + QUESTION_ROW / 2}>
             <div style={{ minHeight: QUESTION_ROW, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
               <span style={{ flex: 1, minWidth: 0, fontSize: QUESTION_TYPE, lineHeight: 1.35 }}>
                 {node.question.prompt || 'Untitled question'}
               </span>
-              <span style={{ flexShrink: 0 }}>
-                <Toggle
-                  checked={asked}
-                  onChange={(v) => run.setQuestion(node.id, { yes: v })}
+              {/* THE ONE ANSWER. Empty until typed — see the note on EMPTY in
+                  useTestRun: a 0 sitting here is an answer nobody gave. */}
+              <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <CountField
+                  value={run.xOf(node.id) ?? ''}
+                  min={0}
+                  step={1}
+                  prefix=""
+                  width={100}
+                  size="1.1em"
                   title={node.question.prompt}
+                  onChange={(n) => run.setQuestion(node.id, { x: n })}
                 />
+                {node.unit && <span style={{ fontSize: 12, color: '#999', minWidth: 40 }}>{node.unit}</span>}
               </span>
             </div>
 
@@ -696,24 +736,55 @@ function DepartmentBlock({ department, run }) {
               </div>
             )}
 
-            {/* The follow-up, and it is always the same thing: what the question
-                connects to, one counter each. */}
-            {asked && node.connections.length === 0 && (
-              <PanelNote>This question connects to no rooms yet.</PanelNote>
-            )}
-            {asked &&
-              node.connections.map((connection) => (
-                <Branch key={connection.instance_id} endpoint="dot" head={CONNECTION_ROW / 2}>
-                  <ConnectionRow
-                    connection={connection}
-                    count={run.countOf(connection.instance_id)}
-                    onCount={(n) => run.setCount(connection.instance_id, n)}
-                  />
-                </Branch>
-              ))}
+            {node.connections.length === 0 && <PanelNote>This question connects to no rooms yet.</PanelNote>}
+            {mine.map((result) => (
+              <Branch key={result.connection.instance_id} endpoint="dot" head={CONNECTION_ROW / 2}>
+                <ConnectionRow result={result} />
+              </Branch>
+            ))}
           </Branch>
         )
       })}
+    </Branch>
+  )
+}
+
+// A SUPPORTING DEPARTMENT IS NOT ASKED FOR — it is READ. Its rooms are computed
+// from the areas above it, so the block states which areas it read and what they
+// bought, and takes no input at all.
+function SupportingBlock({ department, entry }) {
+  // ONLY THE ROOMS SOMEBODY HAS SIZED. Every room the department places is a row
+  // in the designer, because that is where the rules are written; here it is a
+  // reading, and a column of "no rule" over rooms nobody has got to yet is noise
+  // in front of the figures that do mean something.
+  const results = (entry?.results ?? []).filter((r) => r.state !== 'unauthored')
+  const scope = entry?.scope ?? {}
+
+  return (
+    <Branch endpoint="dot" padTop={14} head={14 + DEPT_ROW / 2}>
+      <DeptHeading
+        note={
+          // The group's total leads, since it is what most rules read; the
+          // departments it is made of follow.
+          department.variables
+            .map((v) => {
+              const area = Number.isFinite(scope[v.name]) ? Math.round(scope[v.name]) : null
+              const name = v.kind === 'group' ? `all of ${v.liveName}` : v.liveName || v.name
+              return `${name} ${area === null ? '—' : area} m²`
+            })
+            .join(' · ') || 'Scales off nothing yet — author it on the Questions tab.'
+        }
+      >
+        <span style={{ flex: 1, minWidth: 0 }}>{department.name}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#8a6d1f', flexShrink: 0 }}>SIZED BY A RULE</span>
+      </DeptHeading>
+
+      {results.length === 0 && <PanelNote>No rooms are sized here yet.</PanelNote>}
+      {results.map((result) => (
+        <Branch key={result.connection.instance_id} endpoint="dot" padTop={6} head={6 + CONNECTION_ROW / 2}>
+          <ConnectionRow result={result} />
+        </Branch>
+      ))}
     </Branch>
   )
 }
@@ -726,13 +797,28 @@ function DepartmentBlock({ department, run }) {
 // >>> thing IS — two 3 Tesla MRIs — not by which rooms that buys, and the list
 // >>> sat under the one row on the card that already had a number to read. Side
 // >>> is where the rooms appear, as they are counted.
-function ConnectionRow({ connection, count, onCount }) {
-  const chosen = count > 0
+// >>> A COUNT IS A FIGURE HERE, NEVER A FIELD. It is computed, and a disabled
+// >>> input still reads as somewhere you may type — which invites the one
+// >>> edit this whole tab no longer takes.
+//
+// The four states are told apart, because a run where "no rule was written",
+// "the rule is broken", "it names something gone" and "it really is zero" all
+// draw the same grey 0 is a run nobody can debug.
+const STATES = {
+  unauthored: { text: 'no rule', colour: '#c9c9c9' },
+  invalid: { text: 'broken rule', colour: '#b3261e' },
+  unresolved: { text: 'unresolved', colour: '#b3261e' },
+}
+
+function ConnectionRow({ result }) {
+  const { connection, count, state, message } = result
+  const flag = STATES[state]
+  const chosen = state === 'ok' && count > 0
 
   return (
     <div
       style={{
-        height: CONNECTION_ROW,
+        minHeight: CONNECTION_ROW,
         display: 'flex',
         alignItems: 'center',
         gap: 16,
@@ -752,16 +838,26 @@ function ConnectionRow({ connection, count, onCount }) {
       >
         {connection.name}
       </span>
-      <CountField
-        value={count}
-        min={0}
-        step={1}
-        prefix=""
-        width={84}
-        colour={chosen ? '#333' : '#bbb'}
-        title={`How many ${connection.name}`}
-        onChange={onCount}
-      />
+
+      {flag ? (
+        <span title={message ?? undefined} style={{ flexShrink: 0, fontSize: 12, color: flag.colour }}>
+          {flag.text}
+        </span>
+      ) : (
+        <span
+          title={connection.formula}
+          style={{
+            flexShrink: 0,
+            width: 84,
+            textAlign: 'right',
+            fontSize: CONNECTION_TYPE + 2,
+            fontVariantNumeric: 'tabular-nums',
+            color: chosen ? '#333' : '#bbb',
+          }}
+        >
+          {count}
+        </span>
+      )}
     </div>
   )
 }
@@ -775,6 +871,10 @@ export default function TestRun({ buildingId }) {
 
   const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms })
   const deck = deckOf(model)
+  // EVERY RULE IN THE BUILDING, EVALUATED ONCE — whole-model, not per card,
+  // because a supporting department in the first section may read the area of
+  // one answered in the last. See evaluateRun.
+  const answered = evaluateRun(model, run)
 
   const [at, setAt] = useState(0)
   // HOW MANY DEPARTMENTS EACH GROUP HAS REVEALED, by group instance id — kept
@@ -832,6 +932,7 @@ export default function TestRun({ buildingId }) {
                   <SectionCard
                     step={step}
                     run={run}
+                    answered={answered}
                     revealedOf={(groupId) => revealed[groupId] ?? 1}
                     onReveal={(groupId) =>
                       setRevealed((r) => ({ ...r, [groupId]: (r[groupId] ?? 1) + 1 }))

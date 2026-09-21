@@ -35,8 +35,9 @@ import {
   insertQuestion,
   newQuestion,
   removeQuestion,
+  setDepartmentConnections,
   setDepartmentRole,
-  setDriver,
+  setDepartmentVariables,
   setGate,
   updateQuestion,
   writeQuestionnaire,
@@ -119,9 +120,21 @@ export function useQuestionnaireEditor(buildingId) {
     []
   )
 
-  const setDepartmentDriver = useCallback(
-    serialise(async (sectionId, groupId, deptId, driver) => {
-      await apply(setDriver(currentDefinition(), sectionId, groupId, deptId, driver))
+  // --- A supporting department's rule ------------------------------------------
+  //
+  // Its variables and its own connections. Both are kept when the role goes back
+  // to functioning — a classification is not a delete, the same as the questions.
+
+  const setVariables = useCallback(
+    serialise(async (sectionId, groupId, deptId, variables) => {
+      await apply(setDepartmentVariables(currentDefinition(), sectionId, groupId, deptId, variables))
+    }),
+    []
+  )
+
+  const setSupportingConnections = useCallback(
+    serialise(async (sectionId, groupId, deptId, connections) => {
+      await apply(setDepartmentConnections(currentDefinition(), sectionId, groupId, deptId, connections))
     }),
     []
   )
@@ -161,7 +174,8 @@ export function useQuestionnaireEditor(buildingId) {
     ready: !!row,
     setGroupGate,
     setRole,
-    setDepartmentDriver,
+    setVariables,
+    setSupportingConnections,
     addQuestion,
     deleteQuestion,
     setQuestion,

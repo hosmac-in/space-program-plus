@@ -16,17 +16,24 @@
 // answer differently.
 
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { departmentNetAreaSqft } from '../../data/optionData.js'
+import { sqftToSqm } from '../../data/units.js'
+import { SUPPORTING } from './questionModel.js'
 
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
-//   questions: { [questionInstanceId]: { yes } },
-//   counts:    { [connectionInstanceId]: count },
+//   questions: { [questionInstanceId]: { x } },
 // }
 //
-// Keyed by instance_id and nothing else, exactly as the document is — a
-// connection's is the catalog room group's or the room's. The count is the whole
-// of its answer, so it is the value rather than an object.
-const EMPTY = { gates: {}, questions: {}, counts: {} }
+// Keyed by instance_id and nothing else, exactly as the document is. A
+// question's WHOLE answer is one number, and every room count is computed from
+// it — there is no map of counts, because nothing is typed.
+//
+//   >>> AN ABSENT KEY IS THE ONLY THING THAT MEANS UNTOUCHED, which is what the
+//   >>> rail's pips are read by. So `x` must be genuinely undefined until
+//   >>> someone types, never seeded to 0: a 0 sitting in the field is an answer
+//   >>> nobody gave.
+const EMPTY = { gates: {}, questions: {} }
 
 const TestRunContext = createContext(null)
 
@@ -44,10 +51,6 @@ export function TestRunProvider({ children }) {
     }))
   }, [])
 
-  const setCount = useCallback((connectionId, count) => {
-    setAnswers((a) => ({ ...a, counts: { ...a.counts, [connectionId]: count } }))
-  }, [])
-
   const reset = useCallback(() => setAnswers(EMPTY), [])
 
   const value = useMemo(
@@ -55,17 +58,20 @@ export function TestRunProvider({ children }) {
       answers,
       setGate,
       setQuestion,
-      setCount,
       reset,
-      // A gate or a question unanswered reads as NO. There is no third state:
-      // the form is yes/no and an untouched switch is off, which is what the
-      // person answering sees.
+      // A gate unanswered reads as NO. There is no third state: the form is
+      // yes/no and an untouched switch is off, which is what the person
+      // answering sees.
       gateYes: (groupId) => !!answers.gates[groupId]?.yes,
-      questionYes: (questionId) => !!answers.questions[questionId]?.yes,
-      // 0 means not chosen — the same thing the designer draws greyed.
-      countOf: (connectionId) => answers.counts[connectionId] ?? 0,
+      // undefined until typed, and the callers keep that distinction — see the
+      // note on EMPTY. `xOr0` is for arithmetic, `xOf` for drawing.
+      xOf: (questionId) => answers.questions[questionId]?.x,
+      xOr0: (questionId) => {
+        const x = answers.questions[questionId]?.x
+        return Number.isFinite(x) ? x : 0
+      },
     }),
-    [answers, setGate, setQuestion, setCount, reset]
+    [answers, setGate, setQuestion, reset]
   )
 
   return <TestRunContext.Provider value={value}>{children}</TestRunContext.Provider>
@@ -77,13 +83,127 @@ export function useTestRun() {
   return run
 }
 
-// WHAT THE ANSWERS HAVE BUILT — the model, filtered to what was said yes to and
-// counted above zero. One function, read by side, so the tree and the carousel
-// can never disagree about what has been answered.
+// --- What the answers have built ----------------------------------------------
+//
+// THE ONE EVALUATOR, read by the carousel and by side, so the two cannot
+// disagree about what has been answered. It runs in TWO PASSES, and the order is
+// the whole of it:
+//
+//   1  FUNCTIONING departments. Every room count is its connection's formula at
+//      { x }, that question's own number. Nothing outside the question is in
+//      scope, so this pass needs nothing but the answers.
+//   2  SUPPORTING departments. Each variable is the NET AREA of the department
+//      it names, in m², as pass 1 built it — so this pass needs all of pass 1.
+//
+// >>> PASS 1 IS WHOLE-MODEL, NEVER PER CARD. Variables name departments anywhere
+// >>> in the building and the deck is one card per SECTION, so computing lazily
+// >>> per card would hand a supporting department in section 1 a zero for a
+// >>> department answered in section 5.
 //
 // A room appears with the count of the CONNECTION it came in on: two of a
 // 3 Tesla MRI is two of each room in that catalog room group.
-export function buildProgram(model, run) {
+
+// A connection, evaluated: its rooms, and the STATE that says whether the number
+// beside them means anything. Four things used to land on one grey zero — no
+// rule, a broken rule, a rule naming something gone, and a real zero — and a run
+// that cannot tell them apart is a run nobody can debug.
+function evaluateConnection(connection, scope) {
+  const { value, state, message } = connection.compiled.evaluate(scope)
+  return {
+    connection,
+    count: value,
+    state,
+    message,
+    rooms: connection.rooms.map((room) => ({
+      instance_id: room.instance_id,
+      label: room.label,
+      areaSqft: room.areaSqft ?? 0,
+      count: value,
+      via: connection,
+    })),
+  }
+}
+
+// Σ count × area, and no factors. NET deliberately: a rule is written against
+// rooms someone can count, and a grossing factor edited on the Tree tab would
+// otherwise move every supporting department without anything in the
+// questionnaire changing. departmentNetAreaSqft is the one definition of that
+// sum — see data/optionData.js.
+function netAreaOf(rows) {
+  return departmentNetAreaSqft({ rooms: rows.map((r) => ({ count: r.count, areaSqft: r.areaSqft })) })
+}
+
+// EVERY DEPARTMENT'S RULES, EVALUATED — departmentId -> { open, results, scope }.
+// The carousel reads this directly, because it draws every department it has
+// revealed whether or not anything came out above zero, and needs each row's
+// state rather than only what survived buildProgram's filter.
+export function evaluateRun(model, run) {
+  // --- Pass 1 ---------------------------------------------------------------
+  const answered = new Map()
+
+  model.forEach((section) =>
+    section.groups.forEach((group) => {
+      const open = run.gateYes(group.id)
+      group.departments.forEach((department) => {
+        if (department.role === SUPPORTING) return
+        // A group answered NO contributes nothing, and that nothing is a real
+        // answer rather than an absence — which is why the entry is written
+        // with empty rows instead of being skipped.
+        const results = open
+          ? department.questions.flatMap((node) =>
+              node.connections.map((connection) =>
+                evaluateConnection(connection, { x: run.xOr0(node.id) })
+              )
+            )
+          : []
+        answered.set(department.id, { open, results })
+      })
+    })
+  )
+
+  const areaSqm = new Map()
+  answered.forEach((entry, deptId) => {
+    areaSqm.set(deptId, sqftToSqm(netAreaOf(entry.results.flatMap((r) => r.rooms))))
+  })
+
+  // --- Pass 2 ---------------------------------------------------------------
+  model.forEach((section) =>
+    section.groups.forEach((group) => {
+      const open = run.gateYes(group.id)
+      group.departments.forEach((department) => {
+        if (department.role !== SUPPORTING) return
+        // A name with no number in scope evaluates as UNRESOLVED, which is what
+        // a deleted department and a supporting one both are here: the scope is
+        // built only from what pass 1 actually produced.
+        const scope = {}
+        department.variables.forEach((variable) => {
+          // `area` is the whole group: every functioning department beside this
+          // one, summed. It is always a number — an unanswered group is 0 m²,
+          // which is a real answer — where a department's name resolves to
+          // nothing when that department has gone.
+          if (variable.kind === 'group') {
+            scope[variable.name] = group.departments
+              .filter((d) => d.role !== SUPPORTING)
+              .reduce((sum, d) => sum + (areaSqm.get(d.id) ?? 0), 0)
+            return
+          }
+          const area = areaSqm.get(variable.instance_id)
+          if (Number.isFinite(area)) scope[variable.name] = area
+        })
+        const results = open ? department.connections.map((c) => evaluateConnection(c, scope)) : []
+        answered.set(department.id, { open, results, scope })
+      })
+    })
+  )
+
+  return answered
+}
+
+// WHAT THE ANSWERS HAVE BUILT, as a tree — only what came out above zero. A
+// department, group or section with nothing under it is not drawn at all: an
+// empty one would read as "nobody asked for one" rather than as "nobody has
+// answered this yet".
+export function buildProgram(model, run, answered = evaluateRun(model, run)) {
   return model
     .map((section) => ({
       ...section,
@@ -94,26 +214,11 @@ export function buildProgram(model, run) {
           departments: group.departments
             .map((department) => ({
               ...department,
-              rooms: department.questions
-                .filter((node) => run.questionYes(node.id))
-                .flatMap((node) =>
-                  node.connections
-                    .filter((connection) => run.countOf(connection.instance_id) > 0)
-                    .flatMap((connection) =>
-                      connection.rooms.map((room) => ({
-                        instance_id: room.instance_id,
-                        label: room.label,
-                        count: run.countOf(connection.instance_id),
-                        // What brought it, so the tree can say "×2 from 3 Tesla"
-                        // rather than leaving a bare number.
-                        via: connection,
-                      }))
-                    )
-                ),
+              results: answered.get(department.id)?.results ?? [],
+              rooms: (answered.get(department.id)?.results ?? [])
+                .filter((r) => r.state === 'ok' && r.count > 0)
+                .flatMap((r) => r.rooms),
             }))
-            // A supporting department is sized by a rule nothing runs yet, so it
-            // would always be empty here — see CLAUDE.md. Dropping it is honest;
-            // drawing it empty would read as "nobody asked for one".
             .filter((department) => department.rooms.length > 0),
         }))
         .filter((group) => group.departments.length > 0),

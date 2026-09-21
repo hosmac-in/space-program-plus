@@ -32,7 +32,6 @@ import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, SUPPORTING } from './questionModel.js'
 import { ROOM_GROUP } from '../../data/questionnaire.js'
-import { Counter } from './Counter.jsx'
 
 // One row height for every level, so the tree's elbows land on a regular pitch
 // and a section reads as the same kind of thing as a question, one step up.
@@ -122,20 +121,56 @@ function Row({ level, label, muted, selected, onSelect, right }) {
   )
 }
 
-// What a question does, in one line: the number it asks and the rooms it sets.
-// The rooms are drawn under the question, so the count of them is not worth
-// repeating beside it — only their ABSENCE is, which is a question that asks
-// nothing yet.
-function questionMarks(question, setCount) {
+// THE RULE ITSELF, on the row it belongs to. A formula is short and is the whole
+// content of a connection, so the outline states it rather than making you open
+// each one in turn to find out what it does.
+function Rule({ compiled }) {
+  if (!compiled.authored) {
+    return <span style={{ fontSize: 11, color: '#c00', opacity: 0.55, flexShrink: 0 }}>no rule yet</span>
+  }
+  return (
+    <code
+      title={compiled.ok ? compiled.source : compiled.message}
+      style={{
+        flexShrink: 0,
+        fontSize: 11,
+        color: compiled.ok ? '#666' : '#b3261e',
+        background: compiled.ok ? '#f6f6f6' : '#fdecea',
+        borderRadius: 4,
+        padding: '1px 5px',
+        maxWidth: 160,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {compiled.source}
+    </code>
+  )
+}
+
+// What a question does, in one line. The rooms are drawn under it, so their
+// count is not worth repeating — only what is MISSING is, which is a question
+// that connects to nothing or whose rules were never written.
+function questionMarks(question, connections) {
   const marks = []
-  if (setCount === 0) marks.push('no rooms yet')
+  if (connections.length === 0) marks.push('no rooms yet')
+  else {
+    const unruled = connections.filter((c) => !c.compiled.authored).length
+    if (unruled > 0) marks.push(`${unruled} without a rule`)
+  }
   if (question.comment) marks.push('commented')
   return marks.join(' · ')
 }
 
-function driverMarks(driver) {
-  if (!driver?.source_id) return 'no rule yet'
-  return `${driver.coefficient ?? 1} × ${driver.source_label || 'a figure'}`
+// A supporting department is read by what it scales off — the one thing its name
+// does not say — and by how much of it is actually written.
+function supportingMarks(department) {
+  const ruled = department.connections.filter((c) => c.compiled.authored).length
+  const all = department.connections.length
+  const scale = department.variables.length === 0 ? 'scales off nothing yet' : department.variables.map((v) => v.name).join(' · ')
+  if (all === 0) return scale
+  return `${scale} · ${ruled}/${all} sized`
 }
 
 // A question, with WHAT IT CONNECTS TO under it — the follow-up, always the same
@@ -161,39 +196,40 @@ function QuestionBranch({ node, canEdit, selectedId, onSelect, onRemove }) {
         muted={!node.question.prompt}
         selected={selectedId === node.id}
         onSelect={() => onSelect(node.id)}
-        right={<Marks text={questionMarks(node.question, connections.length)} />}
+        right={<Marks text={questionMarks(node.question, connections)} />}
       />
 
       {/* Nothing below the question is separately selectable: a connection
           belongs to the question above it, and side draws the whole thing when
           that question is open. Clicking one selects the question. */}
-      {connections.map((connection) => {
-        const group = connection.kind === ROOM_GROUP
-        return (
-          <Branch
-            key={connection.instance_id}
-            endpoint={group ? 'caret' : 'dot'}
-            expanded={group}
-            head={ROW / 2}
-          >
-            <Row
-              level="connection"
-              label={connection.name}
-              muted={connection.missing}
-              onSelect={() => onSelect(node.id)}
-              right={<Counter />}
-            />
-            {/* Only a group: a single room would say its name twice, one line
-                under the other. */}
-            {group &&
-              connection.rooms.map((room) => (
-                <Branch key={room.instance_id} endpoint="dot" head={ROW / 2}>
-                  <Row level="room" label={room.label} onSelect={() => onSelect(node.id)} />
-                </Branch>
-              ))}
+      {connections.map((connection) => (
+        <ConnectionBranch key={connection.instance_id} connection={connection} onSelect={() => onSelect(node.id)} />
+      ))}
+    </Branch>
+  )
+}
+
+// One connection and its rule, under whatever owns it — a question, or a
+// supporting department directly. Drawn once, for both.
+function ConnectionBranch({ connection, onSelect }) {
+  const group = connection.kind === ROOM_GROUP
+  return (
+    <Branch endpoint={group ? 'caret' : 'dot'} expanded={group} head={ROW / 2}>
+      <Row
+        level="connection"
+        label={connection.name}
+        muted={connection.missing}
+        onSelect={onSelect}
+        right={<Rule compiled={connection.compiled} />}
+      />
+      {/* Only a group: a single room would say its name twice, one line under
+          the other. */}
+      {group &&
+        connection.rooms.map((room) => (
+          <Branch key={room.instance_id} endpoint="dot" head={ROW / 2}>
+            <Row level="room" label={room.label} onSelect={onSelect} />
           </Branch>
-        )
-      })}
+        ))}
     </Branch>
   )
 }
@@ -271,8 +307,8 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                     return (
                       <Branch
                         key={department.id}
-                        endpoint={supporting ? 'dot' : 'caret'}
-                        expanded={!supporting}
+                        endpoint={supporting && !department.connections.some((c) => c.compiled.authored) ? 'dot' : 'caret'}
+                        expanded={!supporting || department.connections.some((c) => c.compiled.authored)}
                         padTop={GAP}
                         head={GAP + ROW / 2}
                       >
@@ -286,7 +322,7 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                               <Marks
                                 text={
                                   supporting
-                                    ? driverMarks(department.driver)
+                                    ? supportingMarks(department)
                                     : department.questions.length === 0
                                       ? 'no questions yet'
                                       : null
@@ -297,8 +333,25 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                           }
                         />
 
-                        {/* A supporting department is sized by its rule, not by
-                            questions — so it has none, and no + either. */}
+                        {/* A supporting department carries no questions and no
+                            + — its rooms are sized directly, by the rules it
+                            holds, which are authored in side. */}
+                        {/* ONLY THE ROOMS THAT HAVE A RULE. Every room it places
+                            is a row in SIDE, because that is where they are
+                            written; twenty unruled ones out here would bury the
+                            few that say something, and the mark on the row above
+                            already counts them. */}
+                        {supporting &&
+                          department.connections
+                            .filter((c) => c.compiled.authored)
+                            .map((connection) => (
+                              <ConnectionBranch
+                                key={connection.instance_id}
+                                connection={connection}
+                                onSelect={() => onSelect(department.id)}
+                              />
+                            ))}
+
                         {!supporting && (
                           <>
                             {department.questions.map((q) => (

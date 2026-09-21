@@ -12,3 +12,10 @@ export const SQM_PER_SQFT = 0.09290304
 export function sqmToSqft(sqm) {
   return sqm == null ? null : sqm / SQM_PER_SQFT
 }
+
+// The other way, for the one place an area leaves sqft on purpose: a
+// questionnaire formula's area variable is always m², whatever the reader's
+// toggle says. See data/questionnaire.js.
+export function sqftToSqm(sqft) {
+  return sqft == null ? null : sqft * SQM_PER_SQFT
+}
