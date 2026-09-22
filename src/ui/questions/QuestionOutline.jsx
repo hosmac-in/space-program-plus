@@ -2,10 +2,13 @@
 // it.
 //
 // It is the SAME TREE the side panels draw — TreeLayer and Branch out of
-// ui/panel/PanelTree.jsx, one drawing over the whole outline — because it is the
-// same information at a different level: what sits inside what. Two trees with
-// two ideas of what an indent is are two trees, so nothing here restates a
-// number.
+// ui/panel/PanelTree.jsx — because it is the same information at a different
+// level: what sits inside what. Two trees with two ideas of what an indent is
+// are two trees, so nothing here restates a number.
+//
+// ONE DRAWING PER SECTION, not one over the whole outline: a section is a BOX in
+// its own hue with its name as the title card, and its card is the root its
+// groups hang from. See SectionCard.
 //
 //   section        from the catalog, in the catalog's order
 //     group        from the catalog, and it carries ONE question — the gate
@@ -21,13 +24,14 @@
 
 import { useState } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
+import { functionColours } from '../../data/functions.js'
 import { Band, BandRow } from '../primitives/Band.jsx'
 import AddButton from '../primitives/AddButton.jsx'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import TabButton from '../primitives/TabButton.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
 import { removeHint } from '../primitives/RemoveButton.jsx'
-import { Branch, TreeLayer } from '../panel/PanelTree.jsx'
+import { Branch, BranchRoot, TreeLayer } from '../panel/PanelTree.jsx'
 import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, SUPPORTING } from './questionModel.js'
@@ -38,11 +42,10 @@ import { ROOM_GROUP } from '../../data/questionnaire.js'
 const ROW = 26
 const GAP = 4
 
-// The type ladder, shallowest first. A section is the only thing set in caps:
-// it is the divider the outline is scanned by, and everything under it is
-// sentence case so the two never compete.
+// The type ladder, shallowest first. Nothing here is set in caps — the section
+// title card is, and it is the only thing that should be: caps on a row inside
+// the box would compete with the card naming it.
 const LEVEL = {
-  section: { size: 13, weight: 700, caps: true },
   group: { size: 13, weight: 600, caps: false },
   department: { size: 13, weight: 500, caps: false },
   question: { size: 13, weight: 400, caps: false },
@@ -75,9 +78,40 @@ function RoleChip() {
 
 // The quiet marks that say what a row will do when answered, so the outline can
 // be read without opening each question in turn.
-function Marks({ text }) {
+//
+// `warn` IS FOR A RULE NOBODY HAS WRITTEN and nothing else. It is the one thing
+// on these rows that is not a reading but a job outstanding — a question whose
+// rooms are still unruled builds nothing when the run reaches it — and quiet
+// grey among the other marks is exactly how it went unnoticed. Everything else
+// here stays grey, or a row of red says nothing.
+function Marks({ text, warn = false }) {
   if (!text) return null
-  return <span style={{ fontSize: 11, color: '#999', whiteSpace: 'nowrap', flexShrink: 0 }}>{text}</span>
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        // The colour carries it alone. Bold as well made a mark louder than the
+        // room name it sits beside, and the row reads name-first.
+        color: warn ? '#b3261e' : '#999',
+        whiteSpace: 'nowrap',
+        flexShrink: 0,
+      }}
+    >
+      {text}
+    </span>
+  )
+}
+
+// The quiet half then the loud one, so the thing outstanding ends the row and
+// sits nearest the edge every row is scanned down.
+function MarkPair({ marks }) {
+  if (!marks) return null
+  return (
+    <>
+      <Marks text={marks.quiet} />
+      <Marks text={marks.warn} warn />
+    </>
+  )
 }
 
 function Row({ level, label, muted, selected, onSelect, right }) {
@@ -149,41 +183,57 @@ function Rule({ compiled }) {
   )
 }
 
-// What a question does, in one line. The rooms are drawn under it, so their
-// count is not worth repeating — only what is MISSING is, which is a question
-// that connects to nothing or whose rules were never written.
+// What a question does, in one line. The rooms are NOT drawn under it — see
+// QuestionBranch — so this is all the outline says about them, and it says what
+// is missing: a question connecting to nothing, or rules never written.
+// Split in two, because the two halves are drawn in different ink: what is
+// MISSING, and what is merely true of the row.
 function questionMarks(question, connections) {
-  const marks = []
-  if (connections.length === 0) marks.push('no rooms yet')
-  else {
-    const unruled = connections.filter((c) => !c.compiled.authored).length
-    if (unruled > 0) marks.push(`${unruled} without a rule`)
+  const unruled = connections.filter((c) => !c.compiled.authored).length
+  return {
+    warn:
+      connections.length === 0
+        ? 'no rooms yet'
+        : unruled > 0
+          ? `${unruled} without a rule`
+          : null,
+    quiet: question.comment ? 'commented' : null,
   }
-  if (question.comment) marks.push('commented')
-  return marks.join(' · ')
 }
 
-// A supporting department is read by what it scales off — the one thing its name
-// does not say — and by how much of it is actually written.
+// HOW MUCH OF IT IS WRITTEN, and nothing else.
+//
+// >>> THE VARIABLE NAMES WERE HERE AND ARE GONE — "a · consultation ·
+// >>> diagnostics · cafeteria" on the department's own row. They are every
+// >>> functioning department in the group, which the group above already lists,
+// >>> so the row restated its own siblings and grew with each one; and a name is
+// >>> only of use where a rule is typed, which is side.
 function supportingMarks(department) {
   const ruled = department.connections.filter((c) => c.compiled.authored).length
   const all = department.connections.length
-  const scale = department.variables.length === 0 ? 'scales off nothing yet' : department.variables.map((v) => v.name).join(' · ')
-  if (all === 0) return scale
-  return `${scale} · ${ruled}/${all} sized`
+  return {
+    quiet: null,
+    // Only while some room is still unruled. `12/12 sized` is a reading, not a
+    // job, and red on a finished department is a false alarm.
+    warn: all > 0 && ruled < all ? `${ruled}/${all} sized` : null,
+  }
 }
 
-// A question, with WHAT IT CONNECTS TO under it — the follow-up, always the same
-// shape: a catalog room group or a room, and a counter. A single room draws
-// nothing under it; a group lists its rooms, since "3 Tesla" alone does not say
-// which three rooms it brings.
+// A QUESTION IS A LEAF HERE. It draws nothing under it — not the rooms it
+// connects to, not the objects in them.
+//
+// >>> THE ROOM/OBJECT TREE WAS HERE AND IS GONE. The outline is the catalog's
+// >>> structure with the questions hung off it, read to find the thing you want
+// >>> to author; the rules ARE the authoring, and they are in side, where each
+// >>> has a box you can type in. Out here they were a second, read-only copy of
+// >>> that column — the same names and the same formulas, with no way to change
+// >>> either — and one department of ten questions buried every heading the
+// >>> outline is scanned by. What is left of them is the mark on the row: how
+// >>> many rooms are still without a rule.
 function QuestionBranch({ node, canEdit, selectedId, onSelect, onRemove }) {
-  const connections = node.connections
-
   return (
     <Branch
-      endpoint={connections.length > 0 ? 'caret' : 'dot'}
-      expanded={connections.length > 0}
+      endpoint="dot"
       head={ROW / 2}
       // RIGHT-CLICK ON THE BRANCH'S END, the one remove gesture in this app.
       // There is no × on a row here.
@@ -196,23 +246,20 @@ function QuestionBranch({ node, canEdit, selectedId, onSelect, onRemove }) {
         muted={!node.question.prompt}
         selected={selectedId === node.id}
         onSelect={() => onSelect(node.id)}
-        right={<Marks text={questionMarks(node.question, connections)} />}
+        right={<MarkPair marks={questionMarks(node.question, node.connections)} />}
       />
-
-      {/* Nothing below the question is separately selectable: a connection
-          belongs to the question above it, and side draws the whole thing when
-          that question is open. Clicking one selects the question. */}
-      {connections.map((connection) => (
-        <ConnectionBranch key={connection.instance_id} connection={connection} onSelect={() => onSelect(node.id)} />
-      ))}
     </Branch>
   )
 }
 
-// One connection and its rule, under whatever owns it — a question, or a
-// supporting department directly. Drawn once, for both.
+// ONE CONNECTION AND ITS RULE, under a SUPPORTING department — the one place the
+// outline still names a room, because a supporting department has no questions
+// and its rules are the only thing it has to show. A group lists the rooms it
+// brings, since "3 Tesla" alone does not say which three; neither lists the
+// objects inside them, for QuestionBranch's reason above.
 function ConnectionBranch({ connection, onSelect }) {
   const group = connection.kind === ROOM_GROUP
+
   return (
     <Branch endpoint={group ? 'caret' : 'dot'} expanded={group} head={ROW / 2}>
       <Row
@@ -222,8 +269,7 @@ function ConnectionBranch({ connection, onSelect }) {
         onSelect={onSelect}
         right={<Rule compiled={connection.compiled} />}
       />
-      {/* Only a group: a single room would say its name twice, one line under
-          the other. */}
+
       {group &&
         connection.rooms.map((room) => (
           <Branch key={room.instance_id} endpoint="dot" head={ROW / 2}>
@@ -234,14 +280,84 @@ function ConnectionBranch({ connection, onSelect }) {
   )
 }
 
+// A SECTION IS A BOX IN ITS OWN HUE, with its name as the title card across the
+// top and everything under it inside — the same picture the canvases draw, where
+// a section is a container and not a row in a list. It was one more row on one
+// long tree, at the same pitch as the questions six levels below it, and the
+// only thing saying it was a section was the caps.
+//
+// The card is SOLID and the body a WASH of the same hue: a title has to carry
+// its own ground, as everything function-coloured here does, and a body at full
+// strength would leave the rows inside fighting it. The tree starts at the
+// card's lower edge — BranchRoot's `head` — so no hairline is drawn across the
+// solid colour.
+const TITLE_H = 34
+
+function SectionCard({ section, colours, selected, onSelect, children }) {
+  return (
+    <TreeLayer>
+      <div
+        style={{
+          marginBottom: 12,
+          borderRadius: 8,
+          border: `1px solid ${selected ? colours.border : colours.tint(0.35)}`,
+          boxShadow: selected ? `0 0 0 2px ${colours.ring}` : undefined,
+          background: colours.wash(0.93),
+          overflow: 'hidden',
+          minWidth: 0,
+        }}
+      >
+        <BranchRoot head={TITLE_H}>
+          <div
+            onClick={onSelect}
+            title={section.name}
+            style={{
+              height: TITLE_H,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              paddingInline: 12,
+              cursor: 'pointer',
+              background: colours.background,
+              color: colours.color,
+              minWidth: 0,
+            }}
+          >
+            <span
+              style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                fontSize: 13,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.03em',
+              }}
+            >
+              {section.name}
+            </span>
+            {section.groups.length === 0 && (
+              <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.8 }}>no groups</span>
+            )}
+          </div>
+
+          <div style={{ padding: '2px 12px 10px', minWidth: 0 }}>{children}</div>
+        </BranchRoot>
+      </div>
+    </TreeLayer>
+  )
+}
+
 export default function QuestionOutline({ buildingId, onSelectBuilding, selectedId, onSelect, canEdit, onLeave }) {
-  const { buildings, sections, groups, departments, rooms } = useCatalog()
+  const { buildings, sections, groups, departments, rooms, objects, functions } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   // What a right-click on a question's branch is asking to remove. The caller
   // ALWAYS prompts — see Branch's onRemove.
   const [pendingRemove, setPendingRemove] = useState(null)
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms })
+  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
 
   // The new question is selected as soon as it exists, so authoring is
   // add-then-fill rather than add-then-hunt-for-it.
@@ -278,17 +394,19 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
           </PanelNote>
         ) : null}
 
-        <TreeLayer>
-          {model.map((section) => (
-            <Branch key={section.id} endpoint="caret" expanded padTop={GAP} head={GAP + ROW / 2}>
-              <Row
-                level="section"
-                label={section.name}
-                selected={selectedId === section.id}
-                onSelect={() => onSelect(section.id)}
-                right={<Marks text={section.groups.length === 0 ? 'no groups' : null} />}
-              />
-
+        {/* ONE BOX AND ONE TREE PER SECTION, rather than one tree over the lot:
+            a section is a container here, as it is on both canvases. Its own
+            card is the root the trunk hangs from. */}
+        {model.map((section) => {
+          const colours = functionColours(functions, section.functionId)
+          return (
+            <SectionCard
+              key={section.id}
+              section={section}
+              colours={colours}
+              selected={selectedId === section.id}
+              onSelect={() => onSelect(section.id)}
+            >
               {section.groups.map((group) => (
                 <Branch key={group.id} endpoint="caret" expanded padTop={GAP} head={GAP + ROW / 2}>
                   <Row
@@ -319,15 +437,14 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                           onSelect={() => onSelect(department.id)}
                           right={
                             <>
-                              <Marks
-                                text={
-                                  supporting
-                                    ? supportingMarks(department)
-                                    : department.questions.length === 0
-                                      ? 'no questions yet'
-                                      : null
-                                }
-                              />
+                              {supporting ? (
+                                <MarkPair marks={supportingMarks(department)} />
+                              ) : (
+                                // A department nobody has asked anything about
+                                // yet is the same kind of outstanding job as a
+                                // room with no rule, and reads in the same ink.
+                                <Marks text={department.questions.length === 0 ? 'no questions yet' : null} warn />
+                              )}
                               {supporting && <RoleChip />}
                             </>
                           }
@@ -383,9 +500,9 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                   })}
                 </Branch>
               ))}
-            </Branch>
-          ))}
-        </TreeLayer>
+            </SectionCard>
+          )
+        })}
       </div>
 
       {pendingRemove && (

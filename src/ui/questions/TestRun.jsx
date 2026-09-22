@@ -1,14 +1,13 @@
 // THE TEST RUN, in main: the questionnaire as a carousel.
 //
-// ONE CARD IS ONE STEP, and a step is either a group's GATE or one FUNCTIONING
-// DEPARTMENT inside it. A card per group put five departments and twenty
-// questions on one page, which is a form rather than a carousel; a card per
-// question would be hundreds of steps. A department is the unit someone
-// actually thinks in — "now let us do Imaging" — and it is what the progress
-// rail counts.
+// ONE CARD IS ONE SECTION. Its gates are its rows, and a yes opens that group's
+// questions in place, one after another.
 //
-// A supporting department is never a step: it carries no questions, being sized
-// by a rule instead, so a card for one would be a page with nothing on it.
+// IT NAMES NOTHING THE QUESTIONNAIRE IS BUILT FROM — no "section", no
+// department, no room. Those are the author's words for the document's own
+// levels, and this tab is read by whoever is being asked, who did not write it
+// and cannot act on any of them. What is asked is a prompt and a number; what
+// the number buys is drawn in SIDE, as the building fills up.
 //
 // BIG TYPE, FILLING THE CANVAS. This is the one screen in the app read from
 // across a desk rather than worked in — someone answers it while someone else
@@ -22,15 +21,12 @@ import { useCatalog } from '../../data/catalog.jsx'
 import { functionColours } from '../../data/functions.js'
 import Toggle from '../primitives/Toggle.jsx'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
-import { Branch, BranchRoot, BRANCH_ORIGIN_CONTENT, TreeLayer, useRootAnchor } from '../panel/PanelTree.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, SUPPORTING } from './questionModel.js'
-import { evaluateRun, useTestRun } from './useTestRun.jsx'
+import { useTestRun } from './useTestRun.jsx'
 
 const RAIL_WIDTH = 240
 const CARD_MAX = 860
-
-const INK = '#1a73e8'
 
 // THE DECK: ONE CARD PER SECTION, and that is the whole of it.
 //
@@ -404,34 +400,19 @@ function Rail({ deck, at, onJump, functions, run }) {
 
 // --- The cards ----------------------------------------------------------------
 
-// THE SECTION IS A HEADER, NEVER A QUESTION. Nothing asks whether a section
-// exists — it is the divider the catalog is organised by, and the first thing
-// asked is always a group. Its name sits over the card so you know where you
-// are, and it is the same string the rail's big tick carries.
-function Eyebrow({ children }) {
-  return (
-    <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#999' }}>{children}</div>
-  )
-}
+// >>> NOTHING ON THIS TAB NAMES THE DATA. No "Section" eyebrow, no department
+// >>> heading, no room names — the words a questionnaire is BUILT from are the
+// >>> author's vocabulary, and this tab is read by whoever is being asked. The
+// >>> section's name is still the card's title because it is a place in a
+// >>> hospital; what went is the label saying what kind of thing that name is.
 
-
-// Row heights, because a branch has to meet its row at a KNOWN point — `head`
-// is measured from the top of the branch's own box, so a row that sized itself
-// to its text would put the elbow somewhere else on every card.
 const GATE_ROW = 34
-const DEPT_ROW = 26
 const QUESTION_ROW = 26
-const CONNECTION_ROW = 26
 
-// THE TYPE LADDER, largest first, one step per level of the tree: the group is
-// what the section asks, a department is what that opened, a question is asked
-// about the department and a connection is its answer. Each level smaller than
-// the one it hangs off — an answer set larger than its question read as the
-// subject of the card rather than as the reply to it.
+// Two levels, not four: what is asked about, and the questions. A department is
+// no longer drawn, so its step in the ladder went with it.
 const GATE_TYPE = 22
-const DEPT_TYPE = 17
-const QUESTION_TYPE = 15
-const CONNECTION_TYPE = 14
+const QUESTION_TYPE = 16
 
 // WHERE EVERY ANSWER SITS, from the card's own left edge. The switches and the
 // counters are a COLUMN, so it is set once on the box the whole tree is drawn
@@ -440,22 +421,67 @@ const CONNECTION_TYPE = 14
 // between, and the eye had to travel the gap to find out what it had answered.
 const ANSWER_COLUMN = 560
 
-// THE GROUP'S OWN ROW, and the root everything in the card hangs off. It takes
-// no branch of its own — there is nothing above it in this card — so it is
-// `BranchRoot`'s anchor, exactly as a department's heading is in PanelShell.
-function GateRow({ group, gate, yes, run }) {
-  const anchor = useRootAnchor()
+// THE END OF EVERY ROW IS THREE FIXED SLOTS: the stepper, the box, the unit.
+// Fixed, because left to the flex row a box was pushed left by exactly the width
+// of the unit beside it — so "1 beds" sat half an inch inside the boxes with no
+// unit at all, and the answers read as a ragged edge rather than as one thing to
+// fill in. Each slot is left-aligned, and the box's slot is only as wide as the
+// box: leftover width there prints as a gap between the figure and its unit.
+const STEP_COL = 40
+const FIELD_COL = 58
+const UNIT_COL = 64
+const ANSWER_GAP = 6
 
+// THE COUNTER SITS OUTSIDE THE BOX, to its left. CountField's own steppers live
+// INSIDE the border — right for a figure in a sentence, wrong for a box someone
+// is filling in, where they crowd the caret they share a frame with.
+//
+// It nudges the answer directly rather than through the field, so the two agree:
+// the field redraws from `value` whenever nobody is typing in it.
+function Stepper({ value, onChange }) {
+  const from = Number.isFinite(value) ? value : 0
+  const button = (label, next, title) => (
+    <button
+      type="button"
+      onClick={() => onChange(next)}
+      title={title}
+      disabled={next === from}
+      style={{
+        width: 18,
+        height: 22,
+        padding: 0,
+        fontSize: 14,
+        lineHeight: '20px',
+        borderRadius: 4,
+        border: '1px solid #e0e0e0',
+        background: '#fafafa',
+        color: '#666',
+        cursor: next === from ? 'default' : 'pointer',
+        opacity: next === from ? 0.4 : 1,
+      }}
+    >
+      {label}
+    </button>
+  )
+
+  return (
+    <span style={{ display: 'inline-flex', gap: 2 }}>
+      {button('−', Math.max(0, from - 1), 'One fewer')}
+      {button('+', from + 1, 'One more')}
+    </span>
+  )
+}
+
+// THE GROUP'S OWN ROW: the one thing the section asks, and the switch for it.
+function GateRow({ group, gate, yes, run, tint }) {
   return (
     <>
       <div
-        ref={anchor}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 16,
           height: GATE_ROW,
-          paddingLeft: BRANCH_ORIGIN_CONTENT,
           minWidth: 0,
         }}
       >
@@ -475,12 +501,22 @@ function GateRow({ group, gate, yes, run }) {
           {gate?.prompt || group.name}
         </span>
 
-        <span style={{ transform: 'scale(1.25)', transformOrigin: 'center right', flexShrink: 0 }}>
-          <Toggle
-            checked={yes}
-            onChange={(v) => run.setGate(group.id, { yes: v })}
-            title={gate?.prompt || group.name}
-          />
+        {/* The switch stands in the same column the answer boxes do — it is the
+            gate's own answer, and a control on a different column from the ones
+            it opens reads as belonging to something else. */}
+        <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: ANSWER_GAP }}>
+          <span style={{ width: STEP_COL }} />
+          <span style={{ width: FIELD_COL, display: 'flex', justifyContent: 'flex-start' }}>
+            <span style={{ transform: 'scale(1.25)', transformOrigin: 'center left' }}>
+              <Toggle
+                checked={yes}
+                onChange={(v) => run.setGate(group.id, { yes: v })}
+                title={gate?.prompt || group.name}
+                tint={tint}
+              />
+            </span>
+          </span>
+          <span style={{ width: UNIT_COL }} />
         </span>
       </div>
 
@@ -490,7 +526,6 @@ function GateRow({ group, gate, yes, run }) {
             fontSize: 13,
             color: '#888',
             marginTop: 6,
-            paddingLeft: BRANCH_ORIGIN_CONTENT,
             whiteSpace: 'pre-wrap',
           }}
         >
@@ -508,31 +543,50 @@ function GateRow({ group, gate, yes, run }) {
             alignItems: 'center',
             gap: 16,
             marginTop: 10,
-            paddingLeft: BRANCH_ORIGIN_CONTENT,
             fontSize: 15,
           }}
         >
           <span style={{ flex: 1, minWidth: 0, color: '#555' }}>{gate.number.label || 'How many in total?'}</span>
-          <CountField
-            value={run.answers.gates[group.id]?.number ?? 0}
-            min={0}
-            step={1}
-            prefix=""
-            width={90}
-            onChange={(n) => run.setGate(group.id, { number: n })}
-          />
+          <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: ANSWER_GAP }}>
+            <span style={{ width: STEP_COL, display: 'flex', justifyContent: 'flex-start' }}>
+              <Stepper
+                value={run.answers.gates[group.id]?.number}
+                onChange={(n) => run.setGate(group.id, { number: n })}
+              />
+            </span>
+            <span style={{ width: FIELD_COL, display: 'flex', justifyContent: 'flex-start' }}>
+              <CountField
+                value={run.answers.gates[group.id]?.number ?? 0}
+                min={0}
+                step={1}
+                prefix=""
+                boxed
+                digits={4}
+                steppers={false}
+                size="1.15em"
+                colour="#222"
+                onChange={(n) => run.setGate(group.id, { number: n })}
+              />
+            </span>
+            <span style={{ width: UNIT_COL }} />
+          </span>
         </div>
       )}
     </>
   )
 }
 
-// THE SECTION'S OWN CARD: what is in it, and a way into any of it.
+// THE SECTION'S OWN CARD: its gates, and under each yes the questions that gate
+// opened — one after another, in order, and nothing else.
 //
-// It asks nothing. Next walks the groups in order, and this is what makes that
-// order visible and skippable — the one place you can see a whole section at
-// once and go back to the group you meant.
-function SectionCard({ step, run, answered, revealedOf, onReveal }) {
+// >>> THE TREE IS GONE FROM HERE, and so is every level it was drawing. What a
+// >>> group opened was a department heading, its questions under it, and each
+// >>> question's rooms under those: four levels of structure to carry ONE number
+// >>> per question. The person answering does not know what a department is
+// >>> called, does not choose it, and cannot act on the room list — the whole
+// >>> reply is the figure in the box. Two levels, no indent, no ink: the gate,
+// >>> then the questions. Side is where the building appears as it is built.
+function SectionCard({ step, run, functions }) {
   const { section } = step
   // EVERY GROUP IS ALWAYS VISIBLE. The gates are what the section asks, and a
   // section that showed one at a time would hide the question it exists to put.
@@ -540,26 +594,23 @@ function SectionCard({ step, run, answered, revealedOf, onReveal }) {
 
   return (
     <div style={{ minWidth: 0 }}>
-      <Eyebrow>Section</Eyebrow>
-      <div style={{ fontSize: 38, lineHeight: 1.15, fontWeight: 600, marginTop: 6 }}>{section.name}</div>
-      <div style={{ fontSize: 15, color: '#777', marginTop: 10 }}>
-        {section.groups.length === 0
-          ? 'Nothing is asked in this section yet.'
-          : 'Which of these does the facility have?'}
-      </div>
+      <div style={{ fontSize: 38, lineHeight: 1.15, fontWeight: 600 }}>{section.name}</div>
+      {section.groups.length === 0 && (
+        <div style={{ fontSize: 15, color: '#777', marginTop: 10 }}>Nothing is asked here yet.</div>
+      )}
 
       <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {groups.map((group) => {
           const yes = run.gateYes(group.id)
           const gate = group.gate
-          const all = group.departments.filter((d) => d.role !== SUPPORTING)
-          const supporting = group.departments.filter((d) => d.role === SUPPORTING)
-          // ONE DEPARTMENT AT A TIME, INSIDE THE GROUP. A group of six opened at
-          // once is six departments and their questions in one drop, which is
-          // the wall this tab exists to avoid.
-          const shown = revealedOf(group.id)
-          const functioning = all.slice(0, shown)
-          const more = all.length - functioning.length
+          // EVERY QUESTION IN THE GROUP, FLAT, in the order it was authored —
+          // walked department by department because that is how the model is
+          // shaped, not because the grouping is shown. A department that was
+          // revealed one at a time is now simply part of the run: with no
+          // heading to reveal, a "3 more" button named nothing.
+          const questions = group.departments
+            .filter((d) => d.role !== SUPPORTING)
+            .flatMap((d) => d.questions)
 
           return (
             <div
@@ -572,86 +623,32 @@ function SectionCard({ step, run, answered, revealedOf, onReveal }) {
                 minWidth: 0,
               }}
             >
-              {/* THE SAME TREE THE PANELS AND THE OUTLINE DRAW — one drawing over
-                  the group, hanging off the gate's own row. What is under a
-                  question and what is under a department were two indents saying
-                  so; this says it in the app's own ink.
-                  The width is ANSWER_COLUMN's: every row inside ends on the same
-                  right edge whatever its depth, which is what makes the switches
-                  and counters a column. */}
+              {/* The width is ANSWER_COLUMN's: every field ends on the same
+                  right edge, which is what makes the switches and the counters
+                  read as one column rather than as a ragged edge. */}
               <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0 }}>
-              <TreeLayer>
-                <BranchRoot>
-                  <GateRow group={group} gate={gate} yes={yes} run={run} />
+                <GateRow
+                  group={group}
+                  gate={gate}
+                  yes={yes}
+                  run={run}
+                  // THE SWITCH TAKES THE GROUP'S OWN HUE WHEN ON, never a fixed
+                  // accent — the rule every Toggle in the app follows. The
+                  // darkened form, because the knob is white and the track has
+                  // to read against it. OFF takes no colour: see Toggle.
+                  tint={functionColours(functions, group.functionId).inverted.color}
+                />
 
-                  {/* YES OPENS THE GROUP HERE, under the switch that opened it.
-                      The departments used to be cards of their own and you lost
-                      the thread by the third — see the note on deckOf. */}
-                  {yes && functioning.length === 0 && (
-                    <PanelNote>Nothing is asked about this group yet.</PanelNote>
-                  )}
-                  {yes &&
-                    functioning.map((department) => (
-                      <DepartmentBlock
-                        key={department.id}
-                        department={department}
-                        run={run}
-                        results={answered.get(department.id)?.results ?? []}
-                      />
-                    ))}
+                {yes && questions.length === 0 && <PanelNote>Nothing is asked about this yet.</PanelNote>}
 
-                  {/* THE SUPPORTING ONES COME LAST, and only once everything
-                      asked for is out — they are read FROM those answers, so
-                      showing them first would show a column of zeros that
-                      changes under you as you work up the card. */}
-                  {yes &&
-                    more === 0 &&
-                    supporting.map((department) => (
-                      <SupportingBlock
-                        key={department.id}
-                        department={department}
-                        entry={answered.get(department.id)}
-                      />
+                {yes && questions.length > 0 && (
+                  <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    {questions.map((node) => (
+                      <QuestionRow key={node.id} node={node} run={run} />
                     ))}
-                </BranchRoot>
-              </TreeLayer>
+                  </div>
+                )}
               </div>
-
-              {/* THE REVEAL, at the foot of what this group has opened — it is
-                  the next thing you will read, so it stands where your eye
-                  already is. It goes once the group is fully out; the bar's own
-                  Next is what leaves for the next section, and two buttons
-                  meaning "onward" on one screen would be one too many. */}
-              {yes && more > 0 && (
-                <button
-                  type="button"
-                  onClick={() => onReveal(group.id)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    maxWidth: ANSWER_COLUMN,
-                    marginTop: 12,
-                    padding: '10px 14px',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    textAlign: 'left',
-                    borderRadius: 8,
-                    border: '1px dashed rgba(0,0,0,0.18)',
-                    background: 'rgba(0,0,0,0.015)',
-                    color: '#666',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Next — {more} more in {group.name}
-                </button>
-              )}
-
-              {yes && more > 0 && supporting.length > 0 && (
-                <div style={{ fontSize: 12, color: '#aaa', marginTop: 10, paddingLeft: BRANCH_ORIGIN_CONTENT }}>
-                  {supporting.map((d) => d.name).join(', ')} {supporting.length === 1 ? 'is' : 'are'} sized by a rule,
-                  once the rest is answered.
-                </div>
-              )}
             </div>
           )
         })}
@@ -660,203 +657,66 @@ function SectionCard({ step, run, answered, revealedOf, onReveal }) {
   )
 }
 
-// ONE DEPARTMENT, INSIDE ITS GROUP'S ROW: its questions, and under each yes what
-// it connects to, with their counters. This is where most of a run is spent.
-//
-// Its name is a heading rather than a card: it sits inside the group that is
-// already boxed, and a box inside a box inside the section's own card is three
-// borders saying one thing.
-function DeptHeading({ children, note }) {
+// ONE QUESTION AND THE ONE NUMBER IT ASKS FOR. No department above it, no rooms
+// under it — what the number buys is worked out and drawn in side.
+function QuestionRow({ node, run }) {
   return (
-    <>
-      <div
-        style={{
-          height: DEPT_ROW,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          fontSize: DEPT_TYPE,
-          fontWeight: 600,
-          color: '#555',
-        }}
-      >
-        {children}
-      </div>
-      {note && <div style={{ fontSize: 12, color: '#aaa', marginTop: 2 }}>{note}</div>}
-    </>
-  )
-}
-
-function DepartmentBlock({ department, run, results }) {
-  // The results come back in the order the connections were walked, so one
-  // cursor over them matches the questions as they are drawn. Keyed lookup
-  // instead would need a key that is unique across questions, and a connection's
-  // id is only unique within its department.
-  let cursor = 0
-
-  return (
-    <Branch endpoint="dot" padTop={14} head={14 + DEPT_ROW / 2}>
-      <DeptHeading>{department.name}</DeptHeading>
-
-      {department.questions.length === 0 && (
-        <PanelNote>Nothing is asked about this department yet — author it on the Questions tab.</PanelNote>
-      )}
-
-      {department.questions.map((node) => {
-        const mine = results.slice(cursor, cursor + node.connections.length)
-        cursor += node.connections.length
-        return (
-          <Branch key={node.id} endpoint="dot" padTop={10} head={10 + QUESTION_ROW / 2}>
-            <div style={{ minHeight: QUESTION_ROW, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
-              <span style={{ flex: 1, minWidth: 0, fontSize: QUESTION_TYPE, lineHeight: 1.35 }}>
-                {node.question.prompt || 'Untitled question'}
-              </span>
-              {/* THE ONE ANSWER. Empty until typed — see the note on EMPTY in
-                  useTestRun: a 0 sitting here is an answer nobody gave. */}
-              <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <CountField
-                  value={run.xOf(node.id) ?? ''}
-                  min={0}
-                  step={1}
-                  prefix=""
-                  width={100}
-                  size="1.1em"
-                  title={node.question.prompt}
-                  onChange={(n) => run.setQuestion(node.id, { x: n })}
-                />
-                {node.unit && <span style={{ fontSize: 12, color: '#999', minWidth: 40 }}>{node.unit}</span>}
-              </span>
-            </div>
-
-            {/* The comment is the question's own row, not a child of it — it
-                gets no branch, and the trunk simply runs past it. */}
-            {node.question.comment && (
-              <div style={{ fontSize: 13, color: '#999', marginTop: 4, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
-                {node.question.comment}
-              </div>
-            )}
-
-            {node.connections.length === 0 && <PanelNote>This question connects to no rooms yet.</PanelNote>}
-            {mine.map((result) => (
-              <Branch key={result.connection.instance_id} endpoint="dot" head={CONNECTION_ROW / 2}>
-                <ConnectionRow result={result} />
-              </Branch>
-            ))}
-          </Branch>
-        )
-      })}
-    </Branch>
-  )
-}
-
-// A SUPPORTING DEPARTMENT IS NOT ASKED FOR — it is READ. Its rooms are computed
-// from the areas above it, so the block states which areas it read and what they
-// bought, and takes no input at all.
-function SupportingBlock({ department, entry }) {
-  // ONLY THE ROOMS SOMEBODY HAS SIZED. Every room the department places is a row
-  // in the designer, because that is where the rules are written; here it is a
-  // reading, and a column of "no rule" over rooms nobody has got to yet is noise
-  // in front of the figures that do mean something.
-  const results = (entry?.results ?? []).filter((r) => r.state !== 'unauthored')
-  const scope = entry?.scope ?? {}
-
-  return (
-    <Branch endpoint="dot" padTop={14} head={14 + DEPT_ROW / 2}>
-      <DeptHeading
-        note={
-          // The group's total leads, since it is what most rules read; the
-          // departments it is made of follow.
-          department.variables
-            .map((v) => {
-              const area = Number.isFinite(scope[v.name]) ? Math.round(scope[v.name]) : null
-              const name = v.kind === 'group' ? `all of ${v.liveName}` : v.liveName || v.name
-              return `${name} ${area === null ? '—' : area} m²`
-            })
-            .join(' · ') || 'Scales off nothing yet — author it on the Questions tab.'
-        }
-      >
-        <span style={{ flex: 1, minWidth: 0 }}>{department.name}</span>
-        <span style={{ fontSize: 11, fontWeight: 600, color: '#8a6d1f', flexShrink: 0 }}>SIZED BY A RULE</span>
-      </DeptHeading>
-
-      {results.length === 0 && <PanelNote>No rooms are sized here yet.</PanelNote>}
-      {results.map((result) => (
-        <Branch key={result.connection.instance_id} endpoint="dot" padTop={6} head={6 + CONNECTION_ROW / 2}>
-          <ConnectionRow result={result} />
-        </Branch>
-      ))}
-    </Branch>
-  )
-}
-
-// One connection — a catalog room group or a single room — and the counter that
-// is its whole answer. 0 is "not chosen" and the row is greyed at it, the same
-// reading the designer draws.
-//
-// >>> THE ROOMS A GROUP BRINGS ARE NOT LISTED HERE. A run is answered by what a
-// >>> thing IS — two 3 Tesla MRIs — not by which rooms that buys, and the list
-// >>> sat under the one row on the card that already had a number to read. Side
-// >>> is where the rooms appear, as they are counted.
-// >>> A COUNT IS A FIGURE HERE, NEVER A FIELD. It is computed, and a disabled
-// >>> input still reads as somewhere you may type — which invites the one
-// >>> edit this whole tab no longer takes.
-//
-// The four states are told apart, because a run where "no rule was written",
-// "the rule is broken", "it names something gone" and "it really is zero" all
-// draw the same grey 0 is a run nobody can debug.
-const STATES = {
-  unauthored: { text: 'no rule', colour: '#c9c9c9' },
-  invalid: { text: 'broken rule', colour: '#b3261e' },
-  unresolved: { text: 'unresolved', colour: '#b3261e' },
-}
-
-function ConnectionRow({ result }) {
-  const { connection, count, state, message } = result
-  const flag = STATES[state]
-  const chosen = state === 'ok' && count > 0
-
-  return (
-    <div
-      style={{
-        minHeight: CONNECTION_ROW,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 16,
-        minWidth: 0,
-        fontSize: CONNECTION_TYPE,
-      }}
-    >
-      <span
-        style={{
-          flex: 1,
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          color: chosen ? '#222' : '#aaa',
-        }}
-      >
-        {connection.name}
-      </span>
-
-      {flag ? (
-        <span title={message ?? undefined} style={{ flexShrink: 0, fontSize: 12, color: flag.colour }}>
-          {flag.text}
+    <div style={{ minWidth: 0 }}>
+      <div style={{ minHeight: QUESTION_ROW, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+        <span style={{ flex: 1, minWidth: 0, fontSize: QUESTION_TYPE, lineHeight: 1.35 }}>
+          {node.question.prompt || 'Untitled question'}
         </span>
-      ) : (
+        {/* THE ONE ANSWER, AND IT IS A BOX. Everywhere else in the app a count is
+            a figure in a sentence — a value being read — and `boxed` is for the
+            one place the number is being SUPPLIED. Here that is the whole row:
+            empty until typed (see EMPTY in useTestRun, where a 0 is an answer
+            nobody gave), so unboxed it was an invisible field on a blank line and
+            there was nothing on the card saying where to answer. */}
         <span
-          title={connection.formula}
           style={{
             flexShrink: 0,
-            width: 84,
-            textAlign: 'right',
-            fontSize: CONNECTION_TYPE + 2,
-            fontVariantNumeric: 'tabular-nums',
-            color: chosen ? '#333' : '#bbb',
+            display: 'flex',
+            alignItems: 'center',
+            gap: ANSWER_GAP,
           }}
         >
-          {count}
+          <span style={{ width: STEP_COL, display: 'flex', justifyContent: 'flex-start' }}>
+            <Stepper value={run.xOf(node.id)} onChange={(n) => run.setQuestion(node.id, { x: n })} />
+          </span>
+          <span style={{ width: FIELD_COL, display: 'flex', justifyContent: 'flex-start' }}>
+            <CountField
+              value={run.xOf(node.id) ?? ''}
+              min={0}
+              step={1}
+              prefix=""
+              boxed
+              digits={4}
+              steppers={false}
+              size="1.15em"
+              colour="#222"
+              title={node.question.prompt}
+              onChange={(n) => run.setQuestion(node.id, { x: n })}
+            />
+          </span>
+          <span
+            style={{
+              width: UNIT_COL,
+              fontSize: 12,
+              color: '#999',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {node.unit}
+          </span>
         </span>
+      </div>
+
+      {node.question.comment && (
+        <div style={{ fontSize: 13, color: '#999', marginTop: 4, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+          {node.question.comment}
+        </div>
       )}
     </div>
   )
@@ -865,29 +725,22 @@ function ConnectionRow({ result }) {
 // --- The tab ------------------------------------------------------------------
 
 export default function TestRun({ buildingId }) {
-  const { sections, groups, departments, rooms, functions } = useCatalog()
+  const { sections, groups, departments, rooms, objects, functions } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms })
+  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
   const deck = deckOf(model)
-  // EVERY RULE IN THE BUILDING, EVALUATED ONCE — whole-model, not per card,
-  // because a supporting department in the first section may read the area of
-  // one answered in the last. See evaluateRun.
-  const answered = evaluateRun(model, run)
+  // >>> THE CARDS EVALUATE NOTHING NOW. Every count the carousel drew has gone
+  // >>> with the room rows; side is the only reader of `evaluateRun`, and it
+  // >>> calls it itself, whole-model, for the reason documented there.
 
   const [at, setAt] = useState(0)
-  // HOW MANY DEPARTMENTS EACH GROUP HAS REVEALED, by group instance id — kept
-  // here rather than in the card so stepping to the next section and back does
-  // not close a group you had worked through. One is the start.
-  const [revealed, setRevealed] = useState({})
 
   // Switching building changes the deck under the pointer; without this, step 7
-  // of a long building becomes an out-of-range index in a short one, and a
-  // reveal count belongs to the building it was counted in.
+  // of a long building becomes an out-of-range index in a short one.
   useEffect(() => {
     setAt(0)
-    setRevealed({})
   }, [buildingId])
 
   const here = Math.min(at, Math.max(deck.length - 1, 0))
@@ -915,102 +768,31 @@ export default function TestRun({ buildingId }) {
               Nothing to ask for this building yet. Author its questions on the Questions tab.
             </PanelNote>
           ) : (
-            <>
-              {/* THE CARD FILLS WHAT IS LEFT, capped so a line of 38px text on a
-                  wide screen does not run past what an eye tracks in one go. */}
-              <div
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  overflowY: 'auto',
-                  padding: '40px 32px',
-                  background: stepColours.wash(0.9),
-                  transition: 'background-color 200ms ease',
-                }}
-              >
-                <div style={{ maxWidth: CARD_MAX, margin: '0 auto', minWidth: 0, color: '#1a1a1a' }}>
-                  <SectionCard
-                    step={step}
-                    run={run}
-                    answered={answered}
-                    revealedOf={(groupId) => revealed[groupId] ?? 1}
-                    onReveal={(groupId) =>
-                      setRevealed((r) => ({ ...r, [groupId]: (r[groupId] ?? 1) + 1 }))
-                    }
-                  />
-                </div>
+            /* THE CARD FILLS WHAT IS LEFT, capped so a line of 38px text on a
+               wide screen does not run past what an eye tracks in one go.
+               >>> AND IT IS ALL THAT IS LEFT. Back, Next and Start over were a
+               >>> bar under it, and the rail already does all three: it marks
+               >>> every section, it is clickable and it is draggable. Two ways
+               >>> through one deck drift apart, and the pair of them read as a
+               >>> wizard you had to finish rather than a picture you move about
+               >>> in. */
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                padding: '40px 32px',
+                background: stepColours.wash(0.9),
+                transition: 'background-color 200ms ease',
+              }}
+            >
+              <div style={{ maxWidth: CARD_MAX, margin: '0 auto', minWidth: 0, color: '#1a1a1a' }}>
+                <SectionCard step={step} run={run} functions={functions} />
               </div>
-
-              <div
-                style={{
-                  borderTop: '1px solid #ececec',
-                  padding: '12px 32px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 16,
-                }}
-              >
-                {/* BACK SITS BESIDE NEXT. The two that step through the deck
-                    are one control in two halves, and Start over — which is not
-                    navigation but undoing the whole run — goes to the far end
-                    where it cannot be hit for Back. */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    run.reset()
-                    setAt(0)
-                    setRevealed({})
-                  }}
-                  style={{
-                    padding: '9px 16px',
-                    fontSize: 13,
-                    borderRadius: 6,
-                    border: 'none',
-                    background: 'transparent',
-                    color: '#888',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Start over
-                </button>
-                <span style={{ flex: 1, textAlign: 'center', fontSize: 13, color: '#999' }}>
-                  {here + 1} of {deck.length}
-                </span>
-                <Step label="Back" disabled={here === 0} onClick={() => setAt(Math.max(0, here - 1))} />
-                <Step
-                  label="Next"
-                  primary
-                  disabled={here >= deck.length - 1}
-                  onClick={() => setAt(Math.min(deck.length - 1, here + 1))}
-                />
-              </div>
-            </>
+            </div>
           )}
         </div>
       </div>
     </div>
-  )
-}
-
-function Step({ label, onClick, disabled, primary = false }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: '9px 24px',
-        fontSize: 14,
-        fontWeight: 600,
-        borderRadius: 6,
-        cursor: disabled ? 'default' : 'pointer',
-        opacity: disabled ? 0.4 : 1,
-        border: primary ? 'none' : '1px solid #ccc',
-        background: primary ? INK : '#fff',
-        color: primary ? '#fff' : '#333',
-      }}
-    >
-      {label}
-    </button>
   )
 }

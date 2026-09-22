@@ -63,12 +63,12 @@ export function TestRunProvider({ children }) {
       // yes/no and an untouched switch is off, which is what the person
       // answering sees.
       gateYes: (groupId) => !!answers.gates[groupId]?.yes,
-      // undefined until typed, and the callers keep that distinction — see the
-      // note on EMPTY. `xOr0` is for arithmetic, `xOf` for drawing.
-      xOf: (questionId) => answers.questions[questionId]?.x,
-      xOr0: (questionId) => {
+      // undefined until typed — see the note on EMPTY. There is deliberately no
+      // `xOr0` any more: standing a 0 in for an absent answer is what made an
+      // unanswered question build rooms. See evaluateRun.
+      xOf: (questionId) => {
         const x = answers.questions[questionId]?.x
-        return Number.isFinite(x) ? x : 0
+        return Number.isFinite(x) ? x : undefined
       },
     }),
     [answers, setGate, setQuestion, reset]
@@ -101,7 +101,9 @@ export function useTestRun() {
 // >>> department answered in section 5.
 //
 // A room appears with the count of the CONNECTION it came in on: two of a
-// 3 Tesla MRI is two of each room in that catalog room group.
+// 3 Tesla MRI is two of each room in that catalog room group. An object inside it
+// carries its OWN rule's value, read at the same one number — see OBJECTS in
+// data/questionnaire.js.
 
 // A connection, evaluated: its rooms, and the STATE that says whether the number
 // beside them means anything. Four things used to land on one grey zero — no
@@ -120,6 +122,23 @@ function evaluateConnection(connection, scope) {
       areaSqft: room.areaSqft ?? 0,
       count: value,
       via: connection,
+      // WHAT STANDS IN IT, for the objects somebody has written a rule for. Each
+      // reads the SAME scope the room's rule did — one answered number and
+      // nothing else — so this is the same evaluation one level in, not a second
+      // pass. Unruled objects are dropped: the run is a reading, and the
+      // designer is where a blank row is the point.
+      objects: (room.objects ?? [])
+        .filter((object) => object.compiled.authored)
+        .map((object) => {
+          const result = object.compiled.evaluate(scope)
+          return {
+            instance_id: object.instance_id,
+            name: object.name,
+            count: result.value,
+            state: result.state,
+            message: result.message,
+          }
+        }),
     })),
   }
 }
@@ -149,12 +168,22 @@ export function evaluateRun(model, run) {
         // A group answered NO contributes nothing, and that nothing is a real
         // answer rather than an absence — which is why the entry is written
         // with empty rows instead of being skipped.
+        // >>> 0 IS THE NO, AND SO IS AN ABSENT ANSWER: NEITHER BUILDS ANYTHING.
+        // >>> The question asks how many there are, so nought beds is "there is
+        // >>> no Emergency Care" and nothing under it should appear.
+        // >>>
+        // >>> This is NOT what evaluating the rules at x = 0 gives. A rule with a
+        // >>> constant term — `2` for the toilets, `ceil(x/4) + 1` — comes out
+        // >>> above zero at x = 0 and put those rooms in the program with the
+        // >>> question answered nought, which reads as the run having supplied a
+        // >>> figure of its own. The rules are only read once there is something
+        // >>> to build.
         const results = open
-          ? department.questions.flatMap((node) =>
-              node.connections.map((connection) =>
-                evaluateConnection(connection, { x: run.xOr0(node.id) })
-              )
-            )
+          ? department.questions.flatMap((node) => {
+              const x = run.xOf(node.id)
+              if (!(x > 0)) return []
+              return node.connections.map((connection) => evaluateConnection(connection, { x }))
+            })
           : []
         answered.set(department.id, { open, results })
       })
@@ -177,7 +206,7 @@ export function evaluateRun(model, run) {
         // built only from what pass 1 actually produced.
         const scope = {}
         department.variables.forEach((variable) => {
-          // `area` is the whole group: every functioning department beside this
+          // `a` is the whole group: every functioning department beside this
           // one, summed. It is always a number — an unanswered group is 0 m²,
           // which is a real answer — where a department's name resolves to
           // nothing when that department has gone.

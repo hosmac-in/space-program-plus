@@ -51,12 +51,19 @@ function Count({ n }) {
   )
 }
 
+// Only the objects a rule actually sized — the same filter every reading column
+// here applies. A broken or unresolved rule is drawn by the carousel, which is
+// where the states are told apart; this column is what got built.
+function sized(room) {
+  return (room.objects ?? []).filter((o) => o.state === 'ok' && o.count > 0)
+}
+
 export default function TestRunTree({ buildingId }) {
-  const { buildings, sections, groups, departments, rooms } = useCatalog()
+  const { buildings, sections, groups, departments, rooms, objects } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms })
+  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
   const program = buildProgram(model, run)
 
   const buildingName = buildings.find((b) => b.id === buildingId)?.name ?? 'This building'
@@ -99,13 +106,27 @@ export default function TestRunTree({ buildingId }) {
                         // the once-per-department rule prevents — but the index
                         // rides along so a future relaxation of that rule cannot
                         // collide two keys silently.
-                        <Branch key={`${room.instance_id}:${i}`} endpoint="dot" head={ROW / 2}>
+                        <Branch
+                          key={`${room.instance_id}:${i}`}
+                          endpoint={sized(room).length > 0 ? 'caret' : 'dot'}
+                          expanded={sized(room).length > 0}
+                          head={ROW / 2}
+                        >
                           <Row
                             label={roomLabel(room, department)}
                             size={12}
                             colour="#444"
                             right={<Count n={room.count} />}
                           />
+                          {/* WHAT STANDS IN IT, for the objects a rule sized.
+                              This is the one column that lists them: the
+                              carousel answers by what a thing IS, and side is
+                              where what that buys appears. */}
+                          {sized(room).map((object) => (
+                            <Branch key={object.instance_id} endpoint="dot" head={ROW / 2}>
+                              <Row label={object.name} size={11} colour="#777" right={<Count n={object.count} />} />
+                            </Branch>
+                          ))}
                         </Branch>
                       ))}
                     </Branch>

@@ -21,14 +21,15 @@
 import { useEffect, useState } from 'react'
 import {
   connectionsWithFormula,
+  connectionsWithObjectFormula,
+  connectionHasObjectRules,
+  connectionObjects,
   newConnection,
+  questionWithObjectFormula,
   newNumber,
-  newVariable,
   questionWithConnection,
   questionWithFormula,
   questionWithoutConnection,
-  slugVariable,
-  uniqueVariableName,
   ROOM,
   ROOM_GROUP,
 } from '../../data/questionnaire.js'
@@ -38,6 +39,14 @@ import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { removeHint } from '../primitives/RemoveButton.jsx'
 import Toggle from '../primitives/Toggle.jsx'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
+import {
+  Branch,
+  BranchRoot,
+  TreeLayer,
+  useRootAnchor,
+  BRANCH_CONTENT,
+  BRANCH_ORIGIN_CONTENT,
+} from '../panel/PanelTree.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, locate, FUNCTIONING, SUPPORTING } from './questionModel.js'
 import { useCatalog } from '../../data/catalog.jsx'
@@ -213,6 +222,72 @@ function DepartmentFace({ department, group, canEdit, editor }) {
   return <SupportingFace department={department} group={group} canEdit={canEdit} editor={editor} />
 }
 
+// ONE NAME A RULE MAY USE: what it is, and what it is called in the language.
+//
+// THE NAME IS CALLED, THE VARIABLE SITS NEXT TO IT. A fixed name column and the
+// identifier straight after it, so the pair reads as one phrase — "Consultation
+// is `consultation`" — and the identifiers still line up as a column to scan
+// down. Pushed to the panel's right edge they were a column of their own, a
+// hand's width from the names they belong to, with nothing in between.
+//
+// EVERY ROW IS THE SAME ROW, including the group's total: it is one of the names
+// a rule may use, and drawing it bold, unindented and with a summary under it
+// made it a heading over the list rather than the first member of it.
+const VAR_NAME = 150
+const VAR_BOX = 130
+
+function VariableRow({ name, variable, detail, detailColour = '#999', colour = '#222' }) {
+  return (
+    <div
+      className="spp-row"
+      style={{ display: 'flex', alignItems: 'baseline', gap: 8, paddingBlock: 4, minWidth: 0 }}
+    >
+      <span style={{ flexShrink: 0, width: VAR_NAME, minWidth: 0 }}>
+        <span
+          style={{
+            display: 'block',
+            fontSize: 13,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            color: colour,
+          }}
+        >
+          {name}
+        </span>
+        {/* Kept for the one thing you cannot work out: why a name cannot be
+            read. Everything else that was here has gone. */}
+        {detail && <span style={{ display: 'block', fontSize: 11, color: detailColour }}>{detail}</span>}
+      </span>
+      {/* A BOX, BUT NOT A FIELD. It is the same shape as the expression boxes
+          beside it, because it is the same kind of thing — a piece of the
+          language — but it is GREY and it is not an input: the name is the
+          department's own, slugged, and there is nothing to type. A white box
+          here would read as editable, and a disabled input reads as editable and
+          broken. */}
+      <code
+        style={{
+          flexShrink: 0,
+          width: VAR_BOX,
+          boxSizing: 'border-box',
+          padding: '3px 6px',
+          borderRadius: 4,
+          border: '1px solid #e6e6e6',
+          background: '#f4f4f5',
+          fontSize: 12,
+          color: '#555',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {variable}
+      </code>
+      <span style={{ flex: 1, minWidth: 0 }} />
+    </div>
+  )
+}
+
 // A SUPPORTING DEPARTMENT: the departments it scales off, and a rule per room
 // over their areas. It is the same shape as a question — names, then rules —
 // with an area where a counted number would be.
@@ -229,31 +304,24 @@ function SupportingFace({ department, group, canEdit, editor }) {
   const where = { s: department.sectionId, g: department.groupId, d: department.deptId }
   const writeConnections = (next) => editor.setSupportingConnections(where.s, where.g, where.d, next)
 
-  // THE ONLY THING AUTHORED ABOUT A VARIABLE IS ITS NAME — the list is the
-  // group's, so the document stores an override per department and nothing else.
-  const renameVariable = (variable, raw) => {
-    const name = uniqueVariableName(
-      slugVariable(raw),
-      names.filter((n) => n !== variable.name)
-    )
-    if (name === variable.name) return
-    // Only the departments are ever written — `area` is derived and belongs to
-    // nobody's document.
-    const rest = departmentVars
-      .filter((v) => v.instance_id !== variable.instance_id)
-      .map((v) => newVariable(v.name, v.instance_id, v.liveName ?? v.label))
-    editor.setVariables(where.s, where.g, where.d, [
-      ...rest,
-      newVariable(name, variable.instance_id, variable.liveName ?? variable.label),
-    ])
-  }
+  // >>> A VARIABLE'S NAME IS NOT AUTHORED ANY MORE. It is the department's own
+  // >>> name, slugged, and the group's total is `a` — both fixed, neither
+  // >>> editable. Renaming them was one more thing to do before a single rule
+  // >>> could be written, and the name a rule wants is the name of the thing it
+  // >>> is about. A document that already holds an override is still read with
+  // >>> it (questionModel.js), so no rule written against an old name breaks;
+  // >>> nothing writes a new one.
 
-  // The sample: every department at the same area, so `area` is that times how
-  // many there are — the same arithmetic the run does, or the preview would
-  // answer a different question from the thing it is previewing.
+  // THE SAMPLE IS `a` ITSELF — the whole group — and each department gets an
+  // even share of it. The row says "Try a =", so that is what the number has to
+  // be: it used to be each department's own area, with `a` coming out as that
+  // times however many there were, and a box labelled `a` showing 1,000 while
+  // every rule over `a` computed on 3,000 is a preview that lies.
   const scope = {
-    ...Object.fromEntries(departmentVars.map((v) => [v.name, tryArea])),
-    ...(groupVar ? { [groupVar.name]: tryArea * departmentVars.length } : {}),
+    ...Object.fromEntries(
+      departmentVars.map((v) => [v.name, departmentVars.length === 0 ? 0 : tryArea / departmentVars.length])
+    ),
+    ...(groupVar ? { [groupVar.name]: tryArea } : {}),
   }
 
   // EVERY ROOM IS ALREADY HERE — there is no picker, because a supporting
@@ -263,123 +331,90 @@ function SupportingFace({ department, group, canEdit, editor }) {
   const writeFormula = (connection, formula) =>
     writeConnections(connectionsWithFormula(connections.map(stripped), connection, formula))
 
+  const writeObjectFormula = (connection, objectId, formula) =>
+    writeConnections(connectionsWithObjectFormula(connections.map(stripped), connection, objectId, formula))
+
   return (
     <div style={{ minWidth: 0 }}>
-      <Caption>Supporting department</Caption>
-      <Where>
-        {group.name} → {department.name}
-      </Where>
-
-      <PanelNote>
-        Sized by how big other departments turned out, not by a question. Name them below, then give each of this
-        department's rooms a rule over those areas.
-      </PanelNote>
-
-      <div style={{ marginTop: 14, borderTop: '1px solid #eee', paddingTop: 10 }}>
-        <Caption>Scales off</Caption>
-        <PanelNote>
-          Every functioning department in {group.name}, automatically — each its <strong>net room area in m²</strong>,
-          the rooms as counted, no grossing factors, and always m² whatever unit you are reading the app in.
-        </PanelNote>
-
-        {departmentVars.length === 0 && (
-          <PanelNote>This group has no functioning departments yet, so there is nothing to scale off.</PanelNote>
-        )}
-
-        {/* THE TOTAL FIRST, and set apart: it is what most rules are written
-            against, and the names under it are the same figure broken up for
-            the rule that has to weight them. */}
+      {/* >>> NOTHING ABOVE THE FIRST VARIABLE. A caption, the path, and two
+          paragraphs explaining what a supporting department is stood between
+          opening this panel and reading the one thing on it — the names a rule
+          can use. They said what the RoleChip in the outline already says, and
+          they said it every time. The rows below carry their own detail line,
+          which is where an explanation belongs: on the thing it explains. */}
+      <div style={{ minWidth: 0 }}>
+        {/* THE TOTAL FIRST — it is what most rules are written against, and the
+            names under it are the same figure broken up for the rule that has to
+            weight them. Its name is in the SAME COLUMN as theirs: it is one of
+            the names a rule may use, and putting it alone at the top right read
+            as a heading over the list rather than as a member of it. */}
         {groupVar && (
-          <div
-            className="spp-row"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBlock: 6, minWidth: 0 }}
-          >
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>All of {group.name}</span>
-              <span style={{ display: 'block', fontSize: 11, color: '#999' }}>
-                {departmentVars.length === 0
-                  ? 'Nothing in it yet, so this is 0'
-                  : `${departmentVars.length} department${departmentVars.length === 1 ? '' : 's'}, summed`}
-              </span>
-            </span>
-            <code style={{ fontSize: 12, color: '#555', flexShrink: 0 }}>{groupVar.name}</code>
-          </div>
+          <VariableRow
+            name={`All of ${group.name}`}
+            variable={groupVar.name}
+            // The only thing left on this row, and only when it means something:
+            // an empty group really does read 0.
+            detail={departmentVars.length === 0 ? 'Nothing in it yet, so this is 0' : null}
+          />
         )}
 
         {departmentVars.map((variable) => (
-          <div
+          <VariableRow
             key={variable.instance_id}
-            className="spp-row"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              paddingBlock: 4,
-              minWidth: 0,
-              // Stepped in: these are what the total above is made of.
-              paddingLeft: 10,
-            }}
-          >
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span
-                style={{
-                  display: 'block',
-                  fontSize: 13,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  color: variable.missing ? '#b3261e' : '#222',
-                }}
-              >
-                {variable.liveName || 'Unnamed department'}
-              </span>
-              <span style={{ display: 'block', fontSize: 11, color: variable.orphaned ? '#8a6d1f' : '#999' }}>
-                {variable.missing
-                  ? 'No longer in this building — rules using it read as unresolved'
-                  : variable.unsupported
-                    ? 'Supporting, so its area is not known here — this reads 0'
-                    : variable.orphaned
-                      ? `No longer in ${group.name} — kept because a rule may still name it`
-                      : variable.path}
-              </span>
-            </span>
-            {canEdit ? (
-              <NameField value={variable.name} onCommit={(raw) => renameVariable(variable, raw)} />
-            ) : (
-              <code style={{ fontSize: 12, color: '#555' }}>{variable.name}</code>
-            )}
-          </div>
+            name={variable.liveName || 'Unnamed department'}
+            variable={variable.name}
+            colour={variable.missing ? '#b3261e' : '#222'}
+            // >>> THE PATH IS GONE — "Ambulatory Care → OPD" under every row,
+            // >>> the same two words repeated down the list, since a group's
+            // >>> functioning departments are nearly always in one section. What
+            // >>> is left is only the detail you cannot work out: why a name
+            // >>> cannot be read.
+            detail={
+              variable.missing
+                ? 'No longer in this building — rules using it read as unresolved'
+                : variable.unsupported
+                  ? 'Supporting, so its area is not known here — this reads 0'
+                  : variable.orphaned
+                    ? `No longer in ${group.name} — kept because a rule may still name it`
+                    : null
+            }
+            detailColour={variable.orphaned ? '#8a6d1f' : '#999'}
+          />
         ))}
-
       </div>
 
       <div style={{ marginTop: 18, borderTop: '1px solid #eee', paddingTop: 10 }}>
-        <Caption>Its rooms, one rule each</Caption>
-        {connections.length === 0 && (
-          <PanelNote>This department places no rooms in the catalog yet — add them on the Tree tab.</PanelNote>
-        )}
+        {/* ONE DRAWING over the whole list — the same tree the side panels and
+            the Questions outline draw, because it is the same information: what
+            sits inside what. Objects flow from rooms. */}
+        <RuleTree>
+          {connections.length === 0 && (
+            <PanelNote>This department places no rooms in the catalog yet — add them on the Tree tab.</PanelNote>
+          )}
 
-        {connections.length > 0 && (
-          <TryBar
-            label="Try every area ="
-            value={tryArea}
-            onChange={setTryArea}
-            suffix="m² each"
-            vars={names}
-            subject="each the net room area of that department, in m²"
-          />
-        )}
+          {connections.length > 0 && (
+            <TryBar
+              label={`Try ${groupVar?.name ?? 'a'} =`}
+              value={tryArea}
+              onChange={setTryArea}
+              suffix={departmentVars.length > 1 ? 'm², shared evenly' : 'm²'}
+              vars={names}
+              subject="each the net room area of that department, in m²"
+            />
+          )}
 
-        {connections.map((connection) => (
-          <ConnectionBlock
-            key={connection.instance_id}
-            connection={connection}
-            canEdit={canEdit}
-            allowedVars={names}
-            scope={scope}
-            onFormula={(formula) => writeFormula(connection, formula)}
-          />
-        ))}
+          {connections.map((connection) => (
+            <ConnectionBlock
+              key={connection.instance_id}
+              connection={connection}
+              canEdit={canEdit}
+              allowedVars={names}
+              scope={scope}
+              onFormula={(formula) => writeFormula(connection, formula)}
+              onObjectFormula={(objectId, formula) => writeObjectFormula(connection, objectId, formula)}
+            />
+          ))}
+        </RuleTree>
       </div>
 
     </div>
@@ -387,42 +422,18 @@ function SupportingFace({ department, group, canEdit, editor }) {
 }
 
 // The model hangs `compiled`, `name`, `rooms` and `missing` off a connection for
-// drawing; only the stored keys may go back into the document.
+// drawing; only the stored keys may go back into the document. `objects` is
+// carried through untouched — it is stored, and dropping it here would wipe every
+// object rule on the next edit of the room's own.
 function stripped(connection) {
-  return {
+  const out = {
     kind: connection.kind,
     instance_id: connection.instance_id,
     label: connection.label ?? '',
     formula: connection.formula ?? '',
   }
-}
-
-// A variable's name, in the language's own type so it reads as what it is.
-function NameField({ value, onCommit }) {
-  const [draft, setDraft] = useState(value)
-  useEffect(() => setDraft(value), [value])
-  return (
-    <input
-      type="text"
-      value={draft}
-      title="The name this department goes by in a rule"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => draft !== value && onCommit(draft)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur()
-        if (e.key === 'Escape') setDraft(value)
-      }}
-      style={{
-        flexShrink: 0,
-        width: 110,
-        padding: '3px 6px',
-        borderRadius: 4,
-        border: '1px solid #ddd',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-        fontSize: 12,
-      }}
-    />
-  )
+  if (connectionHasObjectRules(connection)) out.objects = { ...connectionObjects(connection) }
+  return out
 }
 
 // THE RULE ITSELF. Monospace, because it is read character by character rather
@@ -432,7 +443,15 @@ function NameField({ value, onCommit }) {
 // AN INVALID RULE IS STORED ANYWAY. A half-typed rule is work, and refusing it
 // at the field throws it away the moment focus moves; it is drawn as broken
 // instead, which is the honest reading and a recoverable one.
-function FormulaField({ value, allowedVars, canEdit, onCommit }) {
+// AN OBJECT'S BOX IS TINTED, a room's is white. The two read the same variable
+// and do the same thing, so the tree is what says which level a row is on — but
+// a column of identical boxes gave that no help at all, and the indent alone is
+// 38px against a 225px box. A wash rather than a border or a second type: it
+// changes nothing about the field and is still legible under the red a broken
+// rule brings, which takes precedence.
+const OBJECT_TINT = '#fffbe8'
+
+function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
   const [draft, setDraft] = useState(value ?? '')
   useEffect(() => setDraft(value ?? ''), [value])
 
@@ -472,7 +491,7 @@ function FormulaField({ value, allowedVars, canEdit, onCommit }) {
         padding: '4px 6px',
         borderRadius: 4,
         border: `1px solid ${broken ? '#e6a9a2' : '#ddd'}`,
-        background: broken ? '#fdf6f5' : '#fff',
+        background: broken ? '#fdf6f5' : (tint ?? '#fff'),
         color: '#222',
       }}
     />
@@ -512,24 +531,143 @@ function Muted({ children }) {
   return <span style={{ flexShrink: 0, fontSize: 12, color: '#ccc', minWidth: 26, textAlign: 'right' }}>{children}</span>
 }
 
-// ONE CONNECTION: a catalog room group or a single room, its rule, and what that
-// rule works out to at the sample number.
+// THE THREE COLUMNS EVERY RULE IS READ IN — the name, the expression, the value
+// it works out to — and they hold at every depth of the tree.
 //
-// A GROUP LISTS ITS ROOMS, read live off the tree — the membership is the Tree
-// tab's to state and nothing here can change it, so the list is a reading rather
-// than a control. A single room says its name once and draws nothing under it.
-function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, onRemove }) {
+// THE NAME COLUMN IS A FIXED WIDTH THAT GIVES WAY TO THE INDENT, so the boxes
+// begin on one column whatever level they are on. Left as a flexible column it
+// was sized by the LONGEST name in the department, and every short one then sat
+// a hand's width from its own box with nothing in between. A name too long for
+// its column WRAPS, which costs a line of a row nobody reads twice; ellipsis
+// there hid the one word telling two rooms apart.
+// A rule is read character by character and some of them are long —
+// `clamp(ceil(x/10), 1, 4)` — so the box is the widest column of the three. The
+// name gives way for it, because a name that runs out of room WRAPS and a rule
+// that runs out of room scrolls sideways under the caret.
+const NAME_COL = 120
+const RULE_FIELD = 225
+// The first line of a row, and where a branch meets it. FIXED: a wrapped name
+// makes its row taller, and a head measured from the middle of the whole box
+// then lands below the row it points at — which is how the carets came to sit
+// on the row underneath their own.
+const RULE_LINE = 26
+const RULE_HEAD = RULE_LINE / 2
+
+// ONE ROW: a name, its expression box and the preview. A room, a room group and
+// an object are all this row — what changes is the type, and how far in the tree
+// has put it.
+function RuleRow({ name, detail, title, depth = 0, weight = 400, size = 13, colour = '#222', field, result, onContextMenu }) {
+  return (
+    <div
+      className="spp-row"
+      title={title}
+      onContextMenu={onContextMenu}
+      // FROM THE TOP, not centred: everything sits on the first line, so a name
+      // that wraps grows downwards and the box beside it does not drift.
+      style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0 }}
+    >
+      <span
+        style={{
+          flexShrink: 0,
+          // The floor is low on purpose: it is never reached at the depths this
+          // tree actually goes to, and a floor that DID bite would push that
+          // row's box out of the column every other box is read down.
+          width: Math.max(40, NAME_COL - depth * BRANCH_CONTENT),
+          overflowWrap: 'anywhere',
+          fontSize: size,
+          fontWeight: weight,
+          lineHeight: `${RULE_LINE}px`,
+          color: colour,
+        }}
+      >
+        {name}
+        {detail}
+      </span>
+      {/* Blank for a row that carries no rule of its own — a room inside a
+          group — so the column still holds and its objects' boxes line up with
+          everything else's. */}
+      <span style={{ flexShrink: 0, width: RULE_FIELD, minHeight: RULE_LINE, display: 'flex', alignItems: 'center' }}>
+        {field}
+      </span>
+      <span style={{ flexShrink: 0, minHeight: RULE_LINE, display: 'flex', alignItems: 'center' }}>{result}</span>
+    </div>
+  )
+}
+
+// ONE OBJECT INSIDE A ROOM, hanging off that room's branch. Its rule reads the
+// SAME names the room's does — see OBJECTS in data/questionnaire.js — so there
+// is no second help text and nothing here explains a new variable, because
+// there isn't one.
+//
+// The catalog's own count rides along as a title rather than a column: it says
+// what one of that room holds today, which is context for writing the rule and
+// not a figure the rule produces.
+function ObjectBranch({ object, depth, canEdit, allowedVars, scope, onFormula }) {
+  return (
+    <Branch endpoint="dot" head={RULE_HEAD}>
+      <RuleRow
+        name={object.name}
+        title={`${object.name} — ${object.count} in one of this room, in the catalog`}
+        depth={depth}
+        size={12}
+        colour="#666"
+        field={
+          <FormulaField
+            value={object.formula ?? ''}
+            allowedVars={allowedVars}
+            canEdit={canEdit}
+            tint={OBJECT_TINT}
+            onCommit={onFormula}
+          />
+        }
+        result={<Result compiled={object.compiled} scope={scope} />}
+      />
+    </Branch>
+  )
+}
+
+// OBJECTS FLOW FROM ROOMS, so they hang off the room that holds them and not off
+// the connection: one flat list could not say which room a monitor stood in.
+function objectBranches(room, depth, { canEdit, allowedVars, scope, onObjectFormula }) {
+  return room.objects.map((object) => (
+    <ObjectBranch
+      key={object.instance_id}
+      object={object}
+      depth={depth}
+      canEdit={canEdit}
+      allowedVars={allowedVars}
+      scope={scope}
+      onFormula={(formula) => onObjectFormula(object.instance_id, formula)}
+    />
+  ))
+}
+
+// ONE CONNECTION: a catalog room group or a single room, its rule, the value at
+// the sample number — and what stands in it, a branch each.
+//
+// A GROUP LISTS ITS ROOMS, read live off the tree: the membership is the Tree
+// tab's to state and nothing here can change it, so a room's own row is a
+// reading with no rule of its own, and its objects hang off it. A SINGLE ROOM is
+// the connection's own row — naming it again one line down would say its name
+// twice — so its objects hang straight off that.
+function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, onObjectFormula, onRemove }) {
   const group = connection.kind === ROOM_GROUP
   const compiled = connection.compiled
   // A supporting department's rows are the catalog's and cannot be taken away —
   // clearing the rule is the whole of it — so there is no remove gesture there.
   const removable = canEdit && !!onRemove
+  const under = { canEdit, allowedVars, scope, onObjectFormula }
+  const own = group ? [] : (connection.rooms[0]?.objects ?? [])
+  const children = group ? connection.rooms.length > 0 : own.length > 0
 
   return (
-    <div style={{ marginTop: 10, borderLeft: '2px solid #eee', paddingLeft: 8, minWidth: 0 }}>
-      <div
-        className="spp-row"
+    <Branch endpoint={children ? 'caret' : 'dot'} expanded={children} padTop={4} head={4 + RULE_HEAD}>
+      <RuleRow
+        name={connection.name}
+        detail={connection.missing && <span style={{ fontSize: 11 }}> — no longer in this department</span>}
         title={removable ? removeHint(group ? 'this group' : 'this room') : undefined}
+        weight={group ? 600 : 400}
+        colour={connection.missing ? '#b3261e' : '#222'}
         onContextMenu={
           removable
             ? (e) => {
@@ -538,49 +676,77 @@ function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, o
               }
             : undefined
         }
-        style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBlock: 2, minWidth: 0 }}
-      >
-        <span
-          style={{
-            flex: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            fontSize: 13,
-            fontWeight: group ? 600 : 400,
-            color: connection.missing ? '#b3261e' : '#222',
-          }}
-        >
-          {connection.name}
-          {connection.missing && <span style={{ fontSize: 11 }}> — no longer in this department</span>}
-        </span>
-        <Result compiled={compiled} scope={scope} />
-      </div>
+        field={
+          <FormulaField
+            value={connection.formula ?? ''}
+            allowedVars={allowedVars}
+            canEdit={canEdit}
+            onCommit={onFormula}
+          />
+        }
+        result={<Result compiled={compiled} scope={scope} />}
+      />
 
-      <div style={{ marginTop: 2 }}>
-        <FormulaField value={connection.formula ?? ''} allowedVars={allowedVars} canEdit={canEdit} onCommit={onFormula} />
-      </div>
+      {/* The rule's own complaint, on the row that owns it: not a child, so it
+          gets no branch and the trunk runs past it. */}
       {compiled.authored && !compiled.ok && (
-        <div style={{ fontSize: 11, color: '#b3261e', marginTop: 2 }}>{compiled.message}</div>
+        <div style={{ fontSize: 11, color: '#b3261e', paddingBottom: 2 }}>{compiled.message}</div>
       )}
+
+      {!group && objectBranches(connection.rooms[0] ?? { objects: [] }, 1, under)}
 
       {group &&
         connection.rooms.map((room) => (
-          <div
+          <Branch
             key={room.instance_id}
-            style={{
-              fontSize: 12,
-              color: '#666',
-              paddingBlock: 1,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
+            endpoint={room.objects.length > 0 ? 'caret' : 'dot'}
+            expanded={room.objects.length > 0}
+            head={RULE_HEAD}
           >
-            {room.label}
-          </div>
+            <RuleRow name={room.label} depth={1} size={12} colour="#666" />
+            {objectBranches(room, 2, under)}
+          </Branch>
         ))}
+    </Branch>
+  )
+}
+
+// THE WHOLE LIST IS ONE TREE, AND ITS TRUNK STARTS AT THE HEADING THAT NAMES IT
+// — the same shape a department panel has, where the heading is the root and the
+// rooms hang off it. Without a root each connection was a tree of its own and
+// the column of them joined to nothing; the Try row sits under the heading and
+// the trunk simply runs past it, as a room's own rows do.
+function RuleTree({ caption, children }) {
+  return (
+    <TreeLayer>
+      <BranchRoot>
+        <RootCaption>{caption}</RootCaption>
+        {children}
+      </BranchRoot>
+    </TreeLayer>
+  )
+}
+
+function RootCaption({ children }) {
+  const anchor = useRootAnchor()
+  // NO CAPTION, AND THE TREE STILL NEEDS A ROOT: a zero-height anchor at the top
+  // of the list, so the trunk starts there instead of at a heading. A caption
+  // saying what the rows under it plainly are — "its rooms, one rule each" over
+  // a list of rooms with a rule each — is a line spent on nothing.
+  if (!children) return <div ref={anchor} style={{ height: 0 }} />
+
+  return (
+    <div
+      ref={anchor}
+      style={{
+        fontSize: 11,
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        color: '#888',
+        paddingLeft: BRANCH_ORIGIN_CONTENT,
+      }}
+    >
+      {children}
     </div>
   )
 }
@@ -595,7 +761,18 @@ function TryBar({ label, value, onChange, suffix, vars, subject }) {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+      {/* Beside the trunk, not across it: the Try row is the tree's own row —
+          like a room's parameter band — so it is inset to where everything the
+          line runs PAST starts, and gets no branch of its own. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 8,
+          paddingLeft: BRANCH_ORIGIN_CONTENT,
+        }}
+      >
         {/* At the HEAD of the row, where every control on these panels lives —
             the × and the + are there too. The figures stay on the right. */}
         <button
@@ -622,11 +799,15 @@ function TryBar({ label, value, onChange, suffix, vars, subject }) {
         >
           i
         </button>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#777' }}>{label}</span>
-        {/* The unit goes BEFORE the figure so the figure ends on the panel's own
-            right edge, in the column every result below it is read down. */}
+        {/* THE SAMPLE SITS IN THE SENTENCE — "Try x = 10 beds" is one phrase and
+            reads as one. It used to end on the right edge, in the column the
+            results are read down, which put the number being TRIED among the
+            numbers that came OUT of it. And it is typed, never nudged: a sample
+            is picked, not arrived at a step at a time. */}
+        <span style={{ flexShrink: 0, fontSize: 12, color: '#777' }}>{label}</span>
+        <CountField value={value} min={0} step={1} prefix="" boxed digits={5} steppers={false} onChange={onChange} />
         {suffix && <span style={{ flexShrink: 0, fontSize: 11, color: '#999' }}>{suffix}</span>}
-        <CountField value={value} min={0} step={1} prefix="" width={90} onChange={onChange} />
+        <span style={{ flex: 1, minWidth: 0 }} />
       </div>
       {open && <FormulaHelp vars={vars} subject={subject} />}
     </>
@@ -804,7 +985,7 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
           catalog, and nothing wider. One counter per connection, so a 3 Tesla
           MRI is one number over the three rooms its group holds. */}
       <div style={{ marginTop: 18, borderTop: '1px solid #eee', paddingTop: 10 }}>
-        <Caption>Connects to, one rule each</Caption>
+        <RuleTree caption="Connects to, one rule each">
         {connections.length === 0 && (
           <PanelNote>Nothing yet. Add a room group or a single room from this department.</PanelNote>
         )}
@@ -828,9 +1009,13 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
             allowedVars={['x']}
             scope={{ x: tryX }}
             onFormula={(formula) => edit((q) => questionWithFormula(q, connection.instance_id, formula))}
+            onObjectFormula={(objectId, formula) =>
+              edit((q) => questionWithObjectFormula(q, connection.instance_id, objectId, formula))
+            }
             onRemove={() => setPendingRemove(connection)}
           />
         ))}
+        </RuleTree>
 
         {canEdit && (
           <div style={{ marginTop: 6 }}>
@@ -879,7 +1064,7 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
   const editor = useQuestionnaireEditorContext()
   // Both hooks before any early return: a hook called conditionally changes the
   // order between renders, which is the one thing React cannot survive.
-  const { sections, groups, departments, rooms } = useCatalog()
+  const { sections, groups, departments, rooms, objects } = useCatalog()
 
   if (!editor.ready) {
     return (
@@ -889,7 +1074,7 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
     )
   }
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms })
+  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
   const found = locate(model, selectedId)
 
   if (!found) return <PanelNote pad>Pick a section, a group, a department or a question on the left.</PanelNote>

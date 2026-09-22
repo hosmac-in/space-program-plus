@@ -21,7 +21,19 @@ const PAD = (TRACK_H - KNOB) / 2
 // Pass the darkened form (`colours.inverted.color`), not the plain background:
 // the switch sits on a pale wash of that same hue, and the knob is white, so the
 // track has to be dark enough for both to read.
-export default function Toggle({ checked, onChange, disabled = false, title, tint = '#8a8a8e' }) {
+// OFF IS ONE VERY LIGHT GREY, EVERYWHERE, and takes no colour at all: "no"
+// reads as no colour. A wash of the function hue was tried on the Test run's
+// gates and dropped — on the pale bands these sit on it is nearly invisible, and
+// on a white card it is a colour announcing the answer nobody gave. `offTint` is
+// left for a caller with a ground of its own to sit on.
+export default function Toggle({
+  checked,
+  onChange,
+  disabled = false,
+  title,
+  tint = '#8a8a8e',
+  offTint = '#e4e4e7',
+}) {
   return (
     <button
       type="button"
@@ -42,10 +54,7 @@ export default function Toggle({ checked, onChange, disabled = false, title, tin
         padding: 0,
         border: 'none',
         borderRadius: TRACK_H,
-        // Off stays neutral rather than a pale tint: "no" should read as no
-        // colour at all, and a wash of the function hue on the pale band it sits
-        // on would be nearly invisible against it.
-        background: checked ? tint : '#c7c7cc',
+        background: checked ? tint : offTint,
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.5 : 1,
         position: 'relative',

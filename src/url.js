@@ -10,7 +10,17 @@
 //
 //   p = sp_project.id      o = sp_option.id      b = sp_building.id
 //
-// The Tree tab takes no parameter: it shows every building at once, stacked.
+// A PARAMETER IS ON THE VIEWS THAT READ IT AND NOWHERE ELSE. `o` belongs to the
+// Project tab, `b` to the two questionnaire tabs, and `p` to UHDP and Project.
+// The Tree, Questions and Test run screens show the CATALOG — shared by every
+// project there is — so a project named in their address bar was a reference to
+// something nothing on screen belonged to, exactly as a held-open `o=` was.
+//
+// The way back out is therefore not in the URL: App remembers the last project
+// it saw and the footer's toggle reads that. See lastProjectRef in App.jsx.
+//
+// The Tree tab takes no parameter at all: it shows every building at once,
+// stacked.
 //
 // The Questions tab takes `b`, because a questionnaire is authored one building
 // at a time and a link to one should open that one. Absent or unrecognised falls
@@ -52,6 +62,15 @@ const SLUG_BY_VIEW = {
 // `b` means anything on.
 const BUILDING_VIEWS = new Set(['questions', 'testrun'])
 
+// The tabs a PROJECT means anything on. The other three show the catalog, which
+// belongs to no project — see the header. Exported because App has to know
+// whether picking a project can leave you where you are.
+const PROJECT_VIEWS = new Set(['map', 'project'])
+
+export function viewKeepsProject(view) {
+  return PROJECT_VIEWS.has(view)
+}
+
 const DEFAULT_VIEW = 'map'
 
 function parseHash(hash = '') {
@@ -70,7 +89,7 @@ function parseHash(hash = '') {
 
 function buildHash({ view, projectId, optionId, buildingId }) {
   const params = new URLSearchParams()
-  if (projectId) params.set('p', projectId)
+  if (projectId && PROJECT_VIEWS.has(view)) params.set('p', projectId)
   if (optionId) params.set('o', optionId)
   // Only the two questionnaire tabs read it, so it is dropped everywhere else
   // rather than trailing behind the project and option on every other link.

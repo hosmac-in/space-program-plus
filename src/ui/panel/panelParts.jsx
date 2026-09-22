@@ -280,6 +280,16 @@ export function CountField({
   // Fixed width for the whole field, so a column of them aligns. Without it
   // each sizes to its own digits and sits against the text it follows.
   width = null,
+  // A BORDERED BOX RATHER THAN A FIGURE IN A SENTENCE. Every count in this app
+  // is the second: it is a value being read, and a box round each one would be a
+  // page of boxes. It is the first where the number is the thing being TYPED and
+  // nothing around it says so — the questionnaire's `Try x =`, which is a sample
+  // somebody supplies rather than a figure the model produced.
+  //
+  // It takes the width as digits, not pixels, so it is asked for as what it
+  // holds; the box then fits the caret and the padding round them.
+  boxed = false,
+  digits = 5,
 }) {
   // FLOATS ARE ALLOWED EVERYWHERE. `decimals` still fixes the precision of a
   // field that wants trailing zeros always shown — a multiplier reads "1.00" —
@@ -462,6 +472,21 @@ export function CountField({
         // A fixed-width field is a column: push its contents to the right edge
         // so the figures stack under one another however many digits each has.
         ...(width ? { width, justifyContent: 'flex-end' } : null),
+        // Boxed: upright, and sized by the digits it holds rather than by a
+        // column it has to line up in — it is a field in a phrase, not a figure
+        // at the end of a row, so leftover width would read as a gap before the
+        // number.
+        ...(boxed
+          ? {
+              fontStyle: 'normal',
+              width: undefined,
+              justifyContent: 'flex-start',
+              padding: '3px 6px',
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              background: '#fff',
+            }
+          : null),
       }}
     >
       <span>{prefix}</span>
@@ -498,11 +523,11 @@ export function CountField({
           // Just enough slack for the caret. It was 0.4ch, which read as a
           // second space before a unit — "2,000  sqft" against the printed
           // "1,000 sqft" of the rows above it.
-          width: `${Math.max(1.6, String(draft).length + 0.2)}ch`,
+          width: boxed ? `${digits}ch` : `${Math.max(1.6, String(draft).length + 0.2)}ch`,
           // Longhands only, never the `font` shorthand: mixing the two in one
           // React style object lets the shorthand reset fontStyle after it has
           // been set, and the figure comes out upright.
-          fontStyle: 'italic',
+          fontStyle: boxed ? 'normal' : 'italic',
           fontFamily: 'inherit',
           fontSize: 'inherit',
           fontWeight: 'inherit',

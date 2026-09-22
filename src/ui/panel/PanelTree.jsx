@@ -389,15 +389,20 @@ export function Branch({
 // measurable and draws nothing.
 const RootAnchorCtx = createContext(null)
 
-export function BranchRoot({ children }) {
+// `head` is where the trunk starts, from the top of the anchored element. The
+// default — its own middle — is right for a heading that is a line of text. A
+// caller states it when the anchor is a BLOCK the line must not be drawn across:
+// a section's title card, painted in its function colour, where a hairline over
+// solid ink is either invisible or a scratch.
+export function BranchRoot({ head = null, children }) {
   const layer = useContext(LayerCtx)
   const id = useId()
   const ref = useRef(null)
 
   useLayoutEffect(() => {
     if (!layer) return undefined
-    return layer.register(id, { ref, absX: BRANCH_SPINE_X, head: null, endpoint: 'dot', parentId: null })
-  }, [layer, id])
+    return layer.register(id, { ref, absX: BRANCH_SPINE_X, head, endpoint: 'dot', parentId: null })
+  }, [layer, id, head])
 
   return (
     <RootAnchorCtx.Provider value={ref}>

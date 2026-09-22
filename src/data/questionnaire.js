@@ -26,7 +26,9 @@
 //                     { "kind": "room_group",   <- or "room"
 //                       "instance_id": "...",   <- a CATALOG id, see below
 //                       "label": "3 Tesla",     <- frozen, display-only
-//                       "formula": "ceil(x/4)" } <- HOW MANY, see FORMULAS
+//                       "formula": "ceil(x/4)", <- HOW MANY, see FORMULAS
+//                       "objects": {            <- optional, see OBJECTS
+//                         "<object instance_id>": "ceil(x/2)" } }
 //                   ]
 //                 }]
 //               }
@@ -90,6 +92,27 @@
 // way to say what the room already says. Both were proposed and both were
 // dropped; don't add either back.
 //
+// OBJECTS: A ROOM'S RULE, AND THEN ONE PER OBJECT IN IT. A connection carries a
+// map of the catalog objects inside its rooms, each to a rule of its own — how
+// many of that monitor, that trolley, that chair the answer buys. The map is
+// keyed by the object node's instance_id, which is unique across the whole tree,
+// so a room GROUP's connection holds one flat map over every object in every
+// room it brings.
+//
+//   >>> ONE VARIABLE, AND IT IS THE SAME ONE. An object's rule reads `x` — the
+//   >>> question's own answered number — exactly as its room's rule does. It is
+//   >>> not a rule over how many of that room came out: there is one number in
+//   >>> scope and everything in the department is a function of it.
+//
+// An ABSENT key is "nobody has written a rule", as everywhere here, and clearing
+// one REMOVES it rather than storing ''. The object's catalog `count` is
+// untouched by any of this — it says what one of that room holds, and a rule
+// here says what the brief asks for; nothing reads either yet.
+//
+// A rule against an object since deleted from the room is a DANGLING KEY,
+// tolerated and never read, for the reason every other key here is: the model
+// draws what the catalog has.
+//
 // A connection points inside the question's OWN department, never elsewhere, and
 // A ROOM IS USED ONCE PER DEPARTMENT: once a question has it — on its own or
 // inside a group — no other connection and no other question in that department
@@ -105,10 +128,10 @@
 //
 // The LIST is not stored — it is every FUNCTIONING department in this one's own
 // group, read off the catalog — and only a name somebody changed is. Beside them
-// is `area`, the whole group summed, which is what most rules want; the
+// is `a`, the whole group summed, which is what most rules want; the
 // per-department names are for the rule that has to weight them.
 //
-//   sorting room    ceil(area/750)
+//   sorting room    ceil(a/750)
 //   linen store     ceil((ipd*0.4 + icu)/900)
 //
 // A VARIABLE IS THAT DEPARTMENT'S NET ROOM AREA IN m², as the run has built it.
@@ -185,7 +208,12 @@ export const QUESTION_VAR = 'x'
 // THE WHOLE GROUP, SUMMED — every functioning department beside this one, in one
 // number. It is what most rules want ("one sorting room per 750 m² served"), and
 // the per-department names are there for the rule that has to weight them.
-export const GROUP_VAR = 'area'
+// It is `a`, not `area`: a rule is typed into a narrow box and read character by
+// character, and the one name every rule uses is the one worth keeping short.
+// Any rule already written against `area` reads as BROKEN — "nothing here is
+// called area" — rather than silently meaning something else, which is what
+// makes the rename safe to see and fix.
+export const GROUP_VAR = 'a'
 
 // A department name into something the language can read: lower case, words
 // joined by _, anything else dropped, and never starting with a digit. "24×7
@@ -354,6 +382,38 @@ export function connectionFormula(connection) {
   return typeof connection?.formula === 'string' ? connection.formula : ''
 }
 
+// --- A connection's objects ---------------------------------------------------
+//
+// One rule per object inside the connection's rooms, keyed by the object node's
+// instance_id — see OBJECTS in the header. An absent key is unauthored, so
+// clearing a rule takes the key out and an empty map takes `objects` out with it:
+// the document holds what has been authored and nothing else.
+
+export function connectionObjects(connection) {
+  const map = connection?.objects
+  return map && typeof map === 'object' && !Array.isArray(map) ? map : {}
+}
+
+export function connectionObjectFormula(connection, objectId) {
+  const formula = connectionObjects(connection)[objectId]
+  return typeof formula === 'string' ? formula : ''
+}
+
+export function connectionHasObjectRules(connection) {
+  return Object.keys(connectionObjects(connection)).length > 0
+}
+
+export function connectionWithObjectFormula(connection, objectId, formula) {
+  const objects = { ...connectionObjects(connection) }
+  if (formula.trim()) objects[objectId] = formula
+  else delete objects[objectId]
+
+  const next = { ...connection }
+  if (Object.keys(objects).length === 0) delete next.objects
+  else next.objects = objects
+  return next
+}
+
 // THE ONE READER of a question's follow-up, and what makes both older shapes
 // keep working. A question written before this had `room_sets`, and one before
 // those a flat `rooms` array; each room in either is exactly a room connection.
@@ -406,6 +466,15 @@ export function questionWithFormula(question, instanceId, formula) {
   )
 }
 
+export function questionWithObjectFormula(question, instanceId, objectId, formula) {
+  return withConnections(
+    question,
+    questionConnections(question).map((c) =>
+      c.instance_id === instanceId ? connectionWithObjectFormula(c, objectId, formula) : c
+    )
+  )
+}
+
 // A SUPPORTING DEPARTMENT'S OWN CONNECTIONS live beside its variables, in the
 // same shape a question's do — the row, the formula and the rules for both are
 // one thing, so the panel and the run draw them with one component.
@@ -424,12 +493,29 @@ export function setDepartmentConnections(definition, sectionId, groupId, deptId,
 // authored and nothing else, so an empty rule stores no key at all.
 export function connectionsWithFormula(connections, target, formula) {
   const kept = connections.filter((c) => c.instance_id !== target.instance_id)
-  if (!formula.trim()) return kept
   const existing = connections.find((c) => c.instance_id === target.instance_id)
+  // A cleared room rule drops the entry — unless its OBJECTS still carry rules,
+  // which are the same row's work and must not go with it.
+  if (!formula.trim() && !connectionHasObjectRules(existing)) return kept
   return [
     ...kept,
     { ...(existing ?? newConnection(target.kind, target.instance_id, target.name)), formula },
   ]
+}
+
+// The same, one level in: the row's entry is created if a rule is the first thing
+// authored about it, and dropped again when nothing — room rule or object rule —
+// is left on it.
+export function connectionsWithObjectFormula(connections, target, objectId, formula) {
+  const kept = connections.filter((c) => c.instance_id !== target.instance_id)
+  const existing = connections.find((c) => c.instance_id === target.instance_id)
+  const next = connectionWithObjectFormula(
+    existing ?? newConnection(target.kind, target.instance_id, target.name),
+    objectId,
+    formula
+  )
+  if (!connectionFormula(next).trim() && !connectionHasObjectRules(next)) return kept
+  return [...kept, next]
 }
 
 // --- Writing ----------------------------------------------------------------

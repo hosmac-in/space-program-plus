@@ -9,10 +9,10 @@
 // selections the Tree and Questions tabs make. Everything about the open option
 // comes from the workspace hook.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../data/supabase.js'
 import { resolveNodePlacement } from '../data/tree.js'
-import { useUrlState } from '../url.js'
+import { useUrlState, viewKeepsProject } from '../url.js'
 import { useIsAdmin, useIsViewer } from '../data/auth.js'
 import { ReadOnlyProvider } from '../readOnly.jsx'
 import { useCatalog } from '../data/catalog.jsx'
@@ -179,6 +179,25 @@ function SignedInApp({ session }) {
 
   const leaveOption = (next) => guard(() => navigate(next))
 
+  // THE LAST PROJECT SEEN, AND THE ONLY REASON IT IS REMEMBERED: the way back
+  // off a catalog tab. `p=` is not in the address bar there — those screens show
+  // the catalog, which belongs to no project — so the toggle out has nothing to
+  // read, and without this every trip to Tree or Questions ended on the map with
+  // the project to pick again.
+  //
+  // A ref, not state: nothing renders from it, and it must not put the app back
+  // on a project the address bar has deliberately stopped naming. It is a hint
+  // for one button, and a shared or reloaded link simply has none — which is
+  // right, since such a link says nothing about a project either.
+  const lastProjectRef = useRef(null)
+  if (selectedProjectId) lastProjectRef.current = selectedProjectId
+  const backFromCatalog = () =>
+    leaveOption(
+      lastProjectRef.current
+        ? { view: 'project', projectId: lastProjectRef.current, optionId: null }
+        : { view: 'map', projectId: null, optionId: null }
+    )
+
   // LEAVING THE PROJECT TAB CLOSES THE OPTION. The Tree, Questions and UHDP
   // screens are not the option — the catalog they show is shared by every option
   // there is — so an option held open behind them was a program still being
@@ -207,12 +226,17 @@ function SignedInApp({ session }) {
 
   // Changing project clears the option, since an option belongs to one project.
   //
-  // It stays on whatever tab you're on. From UHDP — clicking a site on the map,
-  // or picking from the band — that means you see the project's numbers in side
-  // and go on to the program deliberately, with the Space Program button, never
-  // by a stray click on the map.
+  // It stays on whatever tab you're on WHERE A PROJECT MEANS SOMETHING — UHDP
+  // and Project. From UHDP, clicking a site on the map or picking from the band
+  // shows the project's numbers in side and you go on to the program
+  // deliberately, with the Space Program button, never by a stray click.
+  //
+  // On the catalog tabs it goes to the Project tab, because the address bar there
+  // holds no project: a pick that stayed put would have nowhere to be recorded
+  // and the band would spring back to nothing. The same rule opening an option
+  // follows, for the same reason — the two halves are one state.
   function handleSelectProject(id) {
-    leaveOption({ projectId: id, optionId: null })
+    leaveOption({ view: viewKeepsProject(view) ? view : 'project', projectId: id, optionId: null })
   }
 
   // A link can be trimmed down to just the option (they're globally unique), so
@@ -257,7 +281,13 @@ function SignedInApp({ session }) {
       </style>
 
       <AppHeader
-        onHome={() => leaveOption({ view: 'map', projectId: null, optionId: null })}
+        // Home is a deliberate "no project", so the hint goes with the
+        // selection — otherwise the toggle off a catalog tab would walk you
+        // back into the project you had just left.
+        onHome={() => {
+          lastProjectRef.current = null
+          leaveOption({ view: 'map', projectId: null, optionId: null })
+        }}
         email={session.user.email}
         onSignOut={() => supabase.auth.signOut()}
       />
@@ -306,9 +336,10 @@ function SignedInApp({ session }) {
           selectedQuestionId={selectedQuestionId}
           onSelectQuestion={setSelectedQuestionId}
           // The way back out. It can no longer return you to the option you
-          // left — leaving closed it — so it goes to the project's chooser when
-          // there is a project, and to the map when there isn't.
-          onLeaveQuestions={() => changeView(selectedProjectId ? 'project' : 'map')}
+          // left — leaving closed it — so it goes to the last project's chooser
+          // when there was one, and to the map when there was not. The project
+          // is not in the address bar here; see lastProjectRef.
+          onLeaveQuestions={backFromCatalog}
           view={view}
           isAdmin={isAdmin}
           projects={projects}
@@ -468,7 +499,10 @@ function SignedInApp({ session }) {
         view={view}
         canEdit={isAdmin}
         builder={builderState}
-        onViewChange={changeView}
+        // Each tab toggles back to `project`, which off a catalog tab is the
+        // one move that needs the remembered project — the address bar there
+        // does not name one.
+        onViewChange={(next) => (next === 'project' ? backFromCatalog() : changeView(next))}
       />
 
       {pending && (

@@ -12,6 +12,7 @@
 // questions again.
 
 import {
+  catalogObjectCount,
   catalogRoomAreaSqft,
   compareSections,
   deptRoomGroups,
@@ -20,6 +21,7 @@ import {
 } from '../../data/tree.js'
 import {
   connectionFormula,
+  connectionObjectFormula,
   departmentConnections,
   departmentRole,
   departmentVariables,
@@ -47,8 +49,23 @@ const nameOf = (defs, id, fallback) => defOf(defs, id)?.name || fallback
 // keeping a list nobody can see.
 //
 // `allowedVars` is the AUTHORED list, never what resolves — see compileFormula.
+// A ROOM'S OBJECTS, EACH WITH ITS OWN RULE over the same names the room's rule
+// reads — see OBJECTS in data/questionnaire.js. The list is the CATALOG's, so an
+// object placed on the Tree tab tomorrow simply appears with no rule yet, and one
+// deleted takes its row with it while its key sits in the document unread.
+function resolveObjects(connection, room, allowedVars) {
+  return {
+    ...room,
+    objects: (room.objects ?? []).map((object) => {
+      const formula = connectionObjectFormula(connection, object.instance_id)
+      return { ...object, formula, compiled: compileFormula(formula, allowedVars) }
+    }),
+  }
+}
+
 function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars) {
   const compiled = compileFormula(connectionFormula(connection), allowedVars)
+  const resolve = (list) => list.map((room) => resolveObjects(connection, room, allowedVars))
 
   if (connection.kind === ROOM_GROUP) {
     const live = catalogGroups.find((g) => g.instance_id === connection.instance_id)
@@ -56,7 +73,7 @@ function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars)
       ...connection,
       compiled,
       name: live?.name || connection.label || 'Unnamed group',
-      rooms: live?.rooms ?? [],
+      rooms: resolve(live?.rooms ?? []),
       missing: !live,
     }
   }
@@ -65,7 +82,7 @@ function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars)
     ...connection,
     compiled,
     name: live?.label ?? (typeof connection.label === 'string' ? connection.label : 'Unnamed room'),
-    rooms: live ? [live] : [],
+    rooms: resolve(live ? [live] : []),
     missing: !live,
   }
 }
@@ -97,11 +114,11 @@ function roomUsage(questions) {
 // Every node carries `id` — the thing a selection names — plus the ids its
 // edits have to be written at. A question deep in the tree can then be edited
 // without anyone walking back up to work out which section it was in.
-export function buildModel({ buildingId, definition, sections, groups, departments, rooms }) {
-  return resolveVariables(walk({ buildingId, definition, sections, groups, departments, rooms }))
+export function buildModel({ buildingId, definition, sections, groups, departments, rooms, objects = [] }) {
+  return resolveVariables(walk({ buildingId, definition, sections, groups, departments, rooms, objects }))
 }
 
-function walk({ buildingId, definition, sections, groups, departments, rooms }) {
+function walk({ buildingId, definition, sections, groups, departments, rooms, objects }) {
   return sections
     .filter((s) => s.building_id === buildingId)
     .sort(compareSections)
@@ -153,6 +170,14 @@ function walk({ buildingId, definition, sections, groups, departments, rooms }) 
                 // Resolved here because this is the one place the room node and
                 // its definition row are both in hand; the run holds neither.
                 areaSqft: catalogRoomAreaSqft(roomNode, def),
+                // WHAT STANDS IN IT, each a row that may carry a rule of its
+                // own. `count` is the catalog's — what one of that room holds —
+                // and is shown beside the rule rather than read by it.
+                objects: (roomNode.objects ?? []).map((objectNode) => ({
+                  instance_id: objectNode.instance_id,
+                  name: nameOf(objects, objectNode.object_def_id, 'Unnamed object'),
+                  count: catalogObjectCount(objectNode),
+                })),
               }
             })
             const roomById = new Map(catalogRooms.map((r) => [r.instance_id, r]))
@@ -210,7 +235,7 @@ function walk({ buildingId, definition, sections, groups, departments, rooms }) 
             // without anything being re-authored.
             const overrides = departmentVariables(definition, section.id, groupId, deptId)
             const taken = []
-            // `area` FIRST, and it is not authored at all: the group summed, the
+            // `a` FIRST, and it is not authored at all: the group summed, the
             // number most rules are written against. The names after it are the
             // same figure broken up, for the rule that has to weight them.
             const variables = [
@@ -317,7 +342,7 @@ function resolveVariables(model) {
       group.departments.forEach((department) => {
         if (department.variables.length === 0) return
         department.variables = department.variables.map((variable) => {
-          // `area` is the group, not a department — there is nothing to look up
+          // `a` is the group, not a department — there is nothing to look up
           // and it can never be missing.
           if (variable.kind === 'group') {
             return { ...variable, liveName: variable.label, path: null, missing: false, unsupported: false }
