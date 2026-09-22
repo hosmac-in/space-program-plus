@@ -15,7 +15,10 @@ import { Branch, TreeLayer } from '../panel/PanelTree.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, roomLabel } from './questionModel.js'
-import { buildProgram, useTestRun } from './useTestRun.jsx'
+import { bedTally, buildProgram, useTestRun } from './useTestRun.jsx'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
+import { formatArea } from '../map/area.js'
+import { RULE } from '../layout.js'
 
 const ROW = 24
 
@@ -45,7 +48,18 @@ function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', ri
 }
 
 // A room's count, in the value column every figure in this app ends on.
+//
+// A ROOM WITH NO COUNT SHOWS NO FIGURE — it is here because something inside it
+// is counted, and a ×0 would say the opposite of what is true. The dash says
+// nobody has counted the rooms, which is a different thing from none.
 function Count({ n }) {
+  if (n === null || n === undefined) {
+    return (
+      <span title="No rule on the room — only what stands in it is counted" style={{ flexShrink: 0, fontSize: 12, color: '#ccc' }}>
+        —
+      </span>
+    )
+  }
   return (
     <span style={{ flexShrink: 0, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: '#555' }}>×{n}</span>
   )
@@ -56,6 +70,81 @@ function Count({ n }) {
 // where the states are told apart; this column is what got built.
 function sized(room) {
   return (room.objects ?? []).filter((o) => o.state === 'ok' && o.count > 0)
+}
+
+// THE RUN'S HUD, in the slot the option's own takes on every other tab: how many
+// beds this run has placed against the number it was told, and how much area.
+//
+// >>> IT IS A CHECK, NOT A REPORT. The tree above says what was asked for; these
+// >>> two say whether it adds up to the brief. Beds first, because that is the
+// >>> figure the run was given a target for — an area with no target beside it
+// >>> is a reading, and a bed count with one is a question.
+//
+// The figures come from `bedTally`, which walks the SAME results the tree does,
+// so a room on screen and a room in the total cannot be different rooms. Nothing
+// here is saved — see useTestRun.jsx.
+export function TestRunHud({ buildingId }) {
+  const { sections, groups, departments, rooms, objects } = useCatalog()
+  const editor = useQuestionnaireEditorContext()
+  const run = useTestRun()
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
+
+  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
+  const { target, placed, areaSqft } = bedTally(model, run)
+  const over = target !== null && placed > target
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        borderTop: RULE,
+        background: '#fff',
+        padding: '8px 16px',
+        overflowY: 'auto',
+        minWidth: 0,
+      }}
+    >
+      <div style={{ fontSize: 11, color: '#8a8a8a', marginBottom: 6 }}>Nothing on this tab is saved</div>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', minWidth: 0 }}>
+        <Figure
+          label="Beds"
+          // Against the target when there is one: the figure alone answers half
+          // the question, and the half it leaves out is the one that was asked.
+          value={target === null ? placed : `${placed} / ${target}`}
+          muted={placed === 0}
+          tone={over ? '#b3261e' : null}
+        />
+        <Figure label="Area" value={formatArea(toDisplay(areaSqft))} unit={AREA_UNIT} muted={areaSqft === 0} />
+      </div>
+    </div>
+  )
+}
+
+// The HUD's own figure. Not Hud.jsx's: that one is bound to an option's totals
+// and this tab has no option, and two components sharing a slot is not the same
+// thing as sharing a definition.
+function Figure({ label, value, unit, muted = false, tone = null }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div
+        style={{
+          fontSize: 10,
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+          color: '#8a8a8a',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: tone ?? (muted ? '#bbb' : '#222'), whiteSpace: 'nowrap' }}>
+        {value}
+        {unit && <span style={{ fontSize: 10, fontWeight: 400, color: '#8a8a8a', marginLeft: 3 }}>{unit}</span>}
+      </div>
+    </div>
+  )
 }
 
 export default function TestRunTree({ buildingId }) {
@@ -71,7 +160,7 @@ export default function TestRunTree({ buildingId }) {
     .flatMap((s) => s.groups)
     .flatMap((g) => g.departments)
     .flatMap((d) => d.rooms)
-    .reduce((sum, r) => sum + r.count, 0)
+    .reduce((sum, r) => sum + (r.count ?? 0), 0)
 
   return (
     <div style={{ minWidth: 0 }}>

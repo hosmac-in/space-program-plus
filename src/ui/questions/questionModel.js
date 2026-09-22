@@ -39,6 +39,7 @@ import {
   SUPPORTING,
 } from '../../data/questionnaire.js'
 import { compileFormula } from '../../data/formula.js'
+import { sqmToSqft } from '../../data/units.js'
 
 export { FUNCTIONING, SUPPORTING }
 
@@ -66,34 +67,16 @@ function resolveObjects(connection, room, allowedVars) {
   }
 }
 
-// WHAT A CONNECTION WORKS OUT TO, and the ONE definition of it — the designer's
-// preview and the run both call this, so the number in side and the number in a
-// run cannot disagree.
+// A BLANK RULE IS NO COUNT, NEVER A NUMBER — for a room and for an object
+// alike, and whatever is written below it.
 //
-// >>> AN UNRULED ROOM WHOSE OBJECTS ARE RULED COUNTS AS ONE. Rules written on
-// >>> the objects say plainly that the room is wanted — nobody writes "two
-// >>> monitors" about a room they are not asking for — and with the room left at
-// >>> "no rule" every one of those objects was dropped, silently, because
-// >>> nothing multiplies by nothing. A room with NO rules anywhere under it is
-// >>> still unauthored: that is the blank the designer exists to show.
-//
-// It is a DEFAULT, not a computation: an object's own rule already says how many
-// of it one room holds, so the room the objects stand in is one room.
-// IS ANYTHING SIZED HERE? A rule on the room, or a rule on anything standing in
-// it — both mean somebody has said what this connection brings, so a reader that
-// counts unruled rows must not count this one as outstanding.
-export function connectionRuled(connection) {
-  if (connection.compiled.authored) return true
-  return connection.rooms.some((room) => room.objects?.some((object) => object.compiled.authored))
-}
-
-export function connectionValue(connection, scope) {
-  if (connection.compiled.authored) return connection.compiled.evaluate(scope)
-
-  if (!connectionRuled(connection)) return connection.compiled.evaluate(scope)
-
-  return { value: 1, state: 'ok', message: null, implied: true }
-}
+// >>> AN UNRULED ROOM WHOSE OBJECTS WERE RULED COUNTED AS ONE BRIEFLY, and does
+// >>> not now: blank then meant one thing at the top of a room and another
+// >>> inside it, which is a rule nobody can hold in their head. A ruled OBJECT
+// >>> still has its count — its rule states a number outright, and nothing about
+// >>> the room it stands in changes that. The ONE place a blank is read as a
+// >>> figure is a BED with no rule, which is worth one per room, and that lives
+// >>> in the bed tally alone: see bedsIn in useTestRun.jsx.
 
 function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars) {
   const compiled = compileFormula(connectionFormula(connection), allowedVars)
@@ -252,6 +235,10 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
                   // once, and the run's bed tally with it. Strictly true, since
                   // the column is nullable and absent until the SQL is run.
                   isBed: defOf(objects, objectNode.object_def_id)?.is_bed === true,
+                  // WHAT ONE OF IT TAKES UP, converted on the way off the row as
+                  // every definition's area is. It is what a room with NO area of
+                  // its own is measured by — see roomAreaSqft in useTestRun.jsx.
+                  areaSqft: sqmToSqft(defOf(objects, objectNode.object_def_id)?.area_sqm ?? 0),
                 })),
               }
             })

@@ -32,7 +32,7 @@ import BuildingPanel from './tree/BuildingPanel.jsx'
 import { TreeEditorProvider } from './tree/useTreeEditor.jsx'
 import QuestionDetail from './questions/QuestionDetail.jsx'
 import { QuestionnaireEditorProvider } from './questions/useQuestionnaireEditor.jsx'
-import TestRunTree from './questions/TestRunTree.jsx'
+import TestRunTree, { TestRunHud } from './questions/TestRunTree.jsx'
 import { TestRunProvider } from './questions/useTestRun.jsx'
 import LoadingOverlay from './primitives/LoadingOverlay.jsx'
 import AppFooter from './AppFooter.jsx'
@@ -482,7 +482,14 @@ function SignedInApp({ session }) {
             the catalog rather than as nothing being measured. Side takes the
             whole column back — the 7:1 split is what an open option costs it,
             not a permanent feature of the layout. */}
-        {optionOpen && (
+        {/* THE TEST RUN HAS ITS OWN. The option's HUD measures a saved program
+            against its site; this one measures what the run has just answered,
+            and nothing of it is saved. Same slot, because it answers the same
+            question — how big is this — in the one place that is always on
+            screen. */}
+        {view === 'testrun' && <TestRunHud buildingId={questionBuildingId} />}
+
+        {optionOpen && view !== 'testrun' && (
         <Hud
           projectName={projects.find((p) => p.id === selectedProjectId)?.name}
           siteGeojson={projects.find((p) => p.id === selectedProjectId)?.site_geojson}

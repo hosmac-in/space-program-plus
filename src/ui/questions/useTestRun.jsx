@@ -16,9 +16,8 @@
 // answer differently.
 
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
-import { departmentNetAreaSqft } from '../../data/optionData.js'
 import { sqftToSqm } from '../../data/units.js'
-import { connectionValue, SUPPORTING } from './questionModel.js'
+import { SUPPORTING } from './questionModel.js'
 
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
@@ -124,27 +123,56 @@ export function useTestRun() {
 // beside them means anything. Four things used to land on one grey zero — no
 // rule, a broken rule, a rule naming something gone, and a real zero — and a run
 // that cannot tell them apart is a run nobody can debug.
+// HOW MUCH AREA THIS ROW IS, IN TOTAL — not per one of the room.
+//
+// A STATED AREA IS PER ONE OF THAT ROOM, so it takes the count: area × count,
+// which is departmentNetAreaSqft's rule and the whole app's. Its objects
+// deliberately do not sum to it — the difference is circulation.
+//
+// A ROOM THAT STATES NONE IS MEASURED BY WHAT STANDS IN IT, and THAT FIGURE
+// TAKES NO COUNT: an object's rule states a total, not a per-room number, so
+// multiplying it by the room count would count every object twice over. It also
+// means such a row has an area even when the room itself has no count, which is
+// the point — a ruled object is a thing somebody asked for.
+//
+// A room left at 0 and counted as 0 made whole departments vanish from the
+// totals while their rows sat on the screen.
+function roomAreaSqft(room, objects, count) {
+  if (room.areaSqft > 0) return room.areaSqft * count
+  return objects.reduce((sum, object) => sum + (object.areaSqft ?? 0) * object.count, 0)
+}
+
+// THE BEDS ONE OF THIS ROOM HOLDS. A bed with a rule holds to it; a bed with NO
+// rule is worth ONE — a room that places a bed places at least one, and the bed
+// count is a check on the brief rather than a rule somebody wrote.
+//
+// >>> THE ASSUMED BED IS NOT DRAWN ANYWHERE. It is a figure for the tally only,
+// >>> so the tree still shows exactly what has been authored: inventing a row
+// >>> nobody wrote would make the run look like it had rules it has not got.
+function bedsIn(room, sized, count) {
+  // A ruled bed states its own number outright, exactly as every other object
+  // does — there is nothing to multiply it by.
+  const ruled = sized.filter((o) => o.isBed && o.state === 'ok').reduce((sum, o) => sum + o.count, 0)
+  // An unruled one is one PER ROOM, so it is the only figure here that the room
+  // count reaches. No rooms, no beds.
+  const blank = (room.objects ?? []).filter((o) => o.isBed && !o.compiled.authored).length
+  return ruled + blank * count
+}
+
 function evaluateConnection(connection, scope) {
-  // Not `compiled.evaluate` directly: a room with no rule of its own but ruled
-  // objects inside it counts as one. See connectionValue in questionModel.js.
-  const { value, state, message } = connectionValue(connection, scope)
+  const { value, state, message } = connection.compiled.evaluate(scope)
   return {
     connection,
     count: value,
     state,
     message,
-    rooms: connection.rooms.map((room) => ({
-      instance_id: room.instance_id,
-      label: room.label,
-      areaSqft: room.areaSqft ?? 0,
-      count: value,
-      via: connection,
+    rooms: connection.rooms.map((room) => {
       // WHAT STANDS IN IT, for the objects somebody has written a rule for. Each
       // reads the SAME scope the room's rule did — one answered number and
       // nothing else — so this is the same evaluation one level in, not a second
       // pass. Unruled objects are dropped: the run is a reading, and the
       // designer is where a blank row is the point.
-      objects: (room.objects ?? [])
+      const objects = (room.objects ?? [])
         .filter((object) => object.compiled.authored)
         .map((object) => {
           const result = object.compiled.evaluate(scope)
@@ -154,22 +182,46 @@ function evaluateConnection(connection, scope) {
             count: result.value,
             state: result.state,
             message: result.message,
-            // Carried so the bed tally can find them without walking the
-            // catalog a second time. See bedTally.
+            areaSqft: object.areaSqft ?? 0,
             isBed: object.isBed === true,
           }
-        }),
-    })),
+        })
+
+      // A ROOM WITH NO COUNT STILL HAS ITS RULED OBJECTS. A rule on an object
+      // states a number outright and says somebody asked for it; the room above
+      // it being blank says only that nobody has said how many rooms. So the row
+      // stays, countless, with what stands in it — dropping it took the objects
+      // with it and there was nowhere left to notice them.
+      const counted = state === 'ok' ? value : null
+
+      return {
+        instance_id: room.instance_id,
+        label: room.label,
+        // The whole row's area, not one room's — see roomAreaSqft.
+        areaSqft: roomAreaSqft(room, objects, counted ?? 0),
+        count: counted,
+        via: connection,
+        objects,
+        // The beds this row holds, already totalled: the assumed one has no row
+        // to hang off, so it cannot be worked out from `objects` afterwards.
+        beds: bedsIn(room, objects, counted ?? 0),
+      }
+    }),
   }
 }
 
-// Σ count × area, and no factors. NET deliberately: a rule is written against
-// rooms someone can count, and a grossing factor edited on the Tree tab would
-// otherwise move every supporting department without anything in the
-// questionnaire changing. departmentNetAreaSqft is the one definition of that
-// sum — see data/optionData.js.
+// NO FACTORS, deliberately: a rule is written against rooms someone can count,
+// and a grossing factor edited on the Tree tab would otherwise move every
+// supporting department without anything in the questionnaire changing.
+//
+// >>> IT NO LONGER CALLS departmentNetAreaSqft, and cannot. That is Σ count ×
+// >>> area, which is right only while every area is stated PER ONE OF A ROOM —
+// >>> and a room measured by its objects is already a total, because an object's
+// >>> rule states one. Multiplying that by the count again counted every object
+// >>> as many times as there were rooms. roomAreaSqft applies the count where
+// >>> the count belongs, once.
 function netAreaOf(rows) {
-  return departmentNetAreaSqft({ rooms: rows.map((r) => ({ count: r.count, areaSqft: r.areaSqft })) })
+  return rows.reduce((sum, row) => sum + row.areaSqft, 0)
 }
 
 // EVERY DEPARTMENT'S RULES, EVALUATED — departmentId -> { open, results, scope }.
@@ -277,32 +329,36 @@ export function evaluateRun(model, run) {
   return answered
 }
 
-// THE BEDS THE RUN HAS PLACED, against the bed count it was told.
+// WHAT THE RUN ADDS UP TO: its beds against the bed count it was told, and its
+// area. Both are read from the SAME walk the rooms came out of, so the HUD and
+// the tree cannot disagree about what has been answered.
 //
-// A bed is an object whose sp_object row carries `is_bed`, at the number its own
-// rule worked out, times nothing else — the rule already says how many that
-// answer buys.
+// A bed is an object whose sp_object row carries `is_bed` — see bedsIn for the
+// one that has no rule.
 //
 // >>> NOTHING MARKS A QUESTION AS A BED QUESTION. Which questions produce beds
 // >>> is a fact about the CATALOG, not about the questionnaire: it changes the
 // >>> moment a bed is placed in another room, and a flag on the question would
 // >>> be a second place to say it that drifts the day it does. A question counts
-// >>> beds exactly when the rooms it brings hold a ruled is_bed object, which is
-// >>> what this walks.
+// >>> beds exactly when the rooms it brings hold one, which is what this walks.
 //
-// Supporting departments are counted in the total and belong to no question —
-// they are beds the program holds, and a bar hangs off a question or off
-// nothing.
+// Supporting departments are counted in the totals and belong to no question —
+// they are beds and area the program holds, and a bar hangs off a question or
+// off nothing.
 export function bedTally(model, run, answered = evaluateRun(model, run)) {
   const byQuestion = new Map()
   let placed = 0
+  let areaSqft = 0
 
   answered.forEach((entry) => {
     entry.results.forEach((result) => {
-      const beds = result.rooms.reduce(
-        (sum, room) => sum + room.objects.filter((o) => o.isBed && o.state === 'ok').reduce((n, o) => n + o.count, 0),
-        0
-      )
+      // A BROKEN or UNRESOLVED rule is thrown out — nobody can say what it
+      // meant. An UNAUTHORED one is not: it says only that nobody has counted
+      // the rooms, and the ruled objects inside it are still things somebody
+      // asked for.
+      if (result.state === 'invalid' || result.state === 'unresolved') return
+      areaSqft += netAreaOf(result.rooms)
+      const beds = result.rooms.reduce((sum, room) => sum + room.beds, 0)
       if (beds === 0) return
       placed += beds
       if (result.questionId) byQuestion.set(result.questionId, (byQuestion.get(result.questionId) ?? 0) + beds)
@@ -315,13 +371,22 @@ export function bedTally(model, run, answered = evaluateRun(model, run)) {
   const given = node ? run.generalOf(node.id) : undefined
   const target = Number.isFinite(given) && given > 0 ? given : null
 
-  return { target, placed, byQuestion }
+  return { target, placed, byQuestion, areaSqft }
 }
 
-// WHAT THE ANSWERS HAVE BUILT, as a tree — only what came out above zero. A
-// department, group or section with nothing under it is not drawn at all: an
-// empty one would read as "nobody asked for one" rather than as "nobody has
+// WHAT THE ANSWERS HAVE BUILT, as a tree — only what somebody actually asked
+// for. A department, group or section with nothing under it is not drawn at all:
+// an empty one would read as "nobody asked for one" rather than as "nobody has
 // answered this yet".
+//
+// A ROW IS ASKED FOR IF THE ROOM IS COUNTED, OR IF ANYTHING IN IT IS. A rule on
+// an object is a thing somebody asked for whatever the room above it says, and
+// while the count was the only test, every one of them was dropped along with
+// its room and there was nowhere left to notice it.
+function asked(room) {
+  return room.count > 0 || room.objects.some((o) => o.state === 'ok' && o.count > 0)
+}
+
 export function buildProgram(model, run, answered = evaluateRun(model, run)) {
   return model
     .map((section) => ({
@@ -335,8 +400,11 @@ export function buildProgram(model, run, answered = evaluateRun(model, run)) {
               ...department,
               results: answered.get(department.id)?.results ?? [],
               rooms: (answered.get(department.id)?.results ?? [])
-                .filter((r) => r.state === 'ok' && r.count > 0)
-                .flatMap((r) => r.rooms),
+                // A broken rule is thrown out; an unwritten one is not — see the
+                // note in bedTally.
+                .filter((r) => r.state === 'ok' || r.state === 'unauthored')
+                .flatMap((r) => r.rooms)
+                .filter(asked),
             }))
             .filter((department) => department.rooms.length > 0),
         }))

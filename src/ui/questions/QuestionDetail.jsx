@@ -47,7 +47,7 @@ import {
   BRANCH_ORIGIN_CONTENT,
 } from '../panel/PanelTree.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, connectionValue, locate, FUNCTIONING, SUPPORTING } from './questionModel.js'
+import { buildModel, locate, FUNCTIONING, SUPPORTING } from './questionModel.js'
 import { useCatalog } from '../../data/catalog.jsx'
 
 function Caption({ children }) {
@@ -499,7 +499,10 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
   }
 
   return (
-    <span style={{ position: 'relative', display: 'block', minWidth: 0 }}>
+    // WIDTH 100%, and it is load-bearing: this sits in a flex row, so without it
+    // the wrapper sizes to its own content and the input's own `width: 100%`
+    // then resolves against that rather than against the column.
+    <span style={{ position: 'relative', display: 'block', width: '100%', minWidth: 0 }}>
       <input
         type="text"
         value={draft}
@@ -553,11 +556,8 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
 // What a rule works out to at the sample number, or why it does not. The four
 // states are told apart here and nowhere else in this panel.
 //
-// `evaluate` is what an OBJECT's row passes, since an object has only its own
-// rule; a CONNECTION passes `connectionValue`, which is the same call plus the
-// one-room default for a room whose objects are ruled and itself is not.
-function Result({ evaluate, scope }) {
-  const { value, state, message, implied } = evaluate(scope)
+function Result({ compiled, scope }) {
+  const { value, state, message } = compiled.evaluate(scope)
 
   if (state === 'unauthored') return <Muted>—</Muted>
   if (state !== 'ok') {
@@ -569,16 +569,11 @@ function Result({ evaluate, scope }) {
   }
   return (
     <span
-      // A figure nobody wrote a rule for reads quieter than one somebody did,
-      // and says why on hover — otherwise a 1 appearing beside an empty box is
-      // the app having done something unexplained.
-      title={implied ? 'One, because the objects in it are sized and it is not' : undefined}
       style={{
         flexShrink: 0,
         fontSize: 12,
         fontVariantNumeric: 'tabular-nums',
-        color: implied ? '#999' : value > 0 ? '#222' : '#bbb',
-        fontStyle: implied ? 'italic' : undefined,
+        color: value > 0 ? '#222' : '#bbb',
         minWidth: 26,
         textAlign: 'right',
       }}
@@ -602,11 +597,15 @@ function Muted({ children }) {
 // its column WRAPS, which costs a line of a row nobody reads twice; ellipsis
 // there hid the one word telling two rooms apart.
 // A rule is read character by character and some of them are long —
-// `clamp(ceil(x/10), 1, 4)` — so the box is the widest column of the three. The
-// name gives way for it, because a name that runs out of room WRAPS and a rule
-// that runs out of room scrolls sideways under the caret.
+// `clamp(ceil(x/10), 1, 4)` — so the box TAKES EVERYTHING LEFT between the two
+// fixed columns. A fixed width for it left a strip of empty panel beside every
+// rule and made long ones scroll under the caret while there was room going
+// spare on the same row.
+//
+// It still lines up at every depth, which is the whole reason the other two are
+// fixed: the indent comes out of the NAME column, so the box's left edge never
+// moves, and its right edge is the panel's own.
 const NAME_COL = 120
-const RULE_FIELD = 225
 // The first line of a row, and where a branch meets it. FIXED: a wrapped name
 // makes its row taller, and a head measured from the middle of the whole box
 // then lands below the row it points at — which is how the carets came to sit
@@ -647,7 +646,7 @@ function RuleRow({ name, detail, title, depth = 0, weight = 400, size = 13, colo
       {/* Blank for a row that carries no rule of its own — a room inside a
           group — so the column still holds and its objects' boxes line up with
           everything else's. */}
-      <span style={{ flexShrink: 0, width: RULE_FIELD, minHeight: RULE_LINE, display: 'flex', alignItems: 'center' }}>
+      <span style={{ flex: 1, minWidth: 0, minHeight: RULE_LINE, display: 'flex', alignItems: 'center' }}>
         {field}
       </span>
       <span style={{ flexShrink: 0, minHeight: RULE_LINE, display: 'flex', alignItems: 'center' }}>{result}</span>
@@ -681,7 +680,7 @@ function ObjectBranch({ object, depth, canEdit, allowedVars, scope, onFormula })
             onCommit={onFormula}
           />
         }
-        result={<Result evaluate={(s) => object.compiled.evaluate(s)} scope={scope} />}
+        result={<Result compiled={object.compiled} scope={scope} />}
       />
     </Branch>
   )
@@ -745,7 +744,7 @@ function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, o
             onCommit={onFormula}
           />
         }
-        result={<Result evaluate={(s) => connectionValue(connection, s)} scope={scope} />}
+        result={<Result compiled={compiled} scope={scope} />}
       />
 
       {/* The rule's own complaint, on the row that owns it: not a child, so it
