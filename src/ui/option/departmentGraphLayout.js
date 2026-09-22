@@ -6,7 +6,7 @@
 // the two tabs inset their cards differently for weeks; keep it shared.
 
 import { functionColours } from '../../data/functions.js'
-import { buildingAreaSqft } from '../../data/optionData.js'
+import { buildingAreaSqft, roomGroupCount } from '../../data/optionData.js'
 import {
   catalogRoomNode,
   catalogRoomsForNode,
@@ -253,7 +253,15 @@ export function buildLayout({
       }
       const kids = entry.rooms.map((n) => byAnchor.get(n.instance_id)).filter(Boolean)
       if (kids.length === 0) return
-      rows.push({ key: entry.group.instance_id, name: entry.group.name || 'Untitled group', group: true })
+      // The group's own count sits on the group's row, not spread across its
+      // rooms: each room keeps its own figure, and the set says how many sets.
+      // A card writes a count only above 1, so one set shows nothing extra.
+      rows.push({
+        key: entry.group.instance_id,
+        name: entry.group.name || 'Untitled group',
+        count: roomGroupCount(d, entry.group.instance_id),
+        group: true,
+      })
       kids.forEach((r) => rows.push(row(r, 1)))
     })
 

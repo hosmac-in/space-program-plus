@@ -12,6 +12,7 @@ import {
   catalogObjectCount,
   catalogRoomAreaSqft,
   resolveNodePlacement,
+  roomGroupId,
 } from '../../data/tree.js'
 import { withBuildingFactor } from '../../data/factors.js'
 import { sqmToSqft } from '../../data/units.js'
@@ -32,6 +33,7 @@ import {
   DEFAULT_ROOM_COUNT,
   findCirculationDef,
   loadInstanceData,
+  readRoomGroupCounts,
   SCHEMA_VERSION,
 } from '../../data/optionData.js'
 import DepartmentBlock from './DepartmentBlock.jsx'
@@ -163,6 +165,9 @@ export default function InstanceBuilder({
       // Every factor override, normalised to null when absent so "inherits"
       // compares equal to itself however it got there.
       factors: DEPARTMENT_FACTORS.map((f) => dept?.[f.key] ?? null),
+      // Normalised the same way the wire is, so a group set to 2 and back to 1
+      // compares equal to never having touched it.
+      roomGroups: readRoomGroupCounts(dept?.roomGroupCounts),
     })
   }
 
@@ -575,6 +580,12 @@ export default function InstanceBuilder({
               const from = seedSourceFor(prev, treeNodeId, phase ?? DEFAULT_PHASE_COUNT)?.[f.key]
               return { ...out, [f.key]: Number.isFinite(from) && from > 0 ? from : null }
             }, {}),
+            // From the same source the rooms and the factors are: a phase
+            // seeded from an earlier one takes its group counts too, or the
+            // copy would hold the rooms of two theatre sets and say one.
+            roomGroupCounts: readRoomGroupCounts(
+              seedSourceFor(prev, treeNodeId, phase ?? DEFAULT_PHASE_COUNT)?.roomGroupCounts
+            ),
           }
         }),
       ]
@@ -760,6 +771,10 @@ export default function InstanceBuilder({
               name: def.name,
               type: def.type,
               treeRoomNodeId: node?.instance_id ?? null,
+              // DERIVED FROM THE CATALOG, never stored — the same field
+              // loadInstanceData stamps on. Without it a room added now sits in
+              // a group multiplied ×2 and counts as one until the next reload.
+              roomGroupId: roomGroupId(node),
               // No override: it goes by whatever the catalog placement is
               // called. '' rather than absent, so the dirty check compares like
               // with like — see loadInstanceData.

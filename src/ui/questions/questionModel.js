@@ -104,9 +104,9 @@ function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars)
     const live = catalogGroups.find((g) => g.instance_id === connection.instance_id)
     return {
       ...connection,
-      // A GROUP HAS NO RULE OF ITS OWN. It is a heading over rooms that are each
-      // sized separately, so `compiled` here is only what a reader falls back to
-      // when it needs a shape — never a number anything is built from.
+      // A GROUP'S OWN RULE IS HOW MANY OF THE SET THERE ARE, and it MULTIPLIES
+      // the per-room rules under it — see A ROOM GROUP'S ROOMS in
+      // data/questionnaire.js. Unwritten is one, not none.
       compiled,
       grouped: true,
       // THE STORED MAP, KEPT UNDER ITS OWN NAME. `rooms` below is the drawn

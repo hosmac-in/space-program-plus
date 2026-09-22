@@ -567,10 +567,12 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
 // What a rule works out to at the sample number, or why it does not. The four
 // states are told apart here and nowhere else in this panel.
 //
-function Result({ compiled, scope }) {
+// `blank` is what an UNWRITTEN rule works out to, when that is a number rather
+// than nothing — a room group's count, which is one set. Null everywhere else.
+function Result({ compiled, scope, blank = null }) {
   const { value, state, message } = compiled.evaluate(scope)
 
-  if (state === 'unauthored') return <Muted>—</Muted>
+  if (state === 'unauthored') return <Muted>{blank ?? '—'}</Muted>
   if (state !== 'ok') {
     return (
       <span title={message} style={{ flexShrink: 0, fontSize: 11, color: '#b3261e', fontWeight: 600 }}>
@@ -762,24 +764,27 @@ function ConnectionBlock({
               }
             : undefined
         }
-        // A GROUP HAS NO BOX. It is a heading over rooms that are each sized
-        // separately, and one number cannot size five different rooms.
+        // A GROUP'S BOX IS HOW MANY OF THE SET, and it multiplies every rule
+        // under it; a single room's is how many of that room. Both are the
+        // connection's own `formula` — the same key, one level apart.
         field={
-          group ? null : (
-            <FormulaField
-              value={connection.formula ?? ''}
-              allowedVars={allowedVars}
-              canEdit={canEdit}
-              onCommit={onFormula}
-            />
-          )
+          <FormulaField
+            value={connection.formula ?? ''}
+            allowedVars={allowedVars}
+            canEdit={canEdit}
+            onCommit={onFormula}
+          />
         }
-        result={group ? null : <Result compiled={compiled} scope={scope} />}
+        // A GROUP WITH NO RULE READS 1, NOT —. The em dash is "nothing here",
+        // which is true of an unwritten room rule and false of this one: an
+        // unwritten multiplier is one set, and the rooms below it are built. It
+        // is drawn muted, because nobody typed it.
+        result={<Result compiled={compiled} scope={scope} blank={group ? 1 : null} />}
       />
 
       {/* The rule's own complaint, on the row that owns it: not a child, so it
           gets no branch and the trunk runs past it. */}
-      {!group && compiled.authored && !compiled.ok && (
+      {compiled.authored && !compiled.ok && (
         <div style={{ fontSize: 11, color: '#b3261e', paddingBottom: 2 }}>{compiled.message}</div>
       )}
 

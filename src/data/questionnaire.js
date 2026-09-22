@@ -530,22 +530,34 @@ export function connectionWithObjectFormula(connection, objectId, formula) {
 
 // --- A room group's rooms -----------------------------------------------------
 //
-// ONE RULE PER ROOM INSIDE A GROUP, keyed by the room node's instance_id, in the
-// same shape the objects map takes. A group connection's OWN `formula` is not
-// read: a group is five different rooms and one number cannot size them.
+// TWO LEVELS, AND THEY MULTIPLY. A group carries its OWN `formula` — HOW MANY
+// OF THE WHOLE SET there are — and one rule per room inside it, keyed by the
+// room node's instance_id in the same shape the objects map takes: how many of
+// that room in ONE of the set. What gets built is the two multiplied.
 //
-//   >>> A GROUP USED TO CARRY ONE RULE FOR ALL OF IT — "two of a 3 Tesla MRI is
-//   >>> two of each room in the group". That is true of a group whose rooms come
-//   >>> one apiece with the machine, and false of every other group somebody
-//   >>> reaches for: an Operation Room brings one procedure room, two scrub bays
-//   >>> and a locker per person. The rooms were then rows with no box, so there
-//   >>> was nowhere to say so — and their OBJECTS had boxes, which made the one
-//   >>> level that could not be authored the level in between.
+//     Operation Theatre  ×2        <- the group's own rule: two theatres
+//       procedure room    1          2
+//       scrub bay         2          4
+//       locker            x          2x
 //
-// A group's own `formula` is LEFT IN PLACE, unread, never deleted — the
-// precedent `driver` and the old root-level `groups` array set. Any group ruled
-// the old way needs its rule re-entering on its rooms, and reads as unruled
-// until it is, which is visible rather than silent.
+//   >>> A GROUP CARRIED ONE RULE FOR ALL OF IT, then none at all, and now both.
+//   >>> One rule alone was false of every group anybody reaches for — a theatre
+//   >>> brings one procedure room and two scrub bays, and one number cannot size
+//   >>> them. Per-room rules alone then made the common edit — "we need another
+//   >>> whole theatre" — a retype of every rule in the set. The set is a real
+//   >>> thing that comes in numbers, AND its rooms come in their own; neither
+//   >>> level is derivable from the other.
+//
+// AN UNWRITTEN GROUP RULE IS ONE, NOT NONE, and it is the only blank in this
+// document read as a number apart from a bed. It is a MULTIPLIER over the rooms
+// below it, and the identity of a multiplier is 1 — a blank meaning "no count"
+// here would zero a set whose rooms are each fully ruled, which is the opposite
+// of what the blank says. `connectionMultiplier` in ui/questions/useTestRun.jsx
+// is the one definition of it — evaluation lives with the run, not here.
+//
+// So every group authored while there was no such rule keeps working unchanged,
+// and so does one authored before the per-room map existed — its old single
+// rule is now the count of the set, which is what it always read as.
 
 export function connectionRooms(connection) {
   const map = connection?.rooms

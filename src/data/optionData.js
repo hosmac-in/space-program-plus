@@ -142,6 +142,23 @@
 // SCHEMA VERSIONS. Every older row still loads, and absence always means the
 // behaviour that version had, so none of these needs a migration.
 //
+// 19  a department may carry `room_group_counts`: how many of each of the
+//     CATALOG's room groups this option takes, keyed by the group's
+//     instance_id. It MULTIPLIES the counts of the rooms inside it — two of a
+//     theatre set is two of everything in it — and is the same two-level shape
+//     the questionnaire's room-group rules have.
+//
+//     Absent, and an absent KEY within it, both mean 1: the group is there once,
+//     which is what every older row means and what a group nobody has multiplied
+//     goes on meaning. So 1 is never written, exactly as a factor override is
+//     not — and the map is written only when something in it is not 1, so an
+//     option nobody has touched this on stores the payload it always did.
+//
+//     The GROUPING itself is still the catalog's alone and no part of it is
+//     copied here: this is a count against an id, and a group dissolved on the
+//     Tree tab leaves a dangling key that is simply never read. See ROOM GROUPS
+//     in data/tree.js.
+//
 // 18  `area_metrics`: `fsi` and `ground_cover`, typed by the person setting up
 //     the option, plus `plot_area_sqft` / `plot_area_sqm` / `plot_area_acre` —
 //     COPIED in from `site.site_geojson` on every save, the same discipline as
@@ -230,10 +247,43 @@ import {
   FLOOR_AREA,
   GROSSING,
 } from './factors.js'
-import { catalogRoomsForNode, deptNodeIndex } from './tree.js'
+import { catalogRoomsForNode, deptNodeIndex, roomGroupId } from './tree.js'
 import { sqmToSqft } from './units.js'
 
-export const SCHEMA_VERSION = 18
+export const SCHEMA_VERSION = 19
+
+// HOW MANY OF A ROOM GROUP THIS OPTION TAKES — 1 unless it says otherwise, and
+// the ONE definition of that fallback. An absent map, an absent key and a
+// nonsense value all mean one of the set: see SCHEMA VERSION 19 above.
+export const DEFAULT_ROOM_GROUP_COUNT = 1
+
+// The stored map, normalised: only real counts above one survive, so a key
+// somebody set back to 1 is the same as never having set it — which is what the
+// wire stores and what the dirty check has to compare.
+export function readRoomGroupCounts(stored) {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {}
+  return Object.fromEntries(
+    Object.entries(stored).filter(([, n]) => Number.isFinite(n) && n > 0 && n !== DEFAULT_ROOM_GROUP_COUNT)
+  )
+}
+
+export function roomGroupCount(dept, roomGroupId) {
+  const stated = dept?.roomGroupCounts?.[roomGroupId]
+  return Number.isFinite(stated) && stated > 0 ? stated : DEFAULT_ROOM_GROUP_COUNT
+}
+
+// What one room comes to once its group is counted. Every total in the app goes
+// through here, or a group multiplied on screen would be a group the HUD had
+// never heard of.
+//
+//   >>> `roomGroupId` is STAMPED ON THE ROOM IN MEMORY by loadInstanceData, and
+//   >>> is not stored — it is the catalog's fact about that placement. Without
+//   >>> it every summariser would need the whole tree in hand to add two areas
+//   >>> up, which is exactly what summarize() takes the departments array to
+//   >>> avoid.
+export function roomCountIn(dept, room) {
+  return (room?.count ?? DEFAULT_ROOM_COUNT) * roomGroupCount(dept, room?.roomGroupId)
+}
 
 // Re-exported because this is where every other option figure is imported from.
 export {
@@ -322,6 +372,13 @@ export function buildInstanceData(
       phase: d.phase ?? DEFAULT_PHASE_COUNT,
       fallback_section_name: d.fallbackSectionName ?? null,
       fallback_group_name: d.fallbackGroupName ?? null,
+      // Only what departs from one, and only when there is some — a group set
+      // back to 1 leaves no key and a department nobody has multiplied writes
+      // exactly the payload it wrote before v19. Same discipline as a factor
+      // override, and what keeps Save Data grey when an old option loads.
+      ...(Object.keys(readRoomGroupCounts(d.roomGroupCounts)).length > 0
+        ? { room_group_counts: readRoomGroupCounts(d.roomGroupCounts) }
+        : {}),
       // Overrides only: a department nobody has departed from writes neither
       // key, and 1 is never written — "explicitly 1" and "inherits" must stay
       // different things.
@@ -466,10 +523,21 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
     return placements ? new Set(placements.map((n) => n.instance_id)) : null
   }
 
+  // WHICH CATALOG GROUP EACH PLACEMENT IS IN — stamped onto the option's rooms
+  // so every total can multiply by that group's count without walking the tree
+  // again. Empty when there is no catalog to ask, which reads as ungrouped: one
+  // of each, the same figure this file has always returned.
+  const groupingIn = (treeNodeId) => {
+    if (!asked) return new Map()
+    const placements = catalogRoomsForNode(catalog.sections, treeNodeId) ?? []
+    return new Map(placements.map((n) => [n.instance_id, roomGroupId(n)]))
+  }
+
   const departments = rows
     .filter((d) => keep(departmentDefs, d.department_def_id, 'departments'))
     .map((d) => {
       const deptDef = departmentDefs.find((x) => x.id === d.department_def_id)
+      const grouping = groupingIn(d.tree_node_id)
       return {
         instanceId: d.instance_id ?? crypto.randomUUID(),
         defId: d.department_def_id,
@@ -479,6 +547,10 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
         phase: phaseOf(d),
         fallbackSectionName: d.fallback_section_name ?? null,
         fallbackGroupName: d.fallback_group_name ?? null,
+        // Always an object in memory, so nothing has to test for it, and empty
+        // for every row written before v19 — which means every group is there
+        // once. buildInstanceData is what keeps absence absent on the wire.
+        roomGroupCounts: readRoomGroupCounts(d.room_group_counts),
         // Null, not 1: baking the fallback in here would make every department
         // look overridden and stop the catalog's default ever reaching it.
         ...DEPARTMENT_FACTORS.reduce(
@@ -504,6 +576,10 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
               name: roomDef?.name,
               type: roomDef?.type,
               treeRoomNodeId: r.tree_room_node_id ?? null,
+              // DERIVED, NEVER STORED — the catalog's grouping of this
+              // placement, carried so a total can multiply by the group's
+              // count. Null is ungrouped, and so is "no catalog to ask".
+              roomGroupId: grouping.get(r.tree_room_node_id) ?? null,
               count: Number.isFinite(r.count) && r.count > 0 ? r.count : DEFAULT_ROOM_COUNT,
               // Negative is not an area.
               areaSqft:
@@ -653,7 +729,7 @@ export function buildingAreaSqft(departmentTotal, buildingRow = null, buildingOv
 // rather than inlined so the panel can show both without writing the sum twice.
 export function departmentNetAreaSqft(dept) {
   return (dept?.rooms ?? []).reduce(
-    (sum, r) => sum + (r.count ?? DEFAULT_ROOM_COUNT) * (r.areaSqft ?? DEFAULT_ROOM_AREA_SQFT),
+    (sum, r) => sum + roomCountIn(dept, r) * (r.areaSqft ?? DEFAULT_ROOM_AREA_SQFT),
     0
   )
 }
@@ -694,9 +770,10 @@ export function summarize(departments = [], { sections, buildings, buildingFacto
     let dArea = 0
 
     rooms.forEach((r) => {
-      // Twelve of a room is twelve rooms. The count does not reach the objects:
-      // theirs are per room, and say what is inside one of them.
-      dRoomCount += r.count ?? DEFAULT_ROOM_COUNT
+      // Twelve of a room is twelve rooms, and two of the GROUP it sits in is
+      // twenty-four. The count does not reach the objects: theirs are per room,
+      // and say what is inside one of them.
+      dRoomCount += roomCountIn(d, r)
       // Equipment is counted in the same tally rather than a second one: the
       // HUD's "objects" is how many things stand in this program, and the two
       // are one list everywhere a person sees them. Splitting the figure would

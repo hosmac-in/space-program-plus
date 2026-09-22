@@ -35,6 +35,8 @@ import {
   departmentBuiltAreaSqft,
   departmentNetAreaSqft,
   findCirculationDef,
+  roomCountIn,
+  roomGroupCount,
 } from '../../data/optionData.js'
 import { resolveFactors, withFactor } from '../../data/factors.js'
 import { sqmToSqft } from '../../data/units.js'
@@ -185,6 +187,26 @@ export default function DepartmentBlock({
       ...room.objects.map((o) => ({ ...o, kind: 'object' })),
       ...(room.equipment ?? []).map((e) => ({ ...e, kind: 'equipment' })),
     ]
+  }
+
+  // HOW MANY OF A ROOM GROUP THIS OPTION TAKES. It is an edit to the DEPARTMENT
+  // entry, not to any room — the rooms are untouched and the count multiplies
+  // them on the way to every total (roomCountIn in data/optionData.js). Setting
+  // it back to 1 REMOVES the key, so a group nobody has multiplied writes the
+  // payload it always did and an old option loads with Save Data grey.
+  function setGroupCount(roomGroupId, count) {
+    onDeptChange?.(
+      dept.instanceId,
+      (d) => {
+        const next = { ...(d.roomGroupCounts ?? {}) }
+        if (Number.isFinite(count) && count > 1) next[roomGroupId] = count
+        else delete next[roomGroupId]
+        return { ...d, roomGroupCounts: next }
+      },
+      // One undo step for the whole number however many keystrokes, the same
+      // treatment a room's count gets.
+      { coalesce: `roomGroupCount:${roomGroupId}` }
+    )
   }
 
   // Counts live only here: the catalog says an object may be in this room, this
@@ -514,10 +536,16 @@ export default function DepartmentBlock({
         key={entry.group.instance_id}
         colours={colours}
         name={entry.group.name}
-        // Named and dissolved on the Tree tab, where the grouping lives.
+        // Named and dissolved on the Tree tab, where the grouping lives — but
+        // HOW MANY of it is this option's, and it multiplies every room inside.
+        count={roomGroupCount(dept, entry.group.instance_id)}
+        canEdit={!readOnly}
+        onCountChange={(count) => setGroupCount(entry.group.instance_id, count)}
+        // The area beside the name is what that many comes to, so the group's
+        // own count is in it once and each room's count is in it once.
         totalAreaSqft={held.reduce((sum, n) => {
           const room = byAnchor.get(n.instance_id)
-          return sum + (room.areaSqft ?? 0) * room.count
+          return sum + (room.areaSqft ?? 0) * roomCountIn(dept, room)
         }, 0)}
       >
         {entry.rooms.map((n) => renderEntry({ kind: 'room', room: n }, GROUP_ROOM_INSET))}

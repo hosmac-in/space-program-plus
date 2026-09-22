@@ -1178,6 +1178,13 @@ export function RoomGroupBlock({
   name,
   // Absent on the Project tab, where the grouping is the catalog's to change.
   onNameCommit,
+  // How many of the set. Absent on the TREE tab: a catalog group has no count,
+  // for the reason a catalog room has none — how many of a thing a facility has
+  // is the size of one program, not a fact about the group. See data/tree.js.
+  count = null,
+  canEdit = true,
+  onCountChange,
+  onCountCommit,
   totalAreaSqft,
   onRemove,
   removeTitle,
@@ -1304,6 +1311,21 @@ export function RoomGroupBlock({
             >
               {name || 'write group name'}
             </span>
+          )}
+          {/* HOW MANY OF THE WHOLE SET, and it multiplies every room inside —
+              two theatre sets are two of each room in one. It sits against the
+              name, exactly as a room's count does, because "Theatre set ×2" is
+              one phrase; the area to its right is already what that many comes
+              to. Absent where nothing can hold the figure: the grouping is the
+              catalog's, but how many of it you take is this option's. */}
+          {count != null && (
+            <CountField
+              value={count}
+              canEdit={canEdit}
+              onChange={onCountChange}
+              onCommit={onCountCommit}
+              title={`How many of ${shown}`}
+            />
           )}
           <span style={{ flex: 1, minWidth: 0 }} />
           {totalAreaSqft != null && (

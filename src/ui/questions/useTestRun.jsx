@@ -114,10 +114,11 @@ export function useTestRun() {
 // >>> per card would hand a supporting department in section 1 a zero for a
 // >>> department answered in section 5.
 //
-// A room appears with the count of the CONNECTION it came in on: two of a
-// 3 Tesla MRI is two of each room in that catalog room group. An object inside it
-// carries its OWN rule's value, read at the same one number — see OBJECTS in
-// data/questionnaire.js.
+// A room appears with its OWN rule's value, times how many of the catalog room
+// group it came in on — two theatre sets are two of each room in one set, and
+// the rooms in a set are not one apiece. An object inside it carries its own
+// rule, and is multiplied by the same set count. See A ROOM GROUP'S ROOMS and
+// OBJECTS in data/questionnaire.js.
 
 // A connection, evaluated: its rooms, and the STATE that says whether the number
 // beside them means anything. Four things used to land on one grey zero — no
@@ -166,22 +167,60 @@ function bedsIn(room, sized, count) {
 // The row's own reading, from the rooms under it. `count` is what they add up
 // to, which is the only figure a group can honestly show: five rooms sized
 // differently have no single count, and a sum is what the department gets.
-function summariseRooms(rooms, scope) {
+// HOW MANY OF THE WHOLE SET, and the ONE definition of it. A room group's own
+// rule multiplies every room rule inside it; a single room has no such level and
+// is always one of itself.
+//
+// UNWRITTEN IS ONE, NOT NONE — the identity of a multiplier, and the only blank
+// in the document read as a number apart from a bed. A blank meaning "no count"
+// would zero a set whose rooms are each fully ruled.
+//
+// A BROKEN ONE IS NOT ONE. It returns null, and the row takes that state whole:
+// falling back to 1 would build the set off a rule nobody can read, which is the
+// grey-zero collapse the four states exist to prevent.
+function connectionMultiplier(connection, scope) {
+  if (!connection.grouped || !connection.compiled.authored) return { times: 1, state: null }
+  const { value, state, message } = connection.compiled.evaluate(scope)
+  if (state !== 'ok') return { times: null, state, message }
+  return { times: value, state: null }
+}
+
+function summariseRooms(rooms, scope, times = 1) {
   const results = rooms.map((room) => room.compiled.evaluate(scope))
   const ok = results.filter((r) => r.state === 'ok')
-  if (ok.length > 0) return { count: ok.reduce((sum, r) => sum + r.value, 0), state: 'ok', message: null }
+  if (ok.length > 0) return { count: ok.reduce((sum, r) => sum + r.value, 0) * times, state: 'ok', message: null }
   const broken = results.find((r) => r.state === 'invalid' || r.state === 'unresolved')
   return { count: 0, state: broken?.state ?? 'unauthored', message: broken?.message ?? null }
 }
 
 function evaluateConnection(connection, scope) {
+  // HOW MANY OF THE SET — 1 for a single room and for a group nobody has put a
+  // number on. Read once for the whole row, so the row's total and the rooms
+  // under it cannot be multiplied by different things.
+  const { times, state: timesState, message: timesMessage } = connectionMultiplier(connection, scope)
+
+  // A BROKEN GROUP COUNT IS THE WHOLE ROW'S STATE. Nothing under it can be
+  // believed — every room's number is a multiple of one nobody can read — so the
+  // rooms are drawn countless rather than at their unmultiplied figures, which
+  // would look like a program somebody asked for.
+  if (times == null) {
+    return {
+      connection,
+      count: 0,
+      state: timesState,
+      message: timesMessage,
+      rooms: [],
+    }
+  }
+
   return {
     connection,
-    // THE CONNECTION'S OWN STATE IS ITS ROOMS'. A group has no rule, so the one
-    // thing a reader can ask of the row is whether anything under it computed:
-    // `ok` if any room did, and the worst thing found if none did. A group whose
-    // rooms are all blank must read as unauthored, not as broken.
-    ...summariseRooms(connection.rooms, scope),
+    // THE CONNECTION'S OWN STATE IS ITS ROOMS'. A group's own rule says only how
+    // many sets, so the one thing a reader can ask of the row is whether
+    // anything under it computed: `ok` if any room did, and the worst thing
+    // found if none did. A group whose rooms are all blank must read as
+    // unauthored, not as broken — and ×3 of nothing is still nothing.
+    ...summariseRooms(connection.rooms, scope, times),
     rooms: connection.rooms.map((room) => {
       const { value, state } = room.compiled.evaluate(scope)
       // WHAT STANDS IN IT, for the objects somebody has written a rule for. Each
@@ -196,7 +235,10 @@ function evaluateConnection(connection, scope) {
           return {
             instance_id: object.instance_id,
             name: object.name,
-            count: result.value,
+            // A SECOND SET BRINGS A SECOND SET'S WORTH OF EVERYTHING IN IT. An
+            // object's rule states the total for ONE of the set, exactly as the
+            // room rules above it do, so the group's count reaches this too.
+            count: result.value * times,
             state: result.state,
             message: result.message,
             areaSqft: object.areaSqft ?? 0,
@@ -209,7 +251,7 @@ function evaluateConnection(connection, scope) {
       // it being blank says only that nobody has said how many rooms. So the row
       // stays, countless, with what stands in it — dropping it took the objects
       // with it and there was nowhere left to notice them.
-      const counted = state === 'ok' ? value : null
+      const counted = state === 'ok' ? value * times : null
 
       return {
         instance_id: room.instance_id,
