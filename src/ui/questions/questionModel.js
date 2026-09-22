@@ -66,6 +66,35 @@ function resolveObjects(connection, room, allowedVars) {
   }
 }
 
+// WHAT A CONNECTION WORKS OUT TO, and the ONE definition of it — the designer's
+// preview and the run both call this, so the number in side and the number in a
+// run cannot disagree.
+//
+// >>> AN UNRULED ROOM WHOSE OBJECTS ARE RULED COUNTS AS ONE. Rules written on
+// >>> the objects say plainly that the room is wanted — nobody writes "two
+// >>> monitors" about a room they are not asking for — and with the room left at
+// >>> "no rule" every one of those objects was dropped, silently, because
+// >>> nothing multiplies by nothing. A room with NO rules anywhere under it is
+// >>> still unauthored: that is the blank the designer exists to show.
+//
+// It is a DEFAULT, not a computation: an object's own rule already says how many
+// of it one room holds, so the room the objects stand in is one room.
+// IS ANYTHING SIZED HERE? A rule on the room, or a rule on anything standing in
+// it — both mean somebody has said what this connection brings, so a reader that
+// counts unruled rows must not count this one as outstanding.
+export function connectionRuled(connection) {
+  if (connection.compiled.authored) return true
+  return connection.rooms.some((room) => room.objects?.some((object) => object.compiled.authored))
+}
+
+export function connectionValue(connection, scope) {
+  if (connection.compiled.authored) return connection.compiled.evaluate(scope)
+
+  if (!connectionRuled(connection)) return connection.compiled.evaluate(scope)
+
+  return { value: 1, state: 'ok', message: null, implied: true }
+}
+
 function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars) {
   const compiled = compileFormula(connectionFormula(connection), allowedVars)
   const resolve = (list) => list.map((room) => resolveObjects(connection, room, allowedVars))

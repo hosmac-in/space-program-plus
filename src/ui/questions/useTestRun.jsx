@@ -18,7 +18,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { departmentNetAreaSqft } from '../../data/optionData.js'
 import { sqftToSqm } from '../../data/units.js'
-import { SUPPORTING } from './questionModel.js'
+import { connectionValue, SUPPORTING } from './questionModel.js'
 
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
@@ -125,7 +125,9 @@ export function useTestRun() {
 // rule, a broken rule, a rule naming something gone, and a real zero — and a run
 // that cannot tell them apart is a run nobody can debug.
 function evaluateConnection(connection, scope) {
-  const { value, state, message } = connection.compiled.evaluate(scope)
+  // Not `compiled.evaluate` directly: a room with no rule of its own but ruled
+  // objects inside it counts as one. See connectionValue in questionModel.js.
+  const { value, state, message } = connectionValue(connection, scope)
   return {
     connection,
     count: value,

@@ -34,7 +34,7 @@ import { removeHint } from '../primitives/RemoveButton.jsx'
 import { Branch, BranchRoot, TreeLayer } from '../panel/PanelTree.jsx'
 import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, SUPPORTING } from './questionModel.js'
+import { buildModel, connectionRuled, SUPPORTING } from './questionModel.js'
 import { ROOM_GROUP } from '../../data/questionnaire.js'
 
 // One row height for every level, so the tree's elbows land on a regular pitch
@@ -158,8 +158,11 @@ function Row({ level, label, muted, selected, onSelect, right }) {
 // THE RULE ITSELF, on the row it belongs to. A formula is short and is the whole
 // content of a connection, so the outline states it rather than making you open
 // each one in turn to find out what it does.
-function Rule({ compiled }) {
+function Rule({ compiled, implied = false }) {
   if (!compiled.authored) {
+    // A room with no rule of its own but sized objects inside it is not
+    // outstanding — it is one room, by that default. See connectionValue.
+    if (implied) return <span style={{ fontSize: 11, color: '#999', flexShrink: 0, fontStyle: 'italic' }}>1</span>
     return <span style={{ fontSize: 11, color: '#c00', opacity: 0.55, flexShrink: 0 }}>no rule yet</span>
   }
   return (
@@ -189,7 +192,9 @@ function Rule({ compiled }) {
 // Split in two, because the two halves are drawn in different ink: what is
 // MISSING, and what is merely true of the row.
 function questionMarks(question, connections) {
-  const unruled = connections.filter((c) => !c.compiled.authored).length
+  // Ruled, not "has its own rule": a room whose objects are sized and itself is
+  // not counts as one, because it is — see connectionValue.
+  const unruled = connections.filter((c) => !connectionRuled(c)).length
   return {
     warn:
       connections.length === 0
@@ -209,7 +214,7 @@ function questionMarks(question, connections) {
 // >>> so the row restated its own siblings and grew with each one; and a name is
 // >>> only of use where a rule is typed, which is side.
 function supportingMarks(department) {
-  const ruled = department.connections.filter((c) => c.compiled.authored).length
+  const ruled = department.connections.filter(connectionRuled).length
   const all = department.connections.length
   return {
     quiet: null,
@@ -267,7 +272,7 @@ function ConnectionBranch({ connection, onSelect }) {
         label={connection.name}
         muted={connection.missing}
         onSelect={onSelect}
-        right={<Rule compiled={connection.compiled} />}
+        right={<Rule compiled={connection.compiled} implied={connectionRuled(connection)} />}
       />
 
       {group &&
@@ -460,8 +465,8 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                     return (
                       <Branch
                         key={department.id}
-                        endpoint={supporting && !department.connections.some((c) => c.compiled.authored) ? 'dot' : 'caret'}
-                        expanded={!supporting || department.connections.some((c) => c.compiled.authored)}
+                        endpoint={supporting && !department.connections.some(connectionRuled) ? 'dot' : 'caret'}
+                        expanded={!supporting || department.connections.some(connectionRuled)}
                         padTop={GAP}
                         head={GAP + ROW / 2}
                       >
@@ -495,7 +500,7 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                             already counts them. */}
                         {supporting &&
                           department.connections
-                            .filter((c) => c.compiled.authored)
+                            .filter(connectionRuled)
                             .map((connection) => (
                               <ConnectionBranch
                                 key={connection.instance_id}

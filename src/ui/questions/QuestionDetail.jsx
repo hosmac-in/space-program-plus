@@ -18,7 +18,7 @@
 // whole-document write of a jsonb column (see data/questionnaire.js), and a
 // write per character would be a write per character.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   connectionsWithFormula,
   connectionsWithObjectFormula,
@@ -26,7 +26,6 @@ import {
   connectionObjects,
   newConnection,
   questionWithObjectFormula,
-  newNumber,
   questionWithConnection,
   questionWithFormula,
   questionWithoutConnection,
@@ -48,7 +47,7 @@ import {
   BRANCH_ORIGIN_CONTENT,
 } from '../panel/PanelTree.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, locate, FUNCTIONING, SUPPORTING } from './questionModel.js'
+import { buildModel, connectionValue, locate, FUNCTIONING, SUPPORTING } from './questionModel.js'
 import { useCatalog } from '../../data/catalog.jsx'
 
 function Caption({ children }) {
@@ -121,59 +120,29 @@ function SwitchRow({ label, detail, checked, disabled, onChange }) {
 
 // --- Faces -------------------------------------------------------------------
 
+// A GROUP'S PANEL IS THE ROLE SWITCHES AND NOTHING ELSE.
+//
+// >>> THE GATE'S FIELDS WERE HERE AND ARE GONE — its wording, its comment, and
+// >>> the number it could go on to ask. The wording is the group's own name in
+// >>> all but a handful of cases, which the run already falls back to; the
+// >>> number was authored, answered and read by nobody (see the closing note in
+// >>> data/questionnaire.js); and the comment was a second place to explain a
+// >>> question that is one word long. All three keys are LEFT IN THE DOCUMENT,
+// >>> unread, never deleted — the precedent `driver` and the old root-level
+// >>> `groups` array set — so a gate already written still asks what it said.
+//
+// What is left is the one thing that cannot be said anywhere else: which of this
+// group's departments are supporting. It is a fact about a department's place in
+// its group, and the group is where you see them together.
 function GroupFace({ group, canEdit, editor }) {
-  const gate = group.gate
-  const setGate = (next) => editor.setGroupGate(group.sectionId, group.groupId, next)
-  // A gate written for the first time is seeded from the group's own name, so
-  // the common case — "Diagnostics?" — is one keystroke rather than a blank.
-  const edit = (patch) => setGate({ ...(gate ?? { prompt: group.name, number: null, comment: '' }), ...patch })
-
   return (
     <div style={{ minWidth: 0 }}>
       <Caption>Department group</Caption>
       <Where>{group.name}</Where>
 
-      <Field
-        label="Asked as"
-        value={gate?.prompt ?? ''}
-        placeholder={`${group.name}?`}
-        canEdit={canEdit}
-        onCommit={(prompt) => edit({ prompt })}
-      />
-      <PanelNote>
-        The group's one question. Yes opens the departments under it and adds nothing itself — the departments are what
-        carry the program.
-      </PanelNote>
-
-      <SwitchRow
-        label="Asks a number"
-        detail="A headline figure for the brief. A gate sizes nothing of its own."
-        checked={!!gate?.number}
-        disabled={!canEdit}
-        onChange={(on) => edit({ number: on ? newNumber('How many in total?') : null })}
-      />
-      {gate?.number && (
-        <Field
-          label="Number asked as"
-          value={gate.number.label}
-          placeholder="How many in total?"
-          canEdit={canEdit}
-          onCommit={(label) => edit({ number: { ...gate.number, label } })}
-        />
-      )}
-
-      <Field
-        label="Comment"
-        value={gate?.comment ?? ''}
-        placeholder="Anything the person answering should know"
-        canEdit={canEdit}
-        multiline
-        onCommit={(comment) => edit({ comment })}
-      />
-
       {/* THE PLACE THE TWO KINDS ARE DEFINED. Absence means functioning, so the
           switch writes only the departure — see data/questionnaire.js. */}
-      <div style={{ marginTop: 18, borderTop: '1px solid #eee', paddingTop: 10 }}>
+      <div style={{ marginTop: 14, borderTop: '1px solid #eee', paddingTop: 10 }}>
         <Caption>Supporting departments</Caption>
         <PanelNote>
           A functioning department is programmed by asking about it. A supporting one carries no questions and is sized
@@ -458,9 +427,27 @@ function stripped(connection) {
 // rule brings, which takes precedence.
 const OBJECT_TINT = '#fffbe8'
 
+// A NOTE IS GREY, WHEREVER A RULE IS DRAWN. `//` to the end of the line is
+// stripped by the tokeniser (data/formula.js) and computes nothing, so it must
+// not read with the same weight as the part that does.
+const COMMENT_INK = '#a0a0a8'
+
+// The rule and its note. The split is the tokeniser's own — first `//` wins, and
+// everything after it is the note — so the colour and the language cannot
+// disagree about where one ends.
+function splitComment(text) {
+  const at = String(text ?? '').indexOf('//')
+  return at < 0 ? [text ?? '', ''] : [text.slice(0, at), text.slice(at)]
+}
+
 function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
   const [draft, setDraft] = useState(value ?? '')
   useEffect(() => setDraft(value ?? ''), [value])
+
+  const mirror = useRef(null)
+  const follow = (e) => {
+    if (mirror.current) mirror.current.scrollLeft = e.currentTarget.scrollLeft
+  }
 
   // Parsed as typed, so the message answers the keystroke that caused it.
   const compiled = compileFormula(draft, allowedVars)
@@ -472,43 +459,105 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
   }
 
   if (!canEdit) {
+    const [rule, note] = splitComment(value ?? '')
     return (
       <span style={{ ...common, color: compiled.authored ? '#444' : '#bbb' }}>
-        {compiled.authored ? value : 'no rule yet'}
+        {compiled.authored ? (
+          <>
+            {rule}
+            <span style={{ color: COMMENT_INK }}>{note}</span>
+          </>
+        ) : (
+          'no rule yet'
+        )}
       </span>
     )
   }
 
+  // THE COMMENT IS GREY, AND AN INPUT CANNOT COLOUR HALF ITS OWN TEXT. So the
+  // text is painted by a MIRROR behind the field and the input's own ink is made
+  // transparent, leaving it the caret, the selection and every key it always
+  // had. The two are laid out by the same box — same font, same padding, same
+  // border width — because a mirror a pixel out is a caret in the wrong place.
+  //
+  // Monospace is what makes this exact rather than approximate, and the rule was
+  // already monospace for its own reason above.
+  //
+  // `scrollLeft` is mirrored on every event that can move it: a rule wider than
+  // its box scrolls under the caret, and a mirror that did not follow would
+  // silently disagree with the text from the first overflow on.
+  const [rule, note] = splitComment(draft)
+  const box = {
+    ...common,
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: '4px 6px',
+    border: '1px solid transparent',
+    borderRadius: 4,
+    lineHeight: '17px',
+    whiteSpace: 'pre',
+  }
+
   return (
-    <input
-      type="text"
-      value={draft}
-      placeholder="no rule yet"
-      title={broken ? compiled.message : 'How many of this one answer buys'}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => draft !== (value ?? '') && onCommit(draft)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur()
-        if (e.key === 'Escape') setDraft(value ?? '')
-      }}
-      style={{
-        ...common,
-        width: '100%',
-        boxSizing: 'border-box',
-        padding: '4px 6px',
-        borderRadius: 4,
-        border: `1px solid ${broken ? '#e6a9a2' : '#ddd'}`,
-        background: broken ? '#fdf6f5' : (tint ?? '#fff'),
-        color: '#222',
-      }}
-    />
+    <span style={{ position: 'relative', display: 'block', minWidth: 0 }}>
+      <input
+        type="text"
+        value={draft}
+        placeholder="no rule yet"
+        title={broken ? compiled.message : 'How many of this one answer buys'}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => draft !== (value ?? '') && onCommit(draft)}
+        onScroll={follow}
+        onSelect={follow}
+        onKeyUp={follow}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          if (e.key === 'Escape') setDraft(value ?? '')
+        }}
+        style={{
+          ...box,
+          position: 'relative',
+          display: 'block',
+          border: `1px solid ${broken ? '#e6a9a2' : '#ddd'}`,
+          background: broken ? '#fdf6f5' : (tint ?? '#fff'),
+          // The mirror is what you read. The caret keeps its own colour, or the
+          // field would look like somewhere you cannot type.
+          color: 'transparent',
+          caretColor: '#222',
+        }}
+      />
+
+      {/* OVER the field, not behind it: the input carries the background, and a
+          mirror underneath would be painted over by it. The input's own text is
+          transparent, so what shows through is this — and the selection band,
+          which is drawn on the input's own ground beneath. */}
+      <span
+        ref={mirror}
+        aria-hidden="true"
+        style={{
+          ...box,
+          position: 'absolute',
+          inset: 0,
+          overflow: 'hidden',
+          pointerEvents: 'none',
+          color: '#222',
+        }}
+      >
+        {rule}
+        <span style={{ color: COMMENT_INK }}>{note}</span>
+      </span>
+    </span>
   )
 }
 
 // What a rule works out to at the sample number, or why it does not. The four
 // states are told apart here and nowhere else in this panel.
-function Result({ compiled, scope }) {
-  const { value, state, message } = compiled.evaluate(scope)
+//
+// `evaluate` is what an OBJECT's row passes, since an object has only its own
+// rule; a CONNECTION passes `connectionValue`, which is the same call plus the
+// one-room default for a room whose objects are ruled and itself is not.
+function Result({ evaluate, scope }) {
+  const { value, state, message, implied } = evaluate(scope)
 
   if (state === 'unauthored') return <Muted>—</Muted>
   if (state !== 'ok') {
@@ -520,11 +569,16 @@ function Result({ compiled, scope }) {
   }
   return (
     <span
+      // A figure nobody wrote a rule for reads quieter than one somebody did,
+      // and says why on hover — otherwise a 1 appearing beside an empty box is
+      // the app having done something unexplained.
+      title={implied ? 'One, because the objects in it are sized and it is not' : undefined}
       style={{
         flexShrink: 0,
         fontSize: 12,
         fontVariantNumeric: 'tabular-nums',
-        color: value > 0 ? '#222' : '#bbb',
+        color: implied ? '#999' : value > 0 ? '#222' : '#bbb',
+        fontStyle: implied ? 'italic' : undefined,
         minWidth: 26,
         textAlign: 'right',
       }}
@@ -627,7 +681,7 @@ function ObjectBranch({ object, depth, canEdit, allowedVars, scope, onFormula })
             onCommit={onFormula}
           />
         }
-        result={<Result compiled={object.compiled} scope={scope} />}
+        result={<Result evaluate={(s) => object.compiled.evaluate(s)} scope={scope} />}
       />
     </Branch>
   )
@@ -691,7 +745,7 @@ function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, o
             onCommit={onFormula}
           />
         }
-        result={<Result compiled={compiled} scope={scope} />}
+        result={<Result evaluate={(s) => connectionValue(connection, s)} scope={scope} />}
       />
 
       {/* The rule's own complaint, on the row that owns it: not a child, so it
