@@ -199,7 +199,7 @@ function GroupFace({ group, canEdit, editor }) {
   )
 }
 
-function DepartmentFace({ department, group, canEdit, editor }) {
+function DepartmentFace({ department, group, canEdit, editor, general }) {
   const supporting = department.role === SUPPORTING
 
   if (!supporting) {
@@ -219,7 +219,7 @@ function DepartmentFace({ department, group, canEdit, editor }) {
     )
   }
 
-  return <SupportingFace department={department} group={group} canEdit={canEdit} editor={editor} />
+  return <SupportingFace department={department} group={group} canEdit={canEdit} editor={editor} general={general} />
 }
 
 // ONE NAME A RULE MAY USE: what it is, and what it is called in the language.
@@ -291,13 +291,16 @@ function VariableRow({ name, variable, detail, detailColour = '#999', colour = '
 // A SUPPORTING DEPARTMENT: the departments it scales off, and a rule per room
 // over their areas. It is the same shape as a question — names, then rules —
 // with an area where a counted number would be.
-function SupportingFace({ department, group, canEdit, editor }) {
+function SupportingFace({ department, group, canEdit, editor, general }) {
   // The sample, not stored. m², because that is what a variable always holds.
   const [tryArea, setTryArea] = useState(1000)
 
   const variables = department.variables
   const connections = department.connections
-  const names = variables.map((v) => v.name)
+  // The group's areas AND the facility's own answers — a supporting department's
+  // rule may read either, and this field has to compile what the model compiled
+  // or it calls a working rule broken as you type it.
+  const names = [...variables.map((v) => v.name), ...general.map((g) => g.name)]
   const groupVar = variables.find((v) => v.kind === 'group') ?? null
   const departmentVars = variables.filter((v) => v.kind !== 'group')
 
@@ -318,6 +321,8 @@ function SupportingFace({ department, group, canEdit, editor }) {
   // times however many there were, and a box labelled `a` showing 1,000 while
   // every rule over `a` computed on 3,000 is a preview that lies.
   const scope = {
+    // The facility's answers preview at 1 — see generalPreview.
+    ...generalPreview(general),
     ...Object.fromEntries(
       departmentVars.map((v) => [v.name, departmentVars.length === 0 ? 0 : tryArea / departmentVars.length])
     ),
@@ -399,7 +404,9 @@ function SupportingFace({ department, group, canEdit, editor }) {
               onChange={setTryArea}
               suffix={departmentVars.length > 1 ? 'm², shared evenly' : 'm²'}
               vars={names}
-              subject="each the net room area of that department, in m²"
+              subject={`each the net room area of that department, in m²${
+                general.length > 0 ? '. The General answers are in scope too, and preview at 1' : ''
+              }`}
             />
           )}
 
@@ -890,6 +897,11 @@ function FormulaHelp({ vars, subject }) {
       </div>
 
       <HelpLine>
+        <Code>//</Code> starts a note, to the end of the rule — <Code>ceil({vars[0] ?? 'x'}/4) // one per four beds</Code>
+        . A rule that is nothing but a note counts as unwritten.
+      </HelpLine>
+
+      <HelpLine>
         <span style={{ color: '#888' }}>Leave it empty and nothing is sized — an empty rule is not a zero.</span>
       </HelpLine>
     </div>
@@ -905,7 +917,18 @@ function Example({ rule, children }) {
   )
 }
 
-function QuestionFace({ node, department, group, canEdit, editor }) {
+// THE GENERAL NAMES, AS THE PREVIEW READS THEM. They are answered in the Test
+// run and nowhere here, so the designer has no value for one — and it still has
+// to preview a rule that names one.
+//
+// EVERY ONE PREVIEWS AT 1, the identity: `ceil(x/4) * floors` then previews as
+// `ceil(x/4)`, so the sample still says what the rule does to x rather than
+// reading 0 and looking broken.
+function generalPreview(general) {
+  return Object.fromEntries(general.filter((g) => g.numeric).map((g) => [g.name, 1]))
+}
+
+function QuestionFace({ node, department, group, canEdit, editor, general }) {
   const question = node.question
   const edit = (updater) => editor.setQuestion(node.sectionId, node.groupId, node.deptId, node.id, updater)
   // Right-click disconnects, and it always prompts. Same gesture as the tree's
@@ -996,8 +1019,13 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
             value={tryX}
             onChange={setTryX}
             suffix={node.unit || null}
-            vars={['x']}
-            subject={`what this question asks${node.unit ? `, in ${node.unit}` : ''}`}
+            // The general names are in scope here too, and the help is what
+            // says which names a rule may use — it lists what is actually
+            // allowed, or it is a second, wrong answer to that question.
+            vars={['x', ...general.map((g) => g.name)]}
+            subject={`what this question asks${node.unit ? `, in ${node.unit}` : ''}${
+              general.length > 0 ? '. The rest are the General answers, which preview at 1' : ''
+            }`}
           />
         )}
 
@@ -1006,8 +1034,8 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
             key={connection.instance_id}
             connection={connection}
             canEdit={canEdit}
-            allowedVars={['x']}
-            scope={{ x: tryX }}
+            allowedVars={['x', ...general.map((g) => g.name)]}
+            scope={{ ...generalPreview(general), x: tryX }}
             onFormula={(formula) => edit((q) => questionWithFormula(q, connection.instance_id, formula))}
             onObjectFormula={(objectId, formula) =>
               edit((q) => questionWithObjectFormula(q, connection.instance_id, objectId, formula))
@@ -1060,6 +1088,75 @@ function QuestionFace({ node, department, group, canEdit, editor }) {
 
 // --- The panel ----------------------------------------------------------------
 
+// GENERAL: THE SECTION ITSELF. It has no groups and nothing to author on it, so
+// this says what the section is FOR and lists the names its questions have put
+// in scope — which is the one thing you come here to check before writing a rule
+// somewhere else.
+function GeneralFace({ section }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <Caption>General</Caption>
+      <PanelNote>
+        Asked first, about the facility rather than about any one department. Every answer here is a{' '}
+        <strong>variable every rule in the building can read</strong>, beside <code>x</code> and <code>a</code>.
+      </PanelNote>
+
+      <div style={{ marginTop: 14, borderTop: '1px solid #eee', paddingTop: 10 }}>
+        <Caption>In scope everywhere</Caption>
+        {section.questions.map((q) => (
+          <VariableRow key={q.id} name={q.question.prompt} variable={q.variable} />
+        ))}
+      </div>
+
+      <PanelNote>
+        The list is the app&apos;s and cannot be added to here — a variable name that could be typed is one that could
+        be renamed, which moves every rule using it onto a different answer without saying so. Only the wording is
+        yours.
+      </PanelNote>
+    </div>
+  )
+}
+
+// ONE GENERAL QUESTION, AND THE ONLY THING AUTHORED IS HOW IT IS PUT. Its name in
+// the language, the kind of answer it takes and what it is counted in are the
+// app's — see GENERAL in data/questionnaire.js — so they are stated here rather
+// than offered as fields.
+function GeneralQuestionFace({ node, canEdit, editor }) {
+  const question = node.question
+
+  return (
+    <div style={{ minWidth: 0 }}>
+      <Caption>General question</Caption>
+
+      <Field
+        label="Asked as"
+        value={question.prompt}
+        placeholder={question.prompt}
+        canEdit={canEdit}
+        onCommit={(prompt) => editor.setGeneralWording(node.id, prompt)}
+      />
+
+      <PanelNote>
+        Answered with {question.kind === 'yesno' ? 'yes or no' : `a number${node.unit ? ` of ${node.unit}` : ''}`}, and
+        any rule in the building may read <code>{node.variable}</code>
+        {question.kind === 'yesno' ? ' — 1 for yes, 0 for no' : ''}. Until it is answered, a rule over it reads as
+        unresolved rather than as 0.
+      </PanelNote>
+
+      {node.tally === 'beds' && (
+        <PanelNote>
+          The run adds up the beds its own answers place — every object marked <code>is_bed</code> in the catalog — and
+          measures them against this figure, question by question.
+        </PanelNote>
+      )}
+
+      <PanelNote>
+        Clearing the wording puts the app&apos;s own question back. Nothing else about it is editable.
+      </PanelNote>
+    </div>
+  )
+}
+
 export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
   const editor = useQuestionnaireEditorContext()
   // Both hooks before any early return: a hook called conditionally changes the
@@ -1081,6 +1178,19 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
 
   const { node, section, group, department } = found
 
+  // IN SCOPE EVERYWHERE, so it is read once here and handed to both faces that
+  // hold a rule field. A field that did not know these names would call a
+  // working rule broken as you typed it.
+  const general = (model.find((s) => s.kind === 'general')?.questions ?? [])
+    .filter((q) => q.variable)
+    .map((q) => ({ name: q.variable, numeric: q.numeric }))
+
+  if (node.kind === 'general') return <GeneralFace section={section} />
+
+  if (node.kind === 'general-question') {
+    return <GeneralQuestionFace node={node} canEdit={canEdit} editor={editor} />
+  }
+
   if (node.kind === 'section') {
     return (
       <div style={{ minWidth: 0 }}>
@@ -1098,7 +1208,7 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
 
   if (node.kind === 'department') {
     return (
-      <DepartmentFace department={department} group={group} canEdit={canEdit} editor={editor} />
+      <DepartmentFace department={department} group={group} canEdit={canEdit} editor={editor} general={general} />
     )
   }
 
@@ -1109,6 +1219,7 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
       group={group}
       canEdit={canEdit}
       editor={editor}
+      general={general}
     />
   )
 }

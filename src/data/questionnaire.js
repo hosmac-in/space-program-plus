@@ -153,6 +153,54 @@
 // >>> needs its rule re-authoring, and a driver could name a COUNT where a
 // >>> variable names an area only. That reach is not replaced yet.
 //
+// GENERAL: THE ONE SECTION THAT IS NOT THE CATALOG'S, AND IT IS THE APP'S.
+//
+//   "general": { "beds": { "prompt": "Enter the bed count of the hospital" } }
+//
+// It asks about the FACILITY rather than about a department, so it hangs off no
+// catalog node and is read FIRST — everything else in the brief is answered
+// knowing these.
+//
+// THE LIST IS A CONSTANT — GENERAL_QUESTIONS below — AND THE DOCUMENT STORES
+// ONLY THE WORDING. Which questions exist, what each is called in the language,
+// what kind of answer it takes and what it is counted in are all the app's, and
+// the only thing authored is how the question is PUT. So the overlay rule this
+// whole file follows holds here too, with a constant in the catalog's place, and
+// an absent key means nobody has reworded it.
+//
+//   >>> IT WAS AUTHORED AND IS NOT ANY MORE. Adding your own general questions
+//   >>> meant typing the variable name beside each — the one place in the app a
+//   >>> variable name was ever authored — and a typed name is a name that can be
+//   >>> renamed, which silently moves every rule that used it onto a different
+//   >>> answer. A name the APP owns cannot break, and the questions worth asking
+//   >>> of every facility are few and known. A keyed map keeps any wording
+//   >>> already written, whatever happens to the list.
+//
+// EVERY GENERAL ANSWER IS A VARIABLE IN EVERY RULE IN THE BUILDING — beside `x`
+// in a question's rules and beside `a` in a supporting department's. That is the
+// whole point of it: a room sized off the bed count is not a statement about one
+// question's answer.
+//
+// A `yesno` is 1 or 0 in a rule. An UNANSWERED question of any kind is out of
+// scope entirely, so a rule over it is unresolved rather than quietly 0 — the
+// same rule the run follows for an unanswered question's own x.
+//
+// BEDS: THE ONE ANSWER THE RUN CHECKS ITSELF AGAINST.
+//
+// `beds` is the facility's bed count, stated up front, and the run adds up the
+// beds its own answers have placed: every object whose sp_object row carries
+// `is_bed` counts, at the number its rule worked out. So the brief's figure and
+// the program's figure are two things that must meet, and the run says how far
+// apart they are as it is answered.
+//
+//   >>> NOTHING MARKS A QUESTION AS A BED QUESTION, and nothing should. Which
+//   >>> questions produce beds is not a fact about the questionnaire — it is a
+//   >>> fact about the CATALOG, one that changes the moment a bed is placed in
+//   >>> another room, and a flag on the question would be a second place to say
+//   >>> it that drifts the day it does. A question counts beds exactly when the
+//   >>> rooms it brings hold an is_bed object with a rule, which is derived and
+//   >>> is always current.
+//
 // NOTHING IS KEYED BY A *_def_id. Every key is an instance_id (or a section's
 // own row id), for tree.js's reason: two placements of one duplicable
 // department must not merge.
@@ -341,6 +389,72 @@ export function setDepartmentRole(definition, sectionId, groupId, deptId, role) 
   return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({ ...dept, role }))
 }
 
+
+// --- General ----------------------------------------------------------------
+//
+// See GENERAL in the header. Every writer spreads the definition, so the key is
+// added beside `sections` rather than replacing anything.
+
+// THE VARIABLE EVERY BED RULE AND EVERY BED TALLY IS WRITTEN AGAINST.
+export const BED_VAR = 'beds'
+
+// THE LIST, AND IT IS THE APP'S. `id` is the document's key and never changes —
+// rewording a question must not orphan its answer — and `variable` is what rules
+// name it by. `kind` is 'number' or 'yesno'; both reach a rule as a number.
+//
+// Adding one here is the whole of adding a general question. Removing one leaves
+// any wording written for it in the document, unread, which is this file's rule
+// for everything else too.
+export const GENERAL_QUESTIONS = [
+  {
+    id: BED_VAR,
+    variable: BED_VAR,
+    kind: 'number',
+    unit: 'beds',
+    prompt: 'How many beds are there in the facility?',
+    // What the run measures its own beds against. Nothing else is checked this
+    // way, and the check lives in the tally rather than here.
+    tally: 'beds',
+  },
+]
+
+export function isNumericKind(kind) {
+  return kind === 'number' || kind === 'yesno'
+}
+
+// The wording somebody wrote for one, or the app's own.
+export function generalPrompt(definition, id) {
+  const stored = definition?.general?.[id]?.prompt
+  return typeof stored === 'string' && stored.trim() ? stored : null
+}
+
+// THE LIST AS IT READS, which is the constant with the authored wording laid
+// over it. Both columns and the run read this, so none of them can disagree
+// about what is asked.
+export function generalQuestions(definition) {
+  return GENERAL_QUESTIONS.map((q) => ({ ...q, prompt: generalPrompt(definition, q.id) ?? q.prompt }))
+}
+
+// Every name a rule may write. It is the constant's, so it cannot go stale and
+// cannot collide.
+export function generalVariableNames() {
+  return GENERAL_QUESTIONS.map((q) => q.variable)
+}
+
+// Only the wording is stored, and typing the app's own words back stores
+// nothing — the same rule a room's label follows, so a question is never pinned
+// against a later rewording by somebody who only meant to look.
+export function setGeneralPrompt(definition, id, prompt) {
+  const base = definition ?? EMPTY_DEFINITION
+  const fallback = GENERAL_QUESTIONS.find((q) => q.id === id)?.prompt ?? ''
+  const general = { ...(base.general ?? {}) }
+  if (!prompt.trim() || prompt.trim() === fallback) delete general[id]
+  else general[id] = { ...(general[id] ?? {}), prompt: prompt.trim() }
+  const next = { ...base }
+  if (Object.keys(general).length === 0) delete next.general
+  else next.general = general
+  return next
+}
 
 // --- Questions --------------------------------------------------------------
 

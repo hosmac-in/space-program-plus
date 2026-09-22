@@ -293,7 +293,7 @@ function ConnectionBranch({ connection, onSelect }) {
 // solid colour.
 const TITLE_H = 34
 
-function SectionCard({ section, colours, selected, onSelect, children }) {
+function SectionCard({ section, colours, selected, onSelect, mark = null, children }) {
   return (
     <TreeLayer>
       <div
@@ -338,9 +338,7 @@ function SectionCard({ section, colours, selected, onSelect, children }) {
             >
               {section.name}
             </span>
-            {section.groups.length === 0 && (
-              <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.8 }}>no groups</span>
-            )}
+            {mark && <span style={{ flexShrink: 0, fontSize: 11, opacity: 0.8 }}>{mark}</span>}
           </div>
 
           <div style={{ padding: '2px 12px 10px', minWidth: 0 }}>{children}</div>
@@ -399,6 +397,43 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
             card is the root the trunk hangs from. */}
         {model.map((section) => {
           const colours = functionColours(functions, section.functionId)
+
+          // GENERAL IS A SECTION WITH NO GROUPS AND NO DEPARTMENTS — it asks
+          // about the facility, so its questions hang off its own card. It is
+          // drawn in the same box as every other section because it is read as
+          // one; what differs is only how deep its questions sit.
+          if (section.kind === 'general') {
+            return (
+              <SectionCard
+                key={section.id}
+                section={section}
+                colours={colours}
+                selected={selectedId === section.id}
+                onSelect={() => onSelect(section.id)}
+                mark="about the whole facility"
+              >
+                {/* NO + AND NO RIGHT-CLICK. The list is the app's — see GENERAL
+                    in data/questionnaire.js — and the only thing authored about
+                    one is how it is worded. */}
+                {section.questions.map((q) => (
+                  <Branch key={q.id} endpoint="dot" padTop={GAP} head={GAP + ROW / 2}>
+                    <Row
+                      level="question"
+                      label={q.question.prompt || 'Untitled question'}
+                      muted={!q.question.prompt}
+                      selected={selectedId === q.id}
+                      onSelect={() => onSelect(q.id)}
+                      // THE VARIABLE IS THE MARK. Every rule in the building may
+                      // name it, so it is the one thing about a general question
+                      // worth reading from the outline.
+                      right={<Marks text={q.variable} />}
+                    />
+                  </Branch>
+                ))}
+              </SectionCard>
+            )
+          }
+
           return (
             <SectionCard
               key={section.id}

@@ -23,6 +23,7 @@ import { SUPPORTING } from './questionModel.js'
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
 //   questions: { [questionInstanceId]: { x } },
+//   general:   { [questionInstanceId]: <number | boolean | string> },
 // }
 //
 // Keyed by instance_id and nothing else, exactly as the document is. A
@@ -33,7 +34,7 @@ import { SUPPORTING } from './questionModel.js'
 //   >>> rail's pips are read by. So `x` must be genuinely undefined until
 //   >>> someone types, never seeded to 0: a 0 sitting in the field is an answer
 //   >>> nobody gave.
-const EMPTY = { gates: {}, questions: {} }
+const EMPTY = { gates: {}, questions: {}, general: {} }
 
 const TestRunContext = createContext(null)
 
@@ -51,6 +52,18 @@ export function TestRunProvider({ children }) {
     }))
   }, [])
 
+  // GENERAL IS ONE VALUE PER QUESTION, not a patch: a general question has one
+  // answer and nothing else about it is answered. Clearing removes the key, so
+  // "unanswered" stays the absence it is everywhere here.
+  const setGeneral = useCallback((questionId, value) => {
+    setAnswers((a) => {
+      const general = { ...a.general }
+      if (value === undefined || value === '') delete general[questionId]
+      else general[questionId] = value
+      return { ...a, general }
+    })
+  }, [])
+
   const reset = useCallback(() => setAnswers(EMPTY), [])
 
   const value = useMemo(
@@ -58,6 +71,7 @@ export function TestRunProvider({ children }) {
       answers,
       setGate,
       setQuestion,
+      setGeneral,
       reset,
       // A gate unanswered reads as NO. There is no third state: the form is
       // yes/no and an untouched switch is off, which is what the person
@@ -70,8 +84,9 @@ export function TestRunProvider({ children }) {
         const x = answers.questions[questionId]?.x
         return Number.isFinite(x) ? x : undefined
       },
+      generalOf: (questionId) => answers.general?.[questionId],
     }),
-    [answers, setGate, setQuestion, reset]
+    [answers, setGate, setQuestion, setGeneral, reset]
   )
 
   return <TestRunContext.Provider value={value}>{children}</TestRunContext.Provider>
@@ -137,6 +152,9 @@ function evaluateConnection(connection, scope) {
             count: result.value,
             state: result.state,
             message: result.message,
+            // Carried so the bed tally can find them without walking the
+            // catalog a second time. See bedTally.
+            isBed: object.isBed === true,
           }
         }),
     })),
@@ -157,6 +175,29 @@ function netAreaOf(rows) {
 // revealed whether or not anything came out above zero, and needs each row's
 // state rather than only what survived buildProgram's filter.
 export function evaluateRun(model, run) {
+  // --- Pass 0: GENERAL ------------------------------------------------------
+  //
+  // The facility's own answers, in scope for every rule in the building — see
+  // GENERAL in data/questionnaire.js. It is a pass before pass 1 rather than
+  // part of it because nothing here depends on anything: these are typed, not
+  // computed.
+  //
+  // ONLY WHAT IS A NUMBER GETS IN. A `yesno` is 1 or 0; a `text` answer is a
+  // name and never reaches the scope, so a rule naming it reads as UNRESOLVED
+  // rather than as a typo. An UNANSWERED question of any kind is out too — the
+  // same rule an unanswered `x` follows, and for the same reason: an absent
+  // answer is not a zero answer.
+  const general = {}
+  ;(model.find((section) => section.kind === 'general')?.questions ?? []).forEach((node) => {
+    if (!node.variable || !node.numeric) return
+    const given = run.generalOf(node.id)
+    if (node.question.kind === 'yesno') {
+      if (typeof given === 'boolean') general[node.variable] = given ? 1 : 0
+      return
+    }
+    if (Number.isFinite(given)) general[node.variable] = given
+  })
+
   // --- Pass 1 ---------------------------------------------------------------
   const answered = new Map()
 
@@ -182,7 +223,13 @@ export function evaluateRun(model, run) {
           ? department.questions.flatMap((node) => {
               const x = run.xOf(node.id)
               if (!(x > 0)) return []
-              return node.connections.map((connection) => evaluateConnection(connection, { x }))
+              // The question is carried on each result so the beds a single
+              // question placed can be told from its neighbours' — a department
+              // holds many questions and the rows come back as one list.
+              return node.connections.map((connection) => ({
+                questionId: node.id,
+                ...evaluateConnection(connection, { ...general, x }),
+              }))
             })
           : []
         answered.set(department.id, { open, results })
@@ -204,7 +251,7 @@ export function evaluateRun(model, run) {
         // A name with no number in scope evaluates as UNRESOLVED, which is what
         // a deleted department and a supporting one both are here: the scope is
         // built only from what pass 1 actually produced.
-        const scope = {}
+        const scope = { ...general }
         department.variables.forEach((variable) => {
           // `a` is the whole group: every functioning department beside this
           // one, summed. It is always a number — an unanswered group is 0 m²,
@@ -226,6 +273,47 @@ export function evaluateRun(model, run) {
   )
 
   return answered
+}
+
+// THE BEDS THE RUN HAS PLACED, against the bed count it was told.
+//
+// A bed is an object whose sp_object row carries `is_bed`, at the number its own
+// rule worked out, times nothing else — the rule already says how many that
+// answer buys.
+//
+// >>> NOTHING MARKS A QUESTION AS A BED QUESTION. Which questions produce beds
+// >>> is a fact about the CATALOG, not about the questionnaire: it changes the
+// >>> moment a bed is placed in another room, and a flag on the question would
+// >>> be a second place to say it that drifts the day it does. A question counts
+// >>> beds exactly when the rooms it brings hold a ruled is_bed object, which is
+// >>> what this walks.
+//
+// Supporting departments are counted in the total and belong to no question —
+// they are beds the program holds, and a bar hangs off a question or off
+// nothing.
+export function bedTally(model, run, answered = evaluateRun(model, run)) {
+  const byQuestion = new Map()
+  let placed = 0
+
+  answered.forEach((entry) => {
+    entry.results.forEach((result) => {
+      const beds = result.rooms.reduce(
+        (sum, room) => sum + room.objects.filter((o) => o.isBed && o.state === 'ok').reduce((n, o) => n + o.count, 0),
+        0
+      )
+      if (beds === 0) return
+      placed += beds
+      if (result.questionId) byQuestion.set(result.questionId, (byQuestion.get(result.questionId) ?? 0) + beds)
+    })
+  })
+
+  // The figure stated up front, or null when nobody has stated one — which is
+  // not a target of 0, and is why no bar is drawn until it is answered.
+  const node = (model.find((section) => section.kind === 'general')?.questions ?? []).find((q) => q.tally === 'beds')
+  const given = node ? run.generalOf(node.id) : undefined
+  const target = Number.isFinite(given) && given > 0 ? given : null
+
+  return { target, placed, byQuestion }
 }
 
 // WHAT THE ANSWERS HAVE BUILT, as a tree — only what came out above zero. A

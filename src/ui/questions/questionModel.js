@@ -25,6 +25,9 @@ import {
   departmentConnections,
   departmentRole,
   departmentVariables,
+  generalQuestions,
+  generalVariableNames,
+  isNumericKind,
   questionConnections,
   slugVariable,
   uniqueVariableName,
@@ -115,10 +118,48 @@ function roomUsage(questions) {
 // edits have to be written at. A question deep in the tree can then be edited
 // without anyone walking back up to work out which section it was in.
 export function buildModel({ buildingId, definition, sections, groups, departments, rooms, objects = [] }) {
-  return resolveVariables(walk({ buildingId, definition, sections, groups, departments, rooms, objects }))
+  // THE GENERAL NAMES ARE IN SCOPE EVERYWHERE, so they are worked out before the
+  // walk and handed to every compile in it. They are the AUTHORED list, never
+  // what currently resolves — compileFormula's rule — so an unanswered general
+  // question is a name that compiles and reads as unresolved, not a syntax
+  // error that zeroes the department around it.
+  const general = generalVariableNames()
+  return [
+    generalSection(definition),
+    ...resolveVariables(walk({ buildingId, definition, sections, groups, departments, rooms, objects, general })),
+  ]
 }
 
-function walk({ buildingId, definition, sections, groups, departments, rooms, objects }) {
+// GENERAL IS A SECTION, AND THE FIRST ONE. It hangs off no catalog node — see
+// GENERAL in data/questionnaire.js — so it is built here rather than in the
+// walk, and it carries `groups: []` so that everything reading the model as a
+// list of sections goes on working without knowing about it.
+export const GENERAL_SECTION = 'general'
+
+function generalSection(definition) {
+  return {
+    kind: 'general',
+    id: GENERAL_SECTION,
+    sectionId: GENERAL_SECTION,
+    name: 'General',
+    functionId: null,
+    groups: [],
+    questions: generalQuestions(definition).map((question) => ({
+      kind: 'general-question',
+      id: question.id,
+      sectionId: GENERAL_SECTION,
+      question,
+      variable: question.variable,
+      unit: question.unit ?? '',
+      numeric: isNumericKind(question.kind),
+      // Whether this answer is one the run checks itself against — see BEDS in
+      // data/questionnaire.js.
+      tally: question.tally ?? null,
+    })),
+  }
+}
+
+function walk({ buildingId, definition, sections, groups, departments, rooms, objects, general }) {
   return sections
     .filter((s) => s.building_id === buildingId)
     .sort(compareSections)
@@ -177,6 +218,11 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
                   instance_id: objectNode.instance_id,
                   name: nameOf(objects, objectNode.object_def_id, 'Unnamed object'),
                   count: catalogObjectCount(objectNode),
+                  // A FACT ABOUT THE DEFINITION, read live like every name here:
+                  // marking a bed in sp_object reaches every placement of it at
+                  // once, and the run's bed tally with it. Strictly true, since
+                  // the column is nullable and absent until the SQL is run.
+                  isBed: defOf(objects, objectNode.object_def_id)?.is_bed === true,
                 })),
               }
             })
@@ -211,9 +257,11 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
               catalogTargets.push({ kind: ROOM_GROUP, ...group })
             })
 
-            // A QUESTION'S RULES SEE ONE NAME: x, its own answered number. A
-            // rule is a statement about the thing its question counts, and
-            // nothing else can reach in and change it.
+            // A QUESTION'S RULES SEE ITS OWN NUMBER, `x`, AND THE GENERAL
+            // ANSWERS. The rule is a statement about the thing its question
+            // counts; no OTHER question can reach in and change it, and the
+            // general names are facts about the facility rather than about
+            // anybody's question — which is the whole reason they exist.
             const questions = (deptEntry?.questions ?? []).map((question) => ({
               kind: 'question',
               id: question.instance_id,
@@ -223,7 +271,7 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
               question,
               unit: typeof question.unit === 'string' ? question.unit : '',
               connections: questionConnections(question).map((c) =>
-                resolveConnection(c, catalogGroups, catalogRooms, [QUESTION_VAR])
+                resolveConnection(c, catalogGroups, catalogRooms, [QUESTION_VAR, ...general])
               ),
             }))
 
@@ -263,7 +311,7 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
                 taken.push(name)
                 variables.push({ ...v, name, orphaned: true })
               })
-            const variableNames = variables.map((v) => v.name)
+            const variableNames = [...variables.map((v) => v.name), ...general]
 
             // EVERY ROW THE CATALOG HAS, ALWAYS — a supporting department sizes
             // all of its rooms, so the list is the catalog's and the document
@@ -371,6 +419,11 @@ export function locate(model, id) {
   if (!id) return null
   for (const section of model) {
     if (section.id === id) return { node: section, section, group: null, department: null }
+    // General's questions hang off the section itself; every other section's are
+    // four levels down.
+    for (const question of section.questions ?? []) {
+      if (question.id === id) return { node: question, section, group: null, department: null }
+    }
     for (const group of section.groups) {
       if (group.id === id) return { node: group, section, group, department: null }
       for (const department of group.departments) {

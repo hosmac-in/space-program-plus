@@ -20,10 +20,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
 import { functionColours } from '../../data/functions.js'
 import Toggle from '../primitives/Toggle.jsx'
+import useHoldRepeat from '../primitives/useHoldRepeat.js'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, SUPPORTING } from './questionModel.js'
-import { useTestRun } from './useTestRun.jsx'
+import { bedTally, useTestRun } from './useTestRun.jsx'
 
 const RAIL_WIDTH = 240
 const CARD_MAX = 860
@@ -44,7 +45,15 @@ const CARD_MAX = 860
 // The deck therefore never changes as answers are given, which is also what
 // makes an index into it safe to hold.
 function deckOf(model) {
-  return model.map((section) => ({ id: `section:${section.id}`, section }))
+  return (
+    model
+      // GENERAL IS THE FIRST CARD, and it is dropped when nothing has been
+      // authored on it — an empty card at the head of the deck is a page saying
+      // nothing in front of every run. Every other section keeps its card
+      // whatever it holds, because the deck is the shape of the building.
+      .filter((section) => section.kind !== 'general' || section.questions.length > 0)
+      .map((section) => ({ id: `section:${section.id}`, section }))
+  )
 }
 
 // --- The rail -----------------------------------------------------------------
@@ -440,12 +449,38 @@ const ANSWER_GAP = 6
 // the field redraws from `value` whenever nobody is typing in it.
 function Stepper({ value, onChange }) {
   const from = Number.isFinite(value) ? value : 0
-  const button = (label, next, title) => (
+  return (
+    <span style={{ display: 'inline-flex', gap: 2 }}>
+      <StepKey label="−" by={-1} from={from} onChange={onChange} />
+      <StepKey label="+" by={1} from={from} onChange={onChange} />
+    </span>
+  )
+}
+
+// PRESS AND HOLD KEEPS GOING, the same as every other stepper in the app —
+// `useHoldRepeat`, which is where that behaviour is defined. Nothing is
+// committed on release: this tab writes nowhere.
+//
+// It steps from a ref rather than from `from`, because at the fast end of a hold
+// two ticks can land inside one render and the second would otherwise read the
+// value the first had already replaced.
+function StepKey({ label, by, from, onChange }) {
+  const at = useRef(from)
+  at.current = from
+  const step = () => {
+    const next = Math.max(0, at.current + by)
+    at.current = next
+    onChange(next)
+  }
+
+  const disabled = by < 0 && from === 0
+
+  return (
     <button
       type="button"
-      onClick={() => onChange(next)}
-      title={title}
-      disabled={next === from}
+      {...useHoldRepeat(disabled ? () => {} : step, null)}
+      title={by < 0 ? 'One fewer — hold to keep going' : 'One more — hold to keep going'}
+      disabled={disabled}
       style={{
         width: 18,
         height: 22,
@@ -456,19 +491,14 @@ function Stepper({ value, onChange }) {
         border: '1px solid #e0e0e0',
         background: '#fafafa',
         color: '#666',
-        cursor: next === from ? 'default' : 'pointer',
-        opacity: next === from ? 0.4 : 1,
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.4 : 1,
+        userSelect: 'none',
+        touchAction: 'none',
       }}
     >
       {label}
     </button>
-  )
-
-  return (
-    <span style={{ display: 'inline-flex', gap: 2 }}>
-      {button('−', Math.max(0, from - 1), 'One fewer')}
-      {button('+', from + 1, 'One more')}
-    </span>
   )
 }
 
@@ -586,8 +616,129 @@ function GateRow({ group, gate, yes, run, tint }) {
 // >>> called, does not choose it, and cannot act on the room list — the whole
 // >>> reply is the figure in the box. Two levels, no indent, no ink: the gate,
 // >>> then the questions. Side is where the building appears as it is built.
-function SectionCard({ step, run, functions }) {
+// GENERAL: THE FACILITY'S OWN QUESTIONS, and the only card with no gates. There
+// is nothing to switch on — these are asked of every building — so its questions
+// stand directly on the card, in the one box, at the same pitch a group's are.
+//
+// It is answered FIRST because everything after it may read the answers: see
+// GENERAL in data/questionnaire.js.
+function GeneralCard({ section, run, beds }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 38, lineHeight: 1.15, fontWeight: 600 }}>{section.name}</div>
+
+      <div style={{ marginTop: 24 }}>
+        <div
+          style={{
+            padding: '14px 18px',
+            borderRadius: 8,
+            border: '1px solid rgba(0,0,0,0.08)',
+            background: '#fff',
+            minWidth: 0,
+          }}
+        >
+          <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {section.questions.map((node) => (
+              <GeneralRow key={node.id} node={node} run={run} beds={beds} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ONE GENERAL QUESTION. Three kinds, one row shape: the prompt, then the answer
+// in the same three slots every other row on this tab ends with, so a column of
+// mixed kinds still reads as one column.
+function GeneralRow({ node, run, beds }) {
+  const kind = node.question.kind ?? 'number'
+  const given = run.generalOf(node.id)
+  // THE FIGURE IT IS CHECKED AGAINST, on the row that states it. The bed count
+  // is the one answer the run measures itself by, and its own row is where the
+  // running total belongs — the bars beside the questions each say how one
+  // answer contributed, and nothing else says how the building stands.
+  const tally = node.tally === 'beds' && beds?.target ? beds : null
+
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ minHeight: QUESTION_ROW, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+        <span style={{ flex: 1, minWidth: 0, fontSize: QUESTION_TYPE, lineHeight: 1.35 }}>
+          {node.question.prompt || 'Untitled question'}
+        </span>
+
+        <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: ANSWER_GAP }}>
+          <span style={{ width: STEP_COL, display: 'flex', justifyContent: 'flex-start' }}>
+            {kind === 'number' && (
+              <Stepper value={given} onChange={(n) => run.setGeneral(node.id, n)} />
+            )}
+          </span>
+          <span style={{ width: FIELD_COL, display: 'flex', justifyContent: 'flex-start' }}>
+            {kind === 'number' && (
+              <CountField
+                value={Number.isFinite(given) ? given : ''}
+                min={0}
+                step={1}
+                prefix=""
+                boxed
+                digits={4}
+                steppers={false}
+                size="1.15em"
+                colour="#222"
+                title={node.question.prompt}
+                onChange={(n) => run.setGeneral(node.id, n)}
+              />
+            )}
+            {kind === 'yesno' && (
+              <Toggle
+                checked={given === true}
+                onChange={(v) => run.setGeneral(node.id, v)}
+                title={node.question.prompt}
+              />
+            )}
+          </span>
+          <span style={{ width: UNIT_COL, fontSize: 12, color: '#999', whiteSpace: 'nowrap' }}>
+            {kind === 'number' ? node.unit : ''}
+          </span>
+        </span>
+      </div>
+
+      {/* TEXT TAKES THE WHOLE WIDTH, on its own line. A name or a note does not
+          fit the answer column the numbers line up in, and squeezing one into it
+          would make the column the widest thing on the card. */}
+      {kind === 'text' && (
+        <input
+          type="text"
+          value={typeof given === 'string' ? given : ''}
+          onChange={(e) => run.setGeneral(node.id, e.target.value)}
+          placeholder={node.question.comment ? '' : 'Type an answer'}
+          style={{
+            marginTop: 6,
+            width: '100%',
+            boxSizing: 'border-box',
+            padding: '6px 8px',
+            fontSize: 15,
+            fontFamily: 'inherit',
+            borderRadius: 4,
+            border: '1px solid #ddd',
+          }}
+        />
+      )}
+
+      {tally && <BedBar mine={tally.placed} placed={tally.placed} target={tally.target} />}
+
+      {node.question.comment && (
+        <div style={{ fontSize: 13, color: '#999', marginTop: 4, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+          {node.question.comment}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SectionCard({ step, run, functions, beds }) {
   const { section } = step
+  if (section.kind === 'general') return <GeneralCard section={section} run={run} beds={beds} />
   // EVERY GROUP IS ALWAYS VISIBLE. The gates are what the section asks, and a
   // section that showed one at a time would hide the question it exists to put.
   const groups = section.groups
@@ -644,7 +795,7 @@ function SectionCard({ step, run, functions }) {
                 {yes && questions.length > 0 && (
                   <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
                     {questions.map((node) => (
-                      <QuestionRow key={node.id} node={node} run={run} />
+                      <QuestionRow key={node.id} node={node} run={run} beds={beds} />
                     ))}
                   </div>
                 )}
@@ -657,9 +808,58 @@ function SectionCard({ step, run, functions }) {
   )
 }
 
+// HOW MANY OF THE FACILITY'S BEDS THIS ANSWER HAS PLACED.
+//
+// It hangs off a question exactly when that question's rooms hold beds — which
+// nothing declares and nothing should: it is a fact about the catalog (an
+// is_bed object with a rule), and it changes the day a bed is placed somewhere
+// else. See bedTally.
+//
+// THE BAR IS THE WHOLE TALLY, NOT THIS ANSWER'S SHARE: the filled part is every
+// bed the run has placed so far and this question's own beds are the darker head
+// of it, so a bar beside one question says both "how far the building has got"
+// and "how much of that is this". Two separate readings would be two bars.
+//
+// OVER IS A COLOUR, NOT A LONGER BAR — the Companion's ring reached the same
+// answer. Past full there is no bar left, and the fault is not "more" but
+// "wrong".
+const BAR_H = 6
+
+function BedBar({ mine, placed, target }) {
+  const over = placed > target
+  const width = (n) => `${Math.min(100, (n / target) * 100)}%`
+  const ink = over ? '#b3261e' : '#1a73e8'
+
+  return (
+    <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: BAR_H,
+          borderRadius: BAR_H / 2,
+          background: '#eee',
+          overflow: 'hidden',
+          position: 'relative',
+        }}
+      >
+        <div style={{ position: 'absolute', inset: 0, width: width(placed), background: over ? '#f3c7c2' : '#cfe0fb' }} />
+        <div style={{ position: 'absolute', inset: 0, width: width(mine), background: ink }} />
+      </div>
+      <span style={{ flexShrink: 0, fontSize: 11, color: over ? '#b3261e' : '#888', fontVariantNumeric: 'tabular-nums' }}>
+        {/* On the bed count's own row the head IS the whole, so the two-part
+            reading would say the same number twice. */}
+        {mine === placed ? `${placed} of ${target} beds placed` : `${mine} here, ${placed} of ${target} beds`}
+      </span>
+    </div>
+  )
+}
+
 // ONE QUESTION AND THE ONE NUMBER IT ASKS FOR. No department above it, no rooms
 // under it — what the number buys is worked out and drawn in side.
-function QuestionRow({ node, run }) {
+function QuestionRow({ node, run, beds }) {
+  const mine = beds?.byQuestion.get(node.id) ?? 0
+
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ minHeight: QUESTION_ROW, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
@@ -713,6 +913,11 @@ function QuestionRow({ node, run }) {
         </span>
       </div>
 
+      {/* Only where this answer actually places beds, and only once somebody has
+          said how many the facility has — a bar against no target is a bar
+          against 0. */}
+      {mine > 0 && beds?.target && <BedBar mine={mine} placed={beds.placed} target={beds.target} />}
+
       {node.question.comment && (
         <div style={{ fontSize: 13, color: '#999', marginTop: 4, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
           {node.question.comment}
@@ -731,9 +936,15 @@ export default function TestRun({ buildingId }) {
 
   const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
   const deck = deckOf(model)
-  // >>> THE CARDS EVALUATE NOTHING NOW. Every count the carousel drew has gone
-  // >>> with the room rows; side is the only reader of `evaluateRun`, and it
-  // >>> calls it itself, whole-model, for the reason documented there.
+  // >>> THE CARDS DRAW NO COUNTS. Every room figure the carousel had has gone
+  // >>> with the room rows — side is where the building appears.
+  //
+  // The ONE number that comes back here is the bed tally, because it is not a
+  // reading of what was built but a check on the answer above it: the beds the
+  // run has placed against the bed count the facility was said to have. It is
+  // whole-model for evaluateRun's reason — a bed placed in the last section
+  // counts towards a bar in the first.
+  const beds = bedTally(model, run)
 
   const [at, setAt] = useState(0)
 
@@ -787,7 +998,7 @@ export default function TestRun({ buildingId }) {
               }}
             >
               <div style={{ maxWidth: CARD_MAX, margin: '0 auto', minWidth: 0, color: '#1a1a1a' }}>
-                <SectionCard step={step} run={run} functions={functions} />
+                <SectionCard step={step} run={run} functions={functions} beds={beds} />
               </div>
             </div>
           )}

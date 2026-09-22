@@ -12,6 +12,7 @@
 
 import AddButton from '../primitives/AddButton.jsx'
 import RemoveButton, { removeHint } from '../primitives/RemoveButton.jsx'
+import useHoldRepeat from '../primitives/useHoldRepeat.js'
 import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import { formatArea } from '../map/area.js'
 import { useAreaUnit } from '../AreaUnitContext.jsx'
@@ -248,6 +249,39 @@ export function PanelHeading({ name, path, note, right, under, control, root = f
 // `min`/`step`/`decimals` are what let it also serve a MULTIPLIER (1.00 by
 // default, typed as 1.25), and `steppers`/`width` an AREA — read off a drawing,
 // never nudged, lining up in a column.
+// THE − / + ITSELF. A component rather than a helper because it holds the
+// press-and-hold timer, and a hook cannot live inside a function called twice
+// per render.
+function StepButton({ label, by, onStep, onSettle }) {
+  return (
+    <button
+      type="button"
+      {...useHoldRepeat(onStep, onSettle)}
+      title={by < 0 ? 'Decrease — hold to keep going' : 'Increase — hold to keep going'}
+      style={{
+        // A hit target, not a decoration — and big enough that the glyph inside
+        // it is legible at the size the figure beside it is now drawn.
+        width: 16,
+        height: 16,
+        lineHeight: '14px',
+        padding: 0,
+        fontSize: 13,
+        cursor: 'pointer',
+        color: 'inherit',
+        background: 'rgba(255,255,255,0.35)',
+        border: '1px solid rgba(0,0,0,0.15)',
+        borderRadius: 2,
+        // A hold is a drag as far as the browser is concerned; without this it
+        // selects the figure beside the button as the pointer sits there.
+        userSelect: 'none',
+        touchAction: 'none',
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 export function CountField({
   value,
   canEdit = true,
@@ -323,6 +357,9 @@ export function CountField({
   // flush runs from a cleanup that must not re-subscribe on every keystroke.
   const dirtyRef = useRef(false)
   const latestRef = useRef(null)
+  // Where a held stepper has got to, and null when nothing is being held. See
+  // nudge / settleNudge below.
+  const nudgedRef = useRef(null)
 
   // An undo, a discard, or an edit made elsewhere changes the count under a
   // field nobody is typing in.
@@ -408,49 +445,35 @@ export function CountField({
     onCommit?.(next)
   }
 
-  // One press of − or +. Goes through the same floor and precision as typing,
-  // and reports on the same coalesce key, so holding a stepper is one undo step
-  // exactly as typing a number is.
+  // ONE TICK of − or +, and a hold is many of them. Goes through the same floor
+  // and precision as typing, and reports on the same coalesce key, so a whole
+  // press is one undo step exactly as typing a number is.
+  //
+  // It steps from the LAST TICK'S value rather than from the draft: at the fast
+  // end of a hold two ticks can land inside one render, and a second one reading
+  // the pre-render draft would step from the same place twice.
   const nudge = (by) => {
-    const from = Number.isFinite(Number(draft)) && draft !== '' ? Number(draft) : value
+    const from = nudgedRef.current ?? (Number.isFinite(Number(draft)) && draft !== '' ? Number(draft) : value)
     const next = Math.max(min, quantise(from + by * step))
+    nudgedRef.current = next
     setDraft(format(next))
     dirtyRef.current = false
     if (next !== value) onChange(next)
-    // A stepper press is a FINISHED edit, not a keystroke on the way to one —
-    // there is no half-pressed +. Without this a caller that writes on commit
-    // never heard about it, and the value only reached the database if you
-    // happened to click away afterwards and blur the input.
-    onCommit?.(next)
+  }
+
+  // THE COMMIT IS ON RELEASE, NOT PER TICK. A stepper press is a finished edit —
+  // there is no half-pressed + — so a caller that writes has to hear about it,
+  // or the value only reaches the database if you happen to click away
+  // afterwards. But it hears ONCE: held down, per-tick commits would be a jsonb
+  // write and an undo step for every repeat.
+  const settleNudge = () => {
+    const next = nudgedRef.current
+    nudgedRef.current = null
+    if (next !== null) onCommit?.(next)
   }
 
   const stepButton = (label, by) => (
-    <button
-      type="button"
-      // The field is inside a clickable room header on one panel and a
-      // selectable card on the other; without this a nudge also navigates.
-      onClick={(e) => {
-        e.stopPropagation()
-        nudge(by)
-      }}
-      title={by < 0 ? 'Decrease' : 'Increase'}
-      style={{
-        // A hit target, not a decoration — and big enough that the glyph inside
-        // it is legible at the size the figure beside it is now drawn.
-        width: 16,
-        height: 16,
-        lineHeight: '14px',
-        padding: 0,
-        fontSize: 13,
-        cursor: 'pointer',
-        color: 'inherit',
-        background: 'rgba(255,255,255,0.35)',
-        border: '1px solid rgba(0,0,0,0.15)',
-        borderRadius: 2,
-      }}
-    >
-      {label}
-    </button>
+    <StepButton key={label} label={label} by={by} onStep={() => nudge(by)} onSettle={settleNudge} />
   )
 
   return (

@@ -28,6 +28,12 @@
 // A VALUE IS A WHOLE NUMBER OF ROOMS: clamped to >= 0, then rounded half-up.
 // That order matters — half-up is only unambiguous on a non-negative number —
 // and an author who wants "always up" writes ceil() and can see that they did.
+//
+// COMMENTS: `// one per four beds` runs to the end of the line. It is stripped in
+// the tokeniser, so it is whitespace to everything after — a name mentioned in
+// prose is not a variable and can never make a rule unresolved. A source that is
+// NOTHING BUT a comment reads as UNAUTHORED: it is somebody's note about a rule
+// they have yet to write, which is the state it was in already.
 
 // Every name this language knows, with its arity. Checked at PARSE time so the
 // error carries a position; unchecked arity gives NaN at run time instead, which
@@ -74,6 +80,22 @@ function tokenise(source) {
 
     if (c === ' ' || c === '\t' || c === '\n' || c === '\r') {
       i += 1
+      continue
+    }
+
+    // A COMMENT RUNS TO THE END OF THE LINE, and there is no /* */ — a rule is
+    // typed into one box on one line, so the whole of the rest of it is the
+    // note and there is nothing for a closing mark to protect.
+    //
+    // It is whitespace, which is the whole of the feature: it never reaches the
+    // parser, so `uses` does not collect a name mentioned in prose and a comment
+    // can never make a rule unresolved.
+    //
+    // >>> `/` IS ALSO DIVISION, so the second character decides. `x//2` is a
+    // >>> comment, not a division by a comment — which is why this is tested
+    // >>> BEFORE the operator, and why nothing here treats a lone `/` specially.
+    if (c === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1
       continue
     }
 
@@ -269,11 +291,19 @@ export function compileFormula(source, allowedVars = ['x']) {
   return compiled
 }
 
+// Nothing but a comment — `// ask the client` — is a NOTE, not a rule. Read as
+// unauthored rather than as broken: somebody wrote down what they still have to
+// work out, which is the same state as not having written anything, and calling
+// it an error would put a red mark on every rule still being thought about.
+function isAllComment(text) {
+  return text.replace(/\/\/[^\n]*/g, '').trim() === ''
+}
+
 function build(text, allowedVars) {
   // Blank is UNAUTHORED, which is a different thing from broken: nobody has
   // written a rule here yet, and it must read that way rather than as an error
   // or as a zero.
-  if (text.trim() === '') {
+  if (text.trim() === '' || isAllComment(text)) {
     return {
       source: text,
       authored: false,

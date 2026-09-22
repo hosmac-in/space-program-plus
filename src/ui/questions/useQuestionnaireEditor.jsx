@@ -33,6 +33,7 @@ import { useToast } from '../primitives/Toast.jsx'
 import {
   EMPTY_DEFINITION,
   insertQuestion,
+  setGeneralPrompt,
   newQuestion,
   removeQuestion,
   setDepartmentConnections,
@@ -139,6 +140,20 @@ export function useQuestionnaireEditor(buildingId) {
     []
   )
 
+  // --- General ----------------------------------------------------------------
+  //
+  // THE ONLY EDIT IS THE WORDING. Which general questions exist, what each is
+  // called in the language and what kind of answer it takes are the app's — see
+  // GENERAL in data/questionnaire.js — so there is nothing here to add or
+  // remove.
+
+  const setGeneralWording = useCallback(
+    serialise(async (id, prompt) => {
+      await apply(setGeneralPrompt(currentDefinition(), id, prompt))
+    }),
+    []
+  )
+
   // --- Questions --------------------------------------------------------------
 
   const addQuestion = useCallback(
@@ -179,6 +194,7 @@ export function useQuestionnaireEditor(buildingId) {
     addQuestion,
     deleteQuestion,
     setQuestion,
+    setGeneralWording,
     // The write's own refusal, or the catalog read failing under it. One field:
     // to the outline they are the same thing — the tab cannot be trusted.
     error: error ?? catalog.error,
