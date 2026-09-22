@@ -285,7 +285,11 @@ function StepButton({ label, by, onStep, onSettle }) {
 export function CountField({
   value,
   canEdit = true,
-  onChange,
+  // OPTIONAL, and the default is load-bearing. A caller that only writes on
+  // commit passes onCommit alone — and commit() reports the change first, so an
+  // undefined onChange threw there and the field silently fell back to `value`
+  // with nothing written. It read as "Enter reverts my typing".
+  onChange = () => {},
   // Called once when the field is LEFT — blur or Enter — with the settled
   // value, for the caller that WRITES and must not write once per character.
   onCommit,
@@ -573,6 +577,20 @@ export function CountField({
   )
 }
 
+// TYPING NOTHING MUST STORE NOTHING, and in m² that takes saying so.
+//
+// An area field shows one decimal, so 200 sqft reads 18.6 m²; converting that
+// straight back gives 200.2, a different area from the one that produced it.
+// CountField commits on every blur, changed or not — so merely clicking into an
+// area and out again rewrote it: a whole-section jsonb write and an undo step on
+// the Tree tab, a dirty Save Data on the other.
+//
+// So: if what is in the field still ROUNDS TO THE FIGURE ALREADY SHOWN, it is
+// the same area and the stored sqft goes back untouched.
+function areaBack(storedSqft, typed, toDisplay, toStored) {
+  return Math.round(toDisplay(storedSqft) * 10) === Math.round(typed * 10) ? storedSqft : toStored(typed)
+}
+
 // `tone` is for a row that is not an object at all: the derived circulation
 // line, quiet by default and red when it goes negative — the objects do not fit
 // in the area entered for the room.
@@ -586,6 +604,16 @@ export function ObjectRow({
   type,
   count,
   area,
+  // THE AREA CELL IS A FIELD WHEN A CALLER CAN STORE ONE, and then it holds the
+  // area of ONE — what is typed and stored — rather than `area`, which is the
+  // total. The count is already beside the name, so "AHU Machine ×2 … 12.0 m²"
+  // reads the same way a room does: the figure you type is per one, and the
+  // multiplier is in the phrase. Nobody supplying this sees `area`.
+  perOneAreaSqft,
+  onAreaCommit,
+  // The figure is sp_object.area_sqm, not something stated here — muted, the
+  // ink every borrowed value in this app wears.
+  areaIsDefault = false,
   tone = null,
   canEdit = true,
   onCountChange,
@@ -594,7 +622,7 @@ export function ObjectRow({
   onCountCommit,
   onRemove,
 }) {
-  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
+  const { label: AREA_UNIT, toDisplay, toStored } = useAreaUnit()
   // No wrapping: the row is narrow, so the name takes whatever the figure on the
   // right doesn't need and ellipsises rather than pushing it out of the panel.
   // spp-row highlights the whole row under the pointer, tying the name to the
@@ -635,7 +663,7 @@ export function ObjectRow({
           <CountField
             value={count}
             canEdit={canEdit}
-            onChange={onCountChange ?? (() => {})}
+            onChange={onCountChange}
             onCommit={onCountCommit}
             title={`How many ${name}`}
           />
@@ -645,10 +673,31 @@ export function ObjectRow({
       {/* LAST IN THE ROW, so it ends on the block's own right edge — the same
           column the room's area in the header above ends on. The two have to
           line up: one is the room, the rest are what is in it. */}
-      {area !== undefined && (
-        <span style={{ ...AREA_FIGURE, color: tone === 'warn' ? '#c11' : '#555' }}>
-          {area != null ? `${formatArea(toDisplay(area))} ${AREA_UNIT}` : 'no area'}
-        </span>
+      {onAreaCommit ? (
+        <CountField
+          value={toDisplay(perOneAreaSqft ?? 0)}
+          canEdit={canEdit}
+          onCommit={(n) => onAreaCommit(areaBack(perOneAreaSqft ?? 0, n, toDisplay, toStored))}
+          colour={areaIsDefault ? '#999' : '#555'}
+          min={0}
+          decimals={1}
+          prefix=""
+          suffix={AREA_UNIT}
+          steppers={false}
+          width={AREA_WIDTH}
+          size="12px"
+          title={
+            areaIsDefault
+              ? `${name}'s generic area — nobody has set one for this placement`
+              : `Area of one ${name}`
+          }
+        />
+      ) : (
+        area !== undefined && (
+          <span style={{ ...AREA_FIGURE, color: tone === 'warn' ? '#c11' : '#555' }}>
+            {area != null ? `${formatArea(toDisplay(area))} ${AREA_UNIT}` : 'no area'}
+          </span>
+        )
       )}
     </div>
     </Branch>
@@ -687,17 +736,8 @@ export function RoomAreaRow({
   // field only converts what it shows and what it hands back, at its own edge.
   const { label: AREA_UNIT, toDisplay, toStored } = useAreaUnit()
 
-  // TYPING NOTHING MUST STORE NOTHING, and in m² that takes saying so.
-  //
-  // The field shows one decimal, so 200 sqft reads 18.6 m²; converting that
-  // straight back gives 200.2, which is a different area from the one that
-  // produced it. CountField commits on every blur, changed or not — so merely
-  // clicking into a room's area and out again rewrote it, a whole-section jsonb
-  // write and an undo step on the Tree tab, and a dirty Save Data on the other.
-  //
-  // So: if what is in the field still ROUNDS TO THE FIGURE ALREADY SHOWN, it is
-  // the same area, and the stored sqft goes back untouched.
-  const back = (n) => (Math.round(toDisplay(value) * 10) === Math.round(n * 10) ? value : toStored(n))
+  // Clicking in and straight out again must write nothing — see areaBack.
+  const back = (n) => areaBack(value, n, toDisplay, toStored)
 
   return (
     <div

@@ -18,8 +18,8 @@
 import { useEffect, useState } from 'react'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { useCatalog } from '../../data/catalog.jsx'
-import { sqmToSqft } from '../../data/units.js'
 import {
+  catalogObjectAreaSqft,
   catalogObjectCount,
   catalogRoomAreaSqft,
   catalogRoomDimensions,
@@ -28,8 +28,10 @@ import {
   findDeptContext,
   newObjectNode,
   newRoomNode,
+  objectAreaIsStated,
   resolveNodePlacement,
   roomAreaIsStated,
+  roomWithNodeArea,
   roomWithArea,
   roomWithDimension,
   roomWithLabel,
@@ -250,12 +252,12 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                 .filter((e) => e.kind === 'object')
                 .map((e) => ({
                   defId: e.def.id,
-                  areaSqft: sqmToSqft(e.def.area_sqm),
+                  areaSqft: catalogObjectAreaSqft(e.node, e.def),
                   count: catalogObjectCount(e.node),
                 })),
               equipment: linked
                 .filter((e) => e.kind === 'equipment')
-                .map((e) => ({ areaSqft: sqmToSqft(e.def.area_sqm), count: catalogObjectCount(e.node) })),
+                .map((e) => ({ areaSqft: catalogObjectAreaSqft(e.node, e.def), count: catalogObjectCount(e.node) })),
             }
             const circulation = circulationSqft(asRoom, circulationDef?.id)
             // The circulation line only draws once an area has been entered.
@@ -441,10 +443,26 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
                             `${entry.def.name}: ×${count}`
                           )
                         }
-                        area={(() => {
-                          const perOne = sqmToSqft(entry.def.area_sqm)
-                          return perOne != null ? perOne * catalogObjectCount(entry.node) : null
-                        })()}
+                        // Sized here, like the room above it: the placement's
+                        // own area_sqft for one of them, or sp_object's generic
+                        // figure drawn muted until somebody types one. On
+                        // commit, not per keystroke — a whole section's jsonb.
+                        perOneAreaSqft={catalogObjectAreaSqft(entry.node, entry.def)}
+                        areaIsDefault={!objectAreaIsStated(entry.node)}
+                        onAreaCommit={(next) =>
+                          next !== catalogObjectAreaSqft(entry.node, entry.def) &&
+                          editRoom(
+                            node.instance_id,
+                            (r) =>
+                              roomWithNodeArea(
+                                r,
+                                entry.kind === 'equipment' ? 'equipment' : 'objects',
+                                entry.node.instance_id,
+                                next
+                              ),
+                            `${entry.def.name}: area set`
+                          )
+                        }
                         canEdit={canEdit}
                         onRemove={() =>
                           setConfirmTarget({

@@ -112,6 +112,10 @@
 //   >>> re-price options that already exist. It is a starting point, not a
 //   >>> default in force.
 //
+// An OBJECT node (and an equipment node) may carry the same key, meaning the
+// same thing one level down: the size of one of THEM here, overriding
+// sp_object.area_sqm. See catalogObjectAreaSqft.
+//
 // It is an area, which the rule above otherwise forbids storing — but a
 // denormalised area is one COPIED from a definition row, which this is not.
 // sp_room states only a GENERIC size; how big a room is depends on where it
@@ -707,6 +711,7 @@ export function cleanObjectNode(objectNode) {
     instance_id: objectNode.instance_id,
     object_def_id: objectNode.object_def_id,
     count: catalogObjectCount(objectNode),
+    ...(objectAreaIsStated(objectNode) ? { area_sqft: Number(objectNode.area_sqft) } : {}),
   }
 }
 
@@ -715,6 +720,43 @@ export function cleanObjectNode(objectNode) {
 export function catalogObjectCount(objectNode) {
   const stated = objectNode?.count
   return Number.isFinite(stated) && stated > 0 ? stated : DEFAULT_CATALOG_OBJECT_COUNT
+}
+
+// An object's area follows a ROOM's exactly: the node may state `area_sqft` —
+// the size of ONE of them in this placement — and when it does not,
+// sp_object.area_sqm answers. A trolley parked in an ICU bay is not the one in
+// a corridor, and those are the same sp_object row.
+//
+// Per ONE, never the total: the count multiplies it, here as everywhere.
+export function objectAreaIsStated(objectNode) {
+  const stated = Number(objectNode?.area_sqft)
+  return Number.isFinite(stated) && stated > 0
+}
+
+export function catalogObjectAreaSqft(objectNode, objectDef = null) {
+  if (objectAreaIsStated(objectNode)) return Number(objectNode.area_sqft)
+  return sqmToSqft(objectDef?.area_sqm) ?? 0
+}
+
+// Set or clear one object's area on a room node. Clearing DELETES the key, so a
+// row nobody has sized is byte-identical to one from before this existed and
+// falls straight back to the definition — the rule roomWithArea follows.
+//
+// `key` is 'objects' or 'equipment': the two lists differ only in which def id
+// they carry, and an area is the same fact about either.
+export function roomWithNodeArea(room, key, instanceId, areaSqft) {
+  const list = room[key]
+  if (!list) return room
+  return {
+    ...room,
+    [key]: list.map((n) => {
+      if (n.instance_id !== instanceId) return n
+      const next = { ...n }
+      if (Number.isFinite(areaSqft) && areaSqft > 0) next.area_sqft = areaSqft
+      else delete next.area_sqft
+      return next
+    }),
+  }
 }
 
 // --- Equipment ---------------------------------------------------------------
@@ -740,6 +782,7 @@ export function cleanEquipmentNode(equipmentNode) {
     instance_id: equipmentNode.instance_id,
     equipment_def_id: equipmentNode.equipment_def_id,
     count: catalogObjectCount(equipmentNode),
+    ...(objectAreaIsStated(equipmentNode) ? { area_sqft: Number(equipmentNode.area_sqft) } : {}),
   }
 }
 

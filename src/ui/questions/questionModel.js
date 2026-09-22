@@ -12,6 +12,7 @@
 // questions again.
 
 import {
+  catalogObjectAreaSqft,
   catalogObjectCount,
   catalogRoomAreaSqft,
   compareSections,
@@ -41,7 +42,6 @@ import {
   SUPPORTING,
 } from '../../data/questionnaire.js'
 import { compileFormula } from '../../data/formula.js'
-import { sqmToSqft } from '../../data/units.js'
 
 export { FUNCTIONING, SUPPORTING }
 
@@ -263,10 +263,10 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
                   // once, and the run's bed tally with it. Strictly true, since
                   // the column is nullable and absent until the SQL is run.
                   isBed: defOf(objects, objectNode.object_def_id)?.is_bed === true,
-                  // WHAT ONE OF IT TAKES UP, converted on the way off the row as
-                  // every definition's area is. It is what a room with NO area of
+                  // WHAT ONE OF IT TAKES UP — this placement's own area_sqft, or
+                  // sp_object's generic figure. It is what a room with NO area of
                   // its own is measured by — see roomAreaSqft in useTestRun.jsx.
-                  areaSqft: sqmToSqft(defOf(objects, objectNode.object_def_id)?.area_sqm ?? 0),
+                  areaSqft: catalogObjectAreaSqft(objectNode, defOf(objects, objectNode.object_def_id)),
                 })),
               }
             })
