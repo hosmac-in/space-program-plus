@@ -528,6 +528,60 @@ export function connectionWithObjectFormula(connection, objectId, formula) {
   return next
 }
 
+// --- A room group's rooms -----------------------------------------------------
+//
+// ONE RULE PER ROOM INSIDE A GROUP, keyed by the room node's instance_id, in the
+// same shape the objects map takes. A group connection's OWN `formula` is not
+// read: a group is five different rooms and one number cannot size them.
+//
+//   >>> A GROUP USED TO CARRY ONE RULE FOR ALL OF IT — "two of a 3 Tesla MRI is
+//   >>> two of each room in the group". That is true of a group whose rooms come
+//   >>> one apiece with the machine, and false of every other group somebody
+//   >>> reaches for: an Operation Room brings one procedure room, two scrub bays
+//   >>> and a locker per person. The rooms were then rows with no box, so there
+//   >>> was nowhere to say so — and their OBJECTS had boxes, which made the one
+//   >>> level that could not be authored the level in between.
+//
+// A group's own `formula` is LEFT IN PLACE, unread, never deleted — the
+// precedent `driver` and the old root-level `groups` array set. Any group ruled
+// the old way needs its rule re-entering on its rooms, and reads as unruled
+// until it is, which is visible rather than silent.
+
+export function connectionRooms(connection) {
+  const map = connection?.rooms
+  return map && typeof map === 'object' && !Array.isArray(map) ? map : {}
+}
+
+export function connectionRoomFormula(connection, roomId) {
+  const formula = connectionRooms(connection)[roomId]
+  return typeof formula === 'string' ? formula : ''
+}
+
+export function connectionHasRoomRules(connection) {
+  return Object.keys(connectionRooms(connection)).length > 0
+}
+
+export function connectionWithRoomFormula(connection, roomId, formula) {
+  const rooms = { ...connectionRooms(connection) }
+  if (formula.trim()) rooms[roomId] = formula
+  else delete rooms[roomId]
+
+  const next = { ...connection }
+  if (Object.keys(rooms).length === 0) delete next.rooms
+  else next.rooms = rooms
+  return next
+}
+
+// Is anything at all authored on this connection? What keeps its entry alive
+// when one rule is cleared — a room's, an object's or its own.
+function connectionIsAuthored(connection) {
+  return (
+    connectionFormula(connection).trim() !== '' ||
+    connectionHasRoomRules(connection) ||
+    connectionHasObjectRules(connection)
+  )
+}
+
 // THE ONE READER of a question's follow-up, and what makes both older shapes
 // keep working. A question written before this had `room_sets`, and one before
 // those a flat `rooms` array; each room in either is exactly a room connection.
@@ -589,6 +643,15 @@ export function questionWithObjectFormula(question, instanceId, objectId, formul
   )
 }
 
+export function questionWithRoomFormula(question, instanceId, roomId, formula) {
+  return withConnections(
+    question,
+    questionConnections(question).map((c) =>
+      c.instance_id === instanceId ? connectionWithRoomFormula(c, roomId, formula) : c
+    )
+  )
+}
+
 // A SUPPORTING DEPARTMENT'S OWN CONNECTIONS live beside its variables, in the
 // same shape a question's do — the row, the formula and the rules for both are
 // one thing, so the panel and the run draw them with one component.
@@ -608,13 +671,24 @@ export function setDepartmentConnections(definition, sectionId, groupId, deptId,
 export function connectionsWithFormula(connections, target, formula) {
   const kept = connections.filter((c) => c.instance_id !== target.instance_id)
   const existing = connections.find((c) => c.instance_id === target.instance_id)
-  // A cleared room rule drops the entry — unless its OBJECTS still carry rules,
-  // which are the same row's work and must not go with it.
-  if (!formula.trim() && !connectionHasObjectRules(existing)) return kept
-  return [
-    ...kept,
-    { ...(existing ?? newConnection(target.kind, target.instance_id, target.name)), formula },
-  ]
+  // A cleared rule drops the entry — unless its ROOMS or its OBJECTS still carry
+  // rules, which are the same row's work and must not go with it.
+  const next = { ...(existing ?? newConnection(target.kind, target.instance_id, target.name)), formula }
+  if (!connectionIsAuthored(next)) return kept
+  return [...kept, next]
+}
+
+// The same for one room inside a group.
+export function connectionsWithRoomFormula(connections, target, roomId, formula) {
+  const kept = connections.filter((c) => c.instance_id !== target.instance_id)
+  const existing = connections.find((c) => c.instance_id === target.instance_id)
+  const next = connectionWithRoomFormula(
+    existing ?? newConnection(target.kind, target.instance_id, target.name),
+    roomId,
+    formula
+  )
+  if (!connectionIsAuthored(next)) return kept
+  return [...kept, next]
 }
 
 // The same, one level in: the row's entry is created if a rule is the first thing
@@ -628,7 +702,7 @@ export function connectionsWithObjectFormula(connections, target, objectId, form
     objectId,
     formula
   )
-  if (!connectionFormula(next).trim() && !connectionHasObjectRules(next)) return kept
+  if (!connectionIsAuthored(next)) return kept
   return [...kept, next]
 }
 

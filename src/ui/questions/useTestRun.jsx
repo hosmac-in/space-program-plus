@@ -159,14 +159,31 @@ function bedsIn(room, sized, count) {
   return ruled + blank * count
 }
 
+// EVERY ROOM CARRIES ITS OWN RULE, INSIDE A GROUP AND OUT. A group is a heading
+// over rooms that are each sized separately — see A ROOM GROUP'S ROOMS in
+// data/questionnaire.js — and a single room's rule is the connection's own, so
+// both read `room.compiled` and this function does not care which it has.
+// The row's own reading, from the rooms under it. `count` is what they add up
+// to, which is the only figure a group can honestly show: five rooms sized
+// differently have no single count, and a sum is what the department gets.
+function summariseRooms(rooms, scope) {
+  const results = rooms.map((room) => room.compiled.evaluate(scope))
+  const ok = results.filter((r) => r.state === 'ok')
+  if (ok.length > 0) return { count: ok.reduce((sum, r) => sum + r.value, 0), state: 'ok', message: null }
+  const broken = results.find((r) => r.state === 'invalid' || r.state === 'unresolved')
+  return { count: 0, state: broken?.state ?? 'unauthored', message: broken?.message ?? null }
+}
+
 function evaluateConnection(connection, scope) {
-  const { value, state, message } = connection.compiled.evaluate(scope)
   return {
     connection,
-    count: value,
-    state,
-    message,
+    // THE CONNECTION'S OWN STATE IS ITS ROOMS'. A group has no rule, so the one
+    // thing a reader can ask of the row is whether anything under it computed:
+    // `ok` if any room did, and the worst thing found if none did. A group whose
+    // rooms are all blank must read as unauthored, not as broken.
+    ...summariseRooms(connection.rooms, scope),
     rooms: connection.rooms.map((room) => {
+      const { value, state } = room.compiled.evaluate(scope)
       // WHAT STANDS IN IT, for the objects somebody has written a rule for. Each
       // reads the SAME scope the room's rule did — one answered number and
       // nothing else — so this is the same evaluation one level in, not a second

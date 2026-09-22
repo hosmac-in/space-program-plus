@@ -22,6 +22,8 @@ import {
 import {
   connectionFormula,
   connectionObjectFormula,
+  connectionRoomFormula,
+  connectionRooms,
   departmentConnections,
   departmentRole,
   departmentVariables,
@@ -57,14 +59,31 @@ const nameOf = (defs, id, fallback) => defOf(defs, id)?.name || fallback
 // reads — see OBJECTS in data/questionnaire.js. The list is the CATALOG's, so an
 // object placed on the Tree tab tomorrow simply appears with no rule yet, and one
 // deleted takes its row with it while its key sits in the document unread.
-function resolveObjects(connection, room, allowedVars) {
+//
+// `formula` and `compiled` on the room itself are the room's OWN rule. Inside a
+// GROUP that is the per-room entry — see A ROOM GROUP'S ROOMS in
+// data/questionnaire.js; for a single-room connection the room and the
+// connection are one row and one rule, so it is the connection's own.
+function resolveRoom(connection, room, allowedVars, own) {
+  const formula = own ? connectionFormula(connection) : connectionRoomFormula(connection, room.instance_id)
   return {
     ...room,
+    formula,
+    compiled: compileFormula(formula, allowedVars),
     objects: (room.objects ?? []).map((object) => {
-      const formula = connectionObjectFormula(connection, object.instance_id)
-      return { ...object, formula, compiled: compileFormula(formula, allowedVars) }
+      const objectFormula = connectionObjectFormula(connection, object.instance_id)
+      return { ...object, formula: objectFormula, compiled: compileFormula(objectFormula, allowedVars) }
     }),
   }
+}
+
+// IS ANYTHING SIZED ON THIS ROW? For a single room it is its own rule; for a
+// GROUP it is whether any room inside it carries one, since the group has none.
+// Every reader that counts "how much is still unwritten" asks this rather than
+// `compiled.authored`, or a fully ruled group reads as an outstanding job.
+export function connectionRuled(connection) {
+  if (connection.grouped) return connection.rooms.some((room) => room.compiled.authored)
+  return connection.compiled.authored
 }
 
 // A BLANK RULE IS NO COUNT, NEVER A NUMBER — for a room and for an object
@@ -80,15 +99,23 @@ function resolveObjects(connection, room, allowedVars) {
 
 function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars) {
   const compiled = compileFormula(connectionFormula(connection), allowedVars)
-  const resolve = (list) => list.map((room) => resolveObjects(connection, room, allowedVars))
 
   if (connection.kind === ROOM_GROUP) {
     const live = catalogGroups.find((g) => g.instance_id === connection.instance_id)
     return {
       ...connection,
+      // A GROUP HAS NO RULE OF ITS OWN. It is a heading over rooms that are each
+      // sized separately, so `compiled` here is only what a reader falls back to
+      // when it needs a shape — never a number anything is built from.
       compiled,
+      grouped: true,
+      // THE STORED MAP, KEPT UNDER ITS OWN NAME. `rooms` below is the drawn
+      // list and overwrites it, so without this the document's room rules are
+      // invisible to anything writing the connection back — and the next edit
+      // of one rule would wipe every other.
+      roomRules: connectionRooms(connection),
       name: live?.name || connection.label || 'Unnamed group',
-      rooms: resolve(live?.rooms ?? []),
+      rooms: (live?.rooms ?? []).map((room) => resolveRoom(connection, room, allowedVars, false)),
       missing: !live,
     }
   }
@@ -96,8 +123,9 @@ function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars)
   return {
     ...connection,
     compiled,
+    grouped: false,
     name: live?.label ?? (typeof connection.label === 'string' ? connection.label : 'Unnamed room'),
-    rooms: resolve(live ? [live] : []),
+    rooms: (live ? [live] : []).map((room) => resolveRoom(connection, room, allowedVars, true)),
     missing: !live,
   }
 }

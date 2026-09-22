@@ -22,6 +22,8 @@ import { useEffect, useRef, useState } from 'react'
 import {
   connectionsWithFormula,
   connectionsWithObjectFormula,
+  connectionsWithRoomFormula,
+  questionWithRoomFormula,
   connectionHasObjectRules,
   connectionObjects,
   newConnection,
@@ -305,6 +307,9 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
   const writeFormula = (connection, formula) =>
     writeConnections(connectionsWithFormula(connections.map(stripped), connection, formula))
 
+  const writeRoomFormula = (connection, roomId, formula) =>
+    writeConnections(connectionsWithRoomFormula(connections.map(stripped), connection, roomId, formula))
+
   const writeObjectFormula = (connection, objectId, formula) =>
     writeConnections(connectionsWithObjectFormula(connections.map(stripped), connection, objectId, formula))
 
@@ -387,6 +392,7 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
               allowedVars={names}
               scope={scope}
               onFormula={(formula) => writeFormula(connection, formula)}
+              onRoomFormula={(roomId, formula) => writeRoomFormula(connection, roomId, formula)}
               onObjectFormula={(objectId, formula) => writeObjectFormula(connection, objectId, formula)}
             />
           ))}
@@ -398,9 +404,12 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
 }
 
 // The model hangs `compiled`, `name`, `rooms` and `missing` off a connection for
-// drawing; only the stored keys may go back into the document. `objects` is
-// carried through untouched — it is stored, and dropping it here would wipe every
-// object rule on the next edit of the room's own.
+// drawing; only the stored keys may go back into the document. `objects` and the
+// room rules are carried through untouched — both are stored, and dropping
+// either here would wipe every rule under the row on the next edit of one.
+//
+// The room rules come from `roomRules`, not from `rooms`: the model replaces
+// that key with the drawn list. See resolveConnection.
 function stripped(connection) {
   const out = {
     kind: connection.kind,
@@ -408,6 +417,8 @@ function stripped(connection) {
     label: connection.label ?? '',
     formula: connection.formula ?? '',
   }
+  const rooms = connection.roomRules ?? {}
+  if (Object.keys(rooms).length > 0) out.rooms = { ...rooms }
   if (connectionHasObjectRules(connection)) out.objects = { ...connectionObjects(connection) }
   return out
 }
@@ -605,7 +616,12 @@ function Muted({ children }) {
 // It still lines up at every depth, which is the whole reason the other two are
 // fixed: the indent comes out of the NAME column, so the box's left edge never
 // moves, and its right edge is the panel's own.
-const NAME_COL = 120
+// Wide enough that a room two levels in — inside a group, where the indent has
+// already taken 76px — still gets a readable column. It was 120, which left
+// "equipment object" broken across three lines the moment a group's rooms became
+// rows that carry rules. The box gives nothing up for it: it takes whatever is
+// left, and there is plenty.
+const NAME_COL = 172
 // The first line of a row, and where a branch meets it. FIXED: a wrapped name
 // makes its row taller, and a head measured from the middle of the whole box
 // then lands below the row it points at — which is how the carets came to sit
@@ -706,11 +722,21 @@ function objectBranches(room, depth, { canEdit, allowedVars, scope, onObjectForm
 // the sample number — and what stands in it, a branch each.
 //
 // A GROUP LISTS ITS ROOMS, read live off the tree: the membership is the Tree
-// tab's to state and nothing here can change it, so a room's own row is a
-// reading with no rule of its own, and its objects hang off it. A SINGLE ROOM is
-// the connection's own row — naming it again one line down would say its name
-// twice — so its objects hang straight off that.
-function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, onObjectFormula, onRemove }) {
+// tab's to state and nothing here can change it. **EACH ROOM CARRIES ITS OWN
+// RULE** and the group carries none — see A ROOM GROUP'S ROOMS in
+// data/questionnaire.js. A SINGLE ROOM is the connection's own row — naming it
+// again one line down would say its name twice — so it keeps its rule on that
+// row and its objects hang straight off it.
+function ConnectionBlock({
+  connection,
+  canEdit,
+  allowedVars,
+  scope,
+  onFormula,
+  onRoomFormula,
+  onObjectFormula,
+  onRemove,
+}) {
   const group = connection.kind === ROOM_GROUP
   const compiled = connection.compiled
   // A supporting department's rows are the catalog's and cannot be taken away —
@@ -736,20 +762,24 @@ function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, o
               }
             : undefined
         }
+        // A GROUP HAS NO BOX. It is a heading over rooms that are each sized
+        // separately, and one number cannot size five different rooms.
         field={
-          <FormulaField
-            value={connection.formula ?? ''}
-            allowedVars={allowedVars}
-            canEdit={canEdit}
-            onCommit={onFormula}
-          />
+          group ? null : (
+            <FormulaField
+              value={connection.formula ?? ''}
+              allowedVars={allowedVars}
+              canEdit={canEdit}
+              onCommit={onFormula}
+            />
+          )
         }
-        result={<Result compiled={compiled} scope={scope} />}
+        result={group ? null : <Result compiled={compiled} scope={scope} />}
       />
 
       {/* The rule's own complaint, on the row that owns it: not a child, so it
           gets no branch and the trunk runs past it. */}
-      {compiled.authored && !compiled.ok && (
+      {!group && compiled.authored && !compiled.ok && (
         <div style={{ fontSize: 11, color: '#b3261e', paddingBottom: 2 }}>{compiled.message}</div>
       )}
 
@@ -763,7 +793,24 @@ function ConnectionBlock({ connection, canEdit, allowedVars, scope, onFormula, o
             expanded={room.objects.length > 0}
             head={RULE_HEAD}
           >
-            <RuleRow name={room.label} depth={1} size={12} colour="#666" />
+            <RuleRow
+              name={room.label}
+              depth={1}
+              size={12}
+              colour="#666"
+              field={
+                <FormulaField
+                  value={room.formula ?? ''}
+                  allowedVars={allowedVars}
+                  canEdit={canEdit}
+                  onCommit={(formula) => onRoomFormula(room.instance_id, formula)}
+                />
+              }
+              result={<Result compiled={room.compiled} scope={scope} />}
+            />
+            {room.compiled.authored && !room.compiled.ok && (
+              <div style={{ fontSize: 11, color: '#b3261e', paddingBottom: 2 }}>{room.compiled.message}</div>
+            )}
             {objectBranches(room, 2, under)}
           </Branch>
         ))}
@@ -1090,6 +1137,9 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
             allowedVars={['x', ...general.map((g) => g.name)]}
             scope={{ ...generalPreview(general), x: tryX }}
             onFormula={(formula) => edit((q) => questionWithFormula(q, connection.instance_id, formula))}
+            onRoomFormula={(roomId, formula) =>
+              edit((q) => questionWithRoomFormula(q, connection.instance_id, roomId, formula))
+            }
             onObjectFormula={(objectId, formula) =>
               edit((q) => questionWithObjectFormula(q, connection.instance_id, objectId, formula))
             }

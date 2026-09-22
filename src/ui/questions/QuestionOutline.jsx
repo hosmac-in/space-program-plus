@@ -34,8 +34,7 @@ import { removeHint } from '../primitives/RemoveButton.jsx'
 import { Branch, BranchRoot, TreeLayer } from '../panel/PanelTree.jsx'
 import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, SUPPORTING } from './questionModel.js'
-import { ROOM_GROUP } from '../../data/questionnaire.js'
+import { buildModel, connectionRuled, SUPPORTING } from './questionModel.js'
 
 // One row height for every level, so the tree's elbows land on a regular pitch
 // and a section reads as the same kind of thing as a question, one step up.
@@ -49,8 +48,6 @@ const LEVEL = {
   group: { size: 13, weight: 600, caps: false },
   department: { size: 13, weight: 500, caps: false },
   question: { size: 13, weight: 400, caps: false },
-  connection: { size: 12, weight: 500, caps: false },
-  room: { size: 12, weight: 400, caps: false },
 }
 
 // A supporting department's chip. It is the DEPARTURE — absence means
@@ -155,41 +152,15 @@ function Row({ level, label, muted, selected, onSelect, right }) {
   )
 }
 
-// THE RULE ITSELF, on the row it belongs to. A formula is short and is the whole
-// content of a connection, so the outline states it rather than making you open
-// each one in turn to find out what it does.
-function Rule({ compiled }) {
-  if (!compiled.authored) {
-    return <span style={{ fontSize: 11, color: '#c00', opacity: 0.55, flexShrink: 0 }}>no rule yet</span>
-  }
-  return (
-    <code
-      title={compiled.ok ? compiled.source : compiled.message}
-      style={{
-        flexShrink: 0,
-        fontSize: 11,
-        color: compiled.ok ? '#666' : '#b3261e',
-        background: compiled.ok ? '#f6f6f6' : '#fdecea',
-        borderRadius: 4,
-        padding: '1px 5px',
-        maxWidth: 160,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {compiled.source}
-    </code>
-  )
-}
-
 // What a question does, in one line. The rooms are NOT drawn under it — see
 // QuestionBranch — so this is all the outline says about them, and it says what
 // is missing: a question connecting to nothing, or rules never written.
 // Split in two, because the two halves are drawn in different ink: what is
 // MISSING, and what is merely true of the row.
 function questionMarks(question, connections) {
-  const unruled = connections.filter((c) => !c.compiled.authored).length
+  // Ruled, not "has its own rule": a group's rules are on its ROOMS — see
+  // connectionRuled.
+  const unruled = connections.filter((c) => !connectionRuled(c)).length
   return {
     warn:
       connections.length === 0
@@ -209,7 +180,7 @@ function questionMarks(question, connections) {
 // >>> so the row restated its own siblings and grew with each one; and a name is
 // >>> only of use where a rule is typed, which is side.
 function supportingMarks(department) {
-  const ruled = department.connections.filter((c) => c.compiled.authored).length
+  const ruled = department.connections.filter(connectionRuled).length
   const all = department.connections.length
   return {
     quiet: null,
@@ -248,34 +219,6 @@ function QuestionBranch({ node, canEdit, selectedId, onSelect, onRemove }) {
         onSelect={() => onSelect(node.id)}
         right={<MarkPair marks={questionMarks(node.question, node.connections)} />}
       />
-    </Branch>
-  )
-}
-
-// ONE CONNECTION AND ITS RULE, under a SUPPORTING department — the one place the
-// outline still names a room, because a supporting department has no questions
-// and its rules are the only thing it has to show. A group lists the rooms it
-// brings, since "3 Tesla" alone does not say which three; neither lists the
-// objects inside them, for QuestionBranch's reason above.
-function ConnectionBranch({ connection, onSelect }) {
-  const group = connection.kind === ROOM_GROUP
-
-  return (
-    <Branch endpoint={group ? 'caret' : 'dot'} expanded={group} head={ROW / 2}>
-      <Row
-        level="connection"
-        label={connection.name}
-        muted={connection.missing}
-        onSelect={onSelect}
-        right={<Rule compiled={connection.compiled} />}
-      />
-
-      {group &&
-        connection.rooms.map((room) => (
-          <Branch key={room.instance_id} endpoint="dot" head={ROW / 2}>
-            <Row level="room" label={room.label} onSelect={onSelect} />
-          </Branch>
-        ))}
     </Branch>
   )
 }
@@ -460,8 +403,8 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                     return (
                       <Branch
                         key={department.id}
-                        endpoint={supporting && !department.connections.some((c) => c.compiled.authored) ? 'dot' : 'caret'}
-                        expanded={!supporting || department.connections.some((c) => c.compiled.authored)}
+                        endpoint={supporting && !department.connections.some(connectionRuled) ? 'dot' : 'caret'}
+                        expanded={!supporting || department.connections.some(connectionRuled)}
                         padTop={GAP}
                         head={GAP + ROW / 2}
                       >
@@ -485,24 +428,16 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                           }
                         />
 
-                        {/* A supporting department carries no questions and no
-                            + — its rooms are sized directly, by the rules it
-                            holds, which are authored in side. */}
-                        {/* ONLY THE ROOMS THAT HAVE A RULE. Every room it places
-                            is a row in SIDE, because that is where they are
-                            written; twenty unruled ones out here would bury the
-                            few that say something, and the mark on the row above
-                            already counts them. */}
-                        {supporting &&
-                          department.connections
-                            .filter((c) => c.compiled.authored)
-                            .map((connection) => (
-                              <ConnectionBranch
-                                key={connection.instance_id}
-                                connection={connection}
-                                onSelect={() => onSelect(department.id)}
-                              />
-                            ))}
+                        {/* A SUPPORTING DEPARTMENT IS A LEAF HERE TOO, and
+                            carries no + — its rooms are sized directly by rules
+                            authored in side, and it has no questions to add.
+                            >>> ITS RULED ROOMS WERE LISTED HERE AND ARE GONE,
+                            >>> for the reason a question's rooms went: the rules
+                            >>> ARE the authoring and they are in side, where
+                            >>> each has a box you can type in. Out here they
+                            >>> were a second, read-only copy of that column with
+                            >>> no way to change either. `3/12 sized` on the row
+                            >>> above is what is left of them. */}
 
                         {!supporting && (
                           <>
