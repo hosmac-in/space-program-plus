@@ -400,21 +400,31 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
 
             // A QUESTION'S RULES SEE ITS OWN NUMBER, `x`, THE GENERAL ANSWERS,
             // AND EVERY OTHER QUESTION'S NAMED x — see questionVariable.
-            const questions = (deptEntry?.questions ?? []).map((question) => ({
-              kind: 'question',
-              id: question.instance_id,
-              sectionId: section.id,
-              groupId,
-              deptId,
-              question,
-              variable: questionVariable(question),
-              // Why this question's name is not in scope, or null when it is.
-              variableClash: clashes.reasons.get(questionVariable(question)) ?? null,
-              unit: typeof question.unit === 'string' ? question.unit : '',
-              connections: questionConnections(question).map((c) =>
-                resolveConnection(c, catalogGroups, catalogRooms, [QUESTION_VAR, ...general])
-              ),
-            }))
+            //
+            // A DUMMY IS NEVER ASKED AND HAS NO x: its rules are written over the
+            // other names in scope alone, and build whenever its group is open.
+            // `x` is left out of its compile, so a rule still naming it reads as
+            // broken rather than as quietly unresolved. Absent is a real question.
+            const questions = (deptEntry?.questions ?? []).map((question) => {
+              const dummy = question.dummy === true
+              return {
+                kind: 'question',
+                id: question.instance_id,
+                sectionId: section.id,
+                groupId,
+                deptId,
+                question,
+                dummy,
+                // No answer, so nothing for another rule to read under its name.
+                variable: dummy ? null : questionVariable(question),
+                // Why this question's name is not in scope, or null when it is.
+                variableClash: dummy ? null : clashes.reasons.get(questionVariable(question)) ?? null,
+                unit: typeof question.unit === 'string' ? question.unit : '',
+                connections: questionConnections(question).map((c) =>
+                  resolveConnection(c, catalogGroups, catalogRooms, dummy ? general : [QUESTION_VAR, ...general])
+                ),
+              }
+            })
 
             // THE VARIABLES ARE THE GROUP'S FUNCTIONING DEPARTMENTS, always and
             // automatically — a supporting department serves the group it sits

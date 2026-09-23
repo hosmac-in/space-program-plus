@@ -16,7 +16,7 @@
 //
 // Nothing here is saved. See useTestRun.jsx.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Children, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
 import { functionColours } from '../../data/functions.js'
 import Toggle from '../primitives/Toggle.jsx'
@@ -443,6 +443,31 @@ const ANSWER_GAP = 6
 // The answer boxes' and steppers' stroke: ink, not the app's pale #ddd, which
 // disappeared on the white group cards.
 const ANSWER_STROKE = '#222'
+// Every card's stroke on this tab.
+const CARD_STROKE = '#9a9a9a'
+
+// A RULE BETWEEN QUESTIONS, never above the first or under the last — the
+// card's own edge already does that job. One list for every card, so no card
+// can be the one without them.
+function RuledList({ children }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      {Children.toArray(children).map((child, i) => (
+        <div
+          key={child.key ?? i}
+          style={{
+            paddingBlock: 12,
+            borderTop: i === 0 ? 'none' : '1px solid #bdbdbd',
+            ...(i === 0 ? { paddingTop: 0 } : null),
+          }}
+        >
+          {child}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // THE UNIT IS NEVER CUT OFF, AND NEVER MOVES THE FIELDS. A fixed width that a
 // long unit simply runs past to the right: a width that GREW with its text
 // pushed that row's stepper and box left, since the rows are right-aligned, and
@@ -644,15 +669,19 @@ function GeneralCard({ section, run, beds }) {
           style={{
             padding: '14px 18px',
             borderRadius: 8,
-            border: '1px solid rgba(0,0,0,0.08)',
+            // The group cards' stroke, so the first card is not the one that
+            // melts into the wash.
+            border: `1px solid ${CARD_STROKE}`,
             background: '#fff',
             minWidth: 0,
           }}
         >
-          <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {section.questions.map((node) => (
-              <GeneralRow key={node.id} node={node} run={run} beds={beds} />
-            ))}
+          <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0 }}>
+            <RuledList>
+              {section.questions.map((node) => (
+                <GeneralRow key={node.id} node={node} run={run} beds={beds} />
+              ))}
+            </RuledList>
           </div>
         </div>
       </div>
@@ -875,6 +904,8 @@ function SectionCard({ step, run, functions, beds }) {
           const questions = group.departments
             .filter((d) => d.role !== SUPPORTING)
             .flatMap((d) => d.questions)
+            // A dummy is never asked — it builds in side, off other answers.
+            .filter((node) => !node.dummy)
 
           const opened = yes && questions.length > 0
           return (
@@ -887,7 +918,7 @@ function SectionCard({ step, run, functions, beds }) {
                 borderRadius: 8,
                 // A real stroke, on or off: the pale hairline vanished against
                 // the section's wash and the cards ran into one another.
-                border: '1px solid #9a9a9a',
+                border: `1px solid ${CARD_STROKE}`,
                 background: '#fff',
                 overflow: 'hidden',
                 minWidth: 0,
@@ -918,11 +949,11 @@ function SectionCard({ step, run, functions, beds }) {
                   <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0 }}>
                     {!opened && <PanelNote>Nothing is asked about this yet.</PanelNote>}
                     {opened && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      <RuledList>
                         {questions.map((node) => (
                           <QuestionRow key={node.id} node={node} run={run} beds={beds} />
                         ))}
-                      </div>
+                      </RuledList>
                     )}
                   </div>
                 </div>

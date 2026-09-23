@@ -374,6 +374,14 @@ export function evaluateRun(model, run) {
         // >>> to build.
         const results = open
           ? department.questions.flatMap((node) => {
+              // A DUMMY BUILDS WHENEVER ITS GROUP IS OPEN, off the other names
+              // alone — there is no x to be the no.
+              if (node.dummy) {
+                return node.connections.map((connection) => ({
+                  questionId: node.id,
+                  ...evaluateConnection(connection, general),
+                }))
+              }
               const x = run.xOf(node.id)
               if (!(x > 0)) return []
               // The question is carried on each result so the beds a single

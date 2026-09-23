@@ -1492,6 +1492,9 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
   const [pendingRemove, setPendingRemove] = useState(null)
 
   const connections = node.connections
+  const dummy = node.dummy === true
+  // A dummy's rules see everything but x.
+  const vars = dummy ? general.map((g) => g.name) : ['x', ...general.map((g) => g.name)]
   // Not stored: a sample to read the rules back at. 10 rather than 1, because a
   // ratio at 1 tells you almost nothing about whether you wrote it right.
   const [tryX, setTryX] = useState(10)
@@ -1532,6 +1535,31 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
           the outline beside it already shows where the question sits. */}
       <div style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2 }}>Question</div>
 
+      {/* A DUMMY: never asked, no x, sized off the other names in scope. Off
+          deletes the key, so a real question stores what it always did. */}
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ flex: 1, fontSize: 13 }}>Dummy</span>
+        <Toggle
+          checked={dummy}
+          disabled={!canEdit}
+          title="A dummy is never asked and has no x — its rules read the other variables only"
+          onChange={(on) =>
+            edit((q) => {
+              const next = { ...q }
+              if (on) next.dummy = true
+              else delete next.dummy
+              return next
+            })
+          }
+        />
+      </div>
+      {dummy && (
+        <PanelNote>
+          Never asked in the run and takes no <code>x</code>. Its rules are written over the General answers and the
+          other questions&apos; variables, and build whenever its group is switched on.
+        </PanelNote>
+      )}
+
       <Field
         label="Asked as"
         value={question.prompt}
@@ -1549,13 +1577,15 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
 
       {/* WHAT OTHER RULES CALL THIS x. No path — it is unique in the building,
           and a clash is shown here and left out of scope everywhere. */}
+      {!dummy && (
       <Field
         label="Variable Name"
         value={node.variable ?? ''}
         canEdit={canEdit}
         onCommit={(name) => edit((q) => questionWithVariable(q, name))}
       />
-      {node.variableClash ? (
+      )}
+      {dummy ? null : node.variableClash ? (
         <PanelNote>
           <span style={{ color: '#c62828' }}>
             {node.variableClash} — no rule can read it until it is renamed.
@@ -1587,7 +1617,7 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
           <PanelNote>Nothing yet. Add a room group or a single room from this department.</PanelNote>
         )}
 
-        {connections.length > 0 && (
+        {connections.length > 0 && !dummy && (
           <TryBar
             label="Try x ="
             value={tryX}
@@ -1608,8 +1638,8 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
             key={connection.instance_id}
             connection={connection}
             canEdit={canEdit}
-            allowedVars={['x', ...general.map((g) => g.name)]}
-            scope={{ ...generalPreview(general), x: tryX }}
+            allowedVars={vars}
+            scope={dummy ? generalPreview(general) : { ...generalPreview(general), x: tryX }}
             onFormula={(formula) => edit((q) => questionWithFormula(q, connection.instance_id, formula))}
             onRoomFormula={(roomId, formula) =>
               edit((q) => questionWithRoomFormula(q, connection.instance_id, roomId, formula))
