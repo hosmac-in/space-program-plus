@@ -34,6 +34,7 @@ import QuestionDetail from './questions/QuestionDetail.jsx'
 import { QuestionnaireEditorProvider } from './questions/useQuestionnaireEditor.jsx'
 import TestRunTree, { TestRunHud } from './questions/TestRunTree.jsx'
 import { TestRunProvider } from './questions/useTestRun.jsx'
+import { ExpandAllProvider } from './expandAll.jsx'
 import LoadingOverlay from './primitives/LoadingOverlay.jsx'
 import AppFooter from './AppFooter.jsx'
 import AppHeader from './AppHeader.jsx'
@@ -277,6 +278,7 @@ function SignedInApp({ session }) {
         stepping through the carousel and back does not lose them — leaving the
         tab does, deliberately, since nothing here is saved. */}
     <TestRunProvider>
+    <ExpandAllProvider>
     {/* The four regions — header, main, side, footer — and the three
         regulating lines between them. See CLAUDE.md. */}
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'sans-serif' }}>
@@ -577,6 +579,7 @@ function SignedInApp({ session }) {
 
       <LoadingOverlay />
     </div>
+    </ExpandAllProvider>
     </TestRunProvider>
     </QuestionnaireEditorProvider>
     </TreeEditorProvider>

@@ -585,6 +585,8 @@ export function buildLayout({
         selectable: false,
         data: {
           name: item.section.name,
+          // Which band it sits in — read by the canvas's opening fit.
+          buildingId: bItem.building.id,
           colours: sectionColours,
           isGhost: sectionIsGhost,
           isSelected: selection?.kind === 'section' && selection.id === item.section.id,

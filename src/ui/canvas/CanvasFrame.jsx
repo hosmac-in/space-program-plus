@@ -23,8 +23,9 @@
 // <ReactFlow>, so they cannot rely on its implicit one).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useReactFlow, useStore } from 'reactflow'
+import { useNodesInitialized, useReactFlow, useStore } from 'reactflow'
 import { RULE_INNER } from '../layout.js'
+import FullscreenControls, { useHasFullscreenRoot } from '../primitives/FullscreenControls.jsx'
 
 export const GUTTER = 14
 // The knub is FATTER than its gutter by 10%, so it overhangs the track slightly
@@ -64,8 +65,13 @@ const KNUB_BG_HOT = '#fff'
 // zoomOnPinch (pinch, and ctrl/⌘ + wheel, which React Flow routes here) and drop
 // zoomOnDoubleClick: on a canvas of cards a double-click is a mis-click, and it
 // lands you at a zoom you did not ask for.
-const MOUSE_INPUT = { zoomOnScroll: true, panOnScroll: false, zoomOnPinch: true, zoomOnDoubleClick: false }
-const PAD_INPUT = { zoomOnScroll: false, panOnScroll: true, zoomOnPinch: true, zoomOnDoubleClick: false }
+// Left-drag pans the pane as React Flow does. RIGHT-drag is ours — see
+// useRightDragPan — because React Flow only pans from the pane, and a right-drag
+// exists precisely so a pan can start on top of a card. The pane's own context
+// menu is suppressed, or it pops up at the end of every right-drag.
+const DRAG_INPUT = { panOnDrag: [0], onPaneContextMenu: (e) => e.preventDefault() }
+const MOUSE_INPUT = { ...DRAG_INPUT, zoomOnScroll: true, panOnScroll: false, zoomOnPinch: true, zoomOnDoubleClick: false }
+const PAD_INPUT = { ...DRAG_INPUT, zoomOnScroll: false, panOnScroll: true, zoomOnPinch: true, zoomOnDoubleClick: false }
 
 // A wheel event's own shape says which device sent it. Nothing else does — the
 // browser exposes no device identity — so this is a heuristic, and it is written
@@ -99,7 +105,39 @@ export function useCanvasInput() {
     // Capture and passive: this only observes. React Flow's own handler runs
     // regardless, and must not be delayed by ours.
     window.addEventListener('wheel', onWheel, { capture: true, passive: true })
-    return () => window.removeEventListener('wheel', onWheel, { capture: true })
+
+    // A RIGHT-DRAG THAT MOVED IS A PAN, NOT A RIGHT-CLICK. The contextmenu fires
+    // on release wherever the pointer ended — often over a card, where the pane's
+    // suppression never sees it and a remove handler would. So the drag is
+    // measured, and the menu after one that moved is swallowed in capture, before
+    // anything else hears it. A still right-click keeps its meaning.
+    let start = null
+    let moved = false
+    const onDown = (e) => {
+      if (e.button !== 2) return
+      start = { x: e.clientX, y: e.clientY }
+      moved = false
+    }
+    const onMove = (e) => {
+      if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) moved = true
+    }
+    const onMenu = (e) => {
+      if (moved) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+      start = null
+      moved = false
+    }
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('pointermove', onMove, true)
+    window.addEventListener('contextmenu', onMenu, true)
+    return () => {
+      window.removeEventListener('wheel', onWheel, { capture: true })
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('pointermove', onMove, true)
+      window.removeEventListener('contextmenu', onMenu, true)
+    }
   }, [])
 
   return device === 'pad' ? PAD_INPUT : MOUSE_INPUT
@@ -172,7 +210,83 @@ function Knub({ axis, at, trackPx, onDrag }) {
   )
 }
 
+// RIGHT-DRAG PANS FROM ANYWHERE IN THE PANE, cards included. Captured on the
+// pane before any node sees it, and applied as a viewport delta from the last
+// move. A still right-click is left alone — its contextmenu (a card's remove)
+// still fires; the one after a drag that moved is swallowed by useCanvasInput.
+function useRightDragPan(paneRef) {
+  const { getViewport, setViewport } = useReactFlow()
+  useEffect(() => {
+    const el = paneRef.current
+    if (!el) return
+    let last = null
+    const onDown = (e) => {
+      if (e.button !== 2) return
+      last = { x: e.clientX, y: e.clientY }
+    }
+    const onMove = (e) => {
+      if (!last || !(e.buttons & 2)) return (last = null)
+      const { x, y, zoom } = getViewport()
+      setViewport({ x: x + e.clientX - last.x, y: y + e.clientY - last.y, zoom })
+      last = { x: e.clientX, y: e.clientY }
+    }
+    const onUp = (e) => {
+      if (e.button === 2) last = null
+    }
+    el.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('pointermove', onMove, true)
+    window.addEventListener('pointerup', onUp, true)
+    return () => {
+      el.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('pointermove', onMove, true)
+      window.removeEventListener('pointerup', onUp, true)
+    }
+  }, [paneRef, getViewport, setViewport])
+}
+
+// WHERE A CANVAS OPENS: fitted to the nodes `pick` names, once per mount, the
+// first time React Flow has measured them — before that the bounds are zeros.
+// Replaces React Flow's own `fitView`, which fits the whole drawing and jumps
+// if both run. `pick` returning nothing falls back to the whole drawing. Must
+// render inside the ReactFlowProvider; draws nothing.
+// The usual pick: the FIRST building band's section boxes that `keep` accepts,
+// else that band itself. Both canvases name them `buildingbox-` / `sectionbox-`
+// and stamp `buildingId` on a section's data.
+export const firstBuildingSections = (keep = () => true) => (nodes) => {
+  const building = nodes.find((n) => n.id.startsWith('buildingbox-'))
+  if (!building) return []
+  const id = building.id.slice('buildingbox-'.length)
+  const sections = nodes.filter(
+    (n) => n.id.startsWith('sectionbox-') && String(n.data?.buildingId) === id && keep(n)
+  )
+  return sections.length ? sections.map((n) => n.id) : [building.id]
+}
+
+export function InitialFit({ pick }) {
+  const initialised = useNodesInitialized()
+  const { getNodes, fitView } = useReactFlow()
+  const done = useRef(false)
+  const pickRef = useRef(pick)
+  pickRef.current = pick
+  useEffect(() => {
+    if (!initialised || done.current) return
+    const all = getNodes()
+    if (!all.length) return
+    done.current = true
+    const ids = pickRef.current(all)
+    requestAnimationFrame(() =>
+      fitView({ nodes: ids.length ? ids.map((id) => ({ id })) : undefined, padding: 0.08, maxZoom: 1 })
+    )
+  }, [initialised, getNodes, fitView])
+  return null
+}
+
 export default function CanvasFrame({ children }) {
+  // The pane alone goes full screen — unless a FullscreenRoot above already
+  // owns a bigger target (the option view). See primitives/FullscreenControls.
+  const paneRef = useRef(null)
+  const hasRoot = useHasFullscreenRoot()
+  useRightDragPan(paneRef)
   const { setViewport } = useReactFlow()
   const nodeInternals = useStore((s) => s.nodeInternals)
   const transform = useStore((s) => s.transform)
@@ -253,7 +367,10 @@ export default function CanvasFrame({ children }) {
         {bars && <Knub axis="y" trackPx={paneHeight} {...bars.y} />}
       </div>
 
-      <div style={{ position: 'relative', minWidth: 0, minHeight: 0 }}>{children}</div>
+      <div ref={paneRef} style={{ position: 'relative', minWidth: 0, minHeight: 0, background: '#fff' }}>
+        {children}
+        {!hasRoot && <FullscreenControls target={paneRef} />}
+      </div>
 
       {/* The corner the two gutters meet in: filled, so the frame reads as one
           band turning a right angle rather than two bars that stop short. */}

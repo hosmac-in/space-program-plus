@@ -16,6 +16,7 @@ import useHoldRepeat from '../primitives/useHoldRepeat.js'
 import { ADD_ENDPOINT } from '../canvas/canvasLayout.js'
 import { formatArea } from '../map/area.js'
 import { useAreaUnit } from '../AreaUnitContext.jsx'
+import { useExpandAll } from '../expandAll.jsx'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   AREA_WIDTH,
@@ -879,6 +880,7 @@ export function RoomBlock({
   children,
 }) {
   const [open, setOpen] = useState(false)
+  useExpandAll(setOpen)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const { label: AREA_UNIT, toDisplay } = useAreaUnit()
@@ -1194,6 +1196,7 @@ export function RoomGroupBlock({
   children,
 }) {
   const [open, setOpen] = useState(true)
+  useExpandAll(setOpen)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name ?? '')
   const { label: AREA_UNIT, toDisplay } = useAreaUnit()

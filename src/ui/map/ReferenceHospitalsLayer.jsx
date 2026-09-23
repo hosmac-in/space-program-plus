@@ -118,33 +118,67 @@ async function read(table, columns) {
   return data ?? []
 }
 
-// THE CELLS ARE WORKED OUT ONCE, WHEN THE DATA ARRIVES — all three tables in one
-// go, then one Voronoi pass stored as state. Nothing re-runs it on render or on a
-// toggle; hiding the layer unmounts it, and showing it again is a fresh fetch.
+// FETCHED AND WORKED OUT ONCE PER PAGE LOAD — the first time the layer is shown,
+// never before. The promise is the cache: hiding the layer unmounts it, showing it
+// again reads the same result. A reload refetches, which is how new rows arrive.
+let cached = null
+function loadReference() {
+  cached ??= Promise.all([
+    read('cancer_hospital_campus_geojson', 'id, name, hospital_id, geojson'),
+    read('cancer_hospital_built_geojson', 'id, name, hospital_id, floors_all, types_all, geojson'),
+    read('india_boundary_view', 'geometry'),
+  ])
+    // A tick before the Voronoi, which blocks the thread: the loading sign paints first.
+    .then((rows) => new Promise((resolve) => setTimeout(() => resolve(rows), 0)))
+    .then(([campuses, built, indiaRows]) => {
+      const india = boundaryOf(indiaRows.map((row) => row.geometry))
+      if (!india) console.warn('india_boundary_view.geometry holds no polygon', indiaRows)
+      return { campuses, built, cells: india ? voronoiCells(seedsOf(campuses, built), india) : [] }
+    })
+    .catch((e) => {
+      console.warn('Reference hospitals failed to load:', e)
+      cached = null // let the next show try again
+      return { campuses: [], built: [], cells: [] }
+    })
+  return cached
+}
+
+let resolved = null
+
 export default function ReferenceHospitalsLayer({ drawMode }) {
-  const [campuses, setCampuses] = useState([])
-  const [built, setBuilt] = useState([])
-  const [cells, setCells] = useState([])
+  const [data, setData] = useState(resolved)
 
   useEffect(() => {
+    if (data) return
     let cancelled = false
-    Promise.all([
-      read('cancer_hospital_campus_geojson', 'id, name, hospital_id, geojson'),
-      read('cancer_hospital_built_geojson', 'id, name, hospital_id, floors_all, types_all, geojson'),
-      read('india_boundary_view', 'geometry'),
-    ]).then(([campusRows, builtRows, indiaRows]) => {
-      if (cancelled) return
-      setCampuses(campusRows)
-      setBuilt(builtRows)
-      const india = boundaryOf(indiaRows.map((row) => row.geometry))
-      if (!india) return console.warn('india_boundary_view.geometry holds no polygon', indiaRows)
-      setCells(voronoiCells(seedsOf(campusRows, builtRows), india))
+    loadReference().then((d) => {
+      resolved = d
+      if (!cancelled) setData(d)
     })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [data])
 
+  if (!data) {
+    return (
+      <div
+        style={{
+          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
+          background: '#fff', border: '1px solid #ccc', borderRadius: 6, padding: '6px 12px',
+          fontSize: 12, display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'none',
+        }}
+      >
+        <span className="spp-ref-spinner" />
+        Loading cancer hospitals…
+        <style>{`.spp-ref-spinner { width: 12px; height: 12px; border: 2px solid #ddd; border-top-color: #7b3fa0;
+          border-radius: 50%; animation: spp-ref-spin 0.8s linear infinite; }
+          @keyframes spp-ref-spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    )
+  }
+
+  const { campuses, built, cells } = data
   return (
     <>
       {cells.map(({ key, feature }) => (

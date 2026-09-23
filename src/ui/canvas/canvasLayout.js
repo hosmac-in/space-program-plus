@@ -93,7 +93,9 @@ export const DEPT_HEAD_INSET = (ROW_HEIGHT - DEPT_NAME_ROW) / 2
 export const departmentCardHeight = (roomCount) =>
   roomCount === 0
     ? DEPT_HEAD_HEIGHT
-    : DEPT_HEAD_INSET * 2 + DEPT_NAME_ROW + roomListHeight(roomCount)
+    : // The head row spends BOTH insets (it is ROW_HEIGHT), so the one under the
+      // last room is a third — without it the list sat flush on the card's edge.
+      DEPT_HEAD_INSET * 3 + DEPT_NAME_ROW + roomListHeight(roomCount)
 
 // The disclosure caret's column, RESERVED WHETHER OR NOT A ROW HAS ONE — a
 // department with no rooms, or a group with no cards, would otherwise start its

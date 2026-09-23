@@ -96,7 +96,8 @@ export default function MapPanel({
 }) {
   const [baseOpacity, setBaseOpacity] = useState(0.5)
   const [baseLayerType, setBaseLayerType] = useState('street')
-  const [showReference, setShowReference] = useState(true)
+  // Off by default: the layer fetches three tables and runs a Voronoi on first show.
+  const [showReference, setShowReference] = useState(false)
   const skipNextFlyRef = useRef(false)
 
   const selectedProject = projects.find((p) => p.id === projectId)

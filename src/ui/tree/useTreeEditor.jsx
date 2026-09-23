@@ -520,6 +520,58 @@ export function useTreeEditor() {
     return true
   }), [])
 
+  // SWAP TWO DEPARTMENTS' ROOMS — the room list AND its room groups, since a
+  // room's room_group_id names a group on its own department. Nothing else on
+  // either node moves. One write when both share a section; two otherwise, and
+  // the first is PUT BACK if the second fails, or the same room instance_ids
+  // would stand under both departments. Undo is the same swap again.
+  //
+  // Destructive for options: their rooms are anchored to placements that have
+  // now moved department, and are dropped on load. Agreed as a one-off.
+  const swapDeptRooms = useCallback(serialise(async (aId, bId, opts = {}) => {
+    const { record = true, message } = opts
+    const { sections } = catalogRef.current
+    const a = findDeptContext(sections, aId)
+    const b = findDeptContext(sections, bId)
+    if (!a || !b || aId === bId) {
+      pushToast('Could not find both departments — nothing was swapped.')
+      return false
+    }
+    const half = (node) => ({ rooms: node.rooms || [], room_groups: node.room_groups || [] })
+    const aHalf = half(a.deptNode)
+    const bHalf = half(b.deptNode)
+    const put = (tree, id, h) => updateDeptNode(tree || EMPTY_TREE, id, (dept) => ({ ...dept, ...h })).tree
+
+    const aSection = sections.find((s) => s.id === a.sectionId)
+    if (a.sectionId === b.sectionId) {
+      if (!(await write(a.sectionId, put(put(aSection.tree, aId, bHalf), bId, aHalf)))) return false
+    } else {
+      const bSection = sections.find((s) => s.id === b.sectionId)
+      if (!(await write(a.sectionId, put(aSection.tree, aId, bHalf)))) return false
+      if (!(await write(b.sectionId, put(bSection.tree, bId, aHalf)))) {
+        // Back out the first against the section as it now is (write reloaded it).
+        const now = catalogRef.current.sections.find((s) => s.id === a.sectionId)
+        await write(a.sectionId, put(now.tree, aId, aHalf))
+        pushToast('Swap failed part way and was undone — nothing changed.')
+        return false
+      }
+    }
+
+    if (message) pushToast(message)
+    if (record) {
+      pushCommand(
+        () => swapDeptRooms(aId, bId, { record: false }),
+        () => swapDeptRooms(aId, bId, { record: false })
+      )
+    }
+    return true
+  }), [])
+
+  // Which department a swap was started from, armed in its rooms panel and
+  // completed by clicking another on the canvas. Two columns read it, so it
+  // lives here with the rest of the shared editing session.
+  const [swapFrom, setSwapFrom] = useState(null)
+
   // --- Undo / redo ----------------------------------------------------------
   //
   // Structural commands are closure pairs, so an undo re-runs the inverse edit
@@ -555,6 +607,9 @@ export function useTreeEditor() {
     setDeptRooms,
     setRoomGrouping,
     setDeptFactor,
+    swapDeptRooms,
+    swapFrom,
+    setSwapFrom,
     undo,
     redo,
     canUndo: undoStack.length > 0,

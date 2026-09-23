@@ -10,6 +10,7 @@ import { guideNodeTypes } from '../canvas/CanvasGuides.jsx'
 import { BandRow } from '../primitives/Band.jsx'
 import { removeHint } from '../primitives/RemoveButton.jsx'
 import DmgChip from '../primitives/DmgChip.jsx'
+import { PULSE_STYLE } from '../canvas/CanvasSearch.jsx'
 
 // How long a group's collapse runs. Exported because TreeCanvas has to hold the
 // class below for exactly as long as the rule it switches on.
@@ -60,18 +61,7 @@ export const CANVAS_STYLE = `
   .react-flow__node-tDepartment.dragging > div {
     transform: scale(1.05);
   }
-  @keyframes treeDropPulse {
-    0% { box-shadow: 0 0 0 0 var(--pulse-ring, rgba(26,115,232,0.55)); }
-    100% { box-shadow: 0 0 0 16px transparent; }
-  }
-  .tree-drop-pulse { animation: treeDropPulse 450ms ease-out; }
-  /* A search landing on one room row, inside an already-pulsing card — a
-     background wash rather than a ring, since a text row has no box to ring. */
-  @keyframes treeRoomPulse {
-    0% { background-color: rgba(26,115,232,0.35); }
-    100% { background-color: transparent; }
-  }
-  .tree-room-pulse { animation: treeRoomPulse 900ms ease-out; border-radius: 3px; }
+  ${PULSE_STYLE}
   .tree-carousel-item {
     transition: transform 100ms ease, box-shadow 150ms ease, border-color 150ms ease;
   }

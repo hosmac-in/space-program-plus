@@ -19,8 +19,10 @@
 // department inside it does.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ReactFlow, { Background, ReactFlowProvider } from 'reactflow'
-import CanvasFrame, { useCanvasInput } from '../canvas/CanvasFrame.jsx'
+import ReactFlow, { Background, ReactFlowProvider, useReactFlow } from 'reactflow'
+import CanvasFrame, { firstBuildingSections, InitialFit, useCanvasInput } from '../canvas/CanvasFrame.jsx'
+import CanvasSearch, { ALWAYS_EXPANDED, PULSE_STYLE } from '../canvas/CanvasSearch.jsx'
+import { useToast } from '../primitives/Toast.jsx'
 import 'reactflow/dist/style.css'
 import { useCatalog } from '../../data/catalog.jsx'
 import { summarize } from '../../data/optionData.js'
@@ -37,6 +39,7 @@ import {
   DepartmentCardFace,
 } from '../canvas/canvasCards.jsx'
 import { ADD_ENDPOINT, DEPTH } from '../canvas/canvasLayout.js'
+import { catalogOpenIds, useExpandAll } from '../expandAll.jsx'
 import { guideNodeTypes } from '../canvas/CanvasGuides.jsx'
 
 // What a phased card's strips are inset by, inside a card whose heading row pads
@@ -51,6 +54,8 @@ import { useAreaUnit } from '../AreaUnitContext.jsx'
 // Containment is drawn by nesting boxes and by stacking buildings down the
 // canvas, so this canvas has no edges — see the note in departmentGraphLayout.
 const NO_EDGES = []
+
+const FIRST_BUILDING_IN_OPTION = firstBuildingSections((n) => !n.data?.isGhost)
 
 // An unstaged phase strip's dashed edge, at part alpha. color-mix rather than a
 // hard-coded rgba: the ink it is given is whatever colour reads against the
@@ -231,6 +236,7 @@ function DepartmentNodeCard({ data }) {
       ghostBorder={data.ghostInk}
       ghostText={data.ghostInk}
       isHighlighted={data.isHighlighted}
+      pulse={data.pulse}
       // THE + ADDS, THE CARD DOES NOT. A ghost is a preview of what is
       // available, and the whole card being a hit target made adding one the
       // easiest thing to do by accident on a canvas you also pan and select in.
@@ -250,6 +256,7 @@ function DepartmentNodeCard({ data }) {
         rooms={ghost ? null : data.rooms}
         expanded={data.roomsExpanded}
         onToggleRooms={data.onToggleRooms}
+        highlightRoomKey={data.highlightRoomKey ?? null}
         add={
           addable ? (
             <AddButton
@@ -298,6 +305,7 @@ function PhasedDepartmentCard({ data }) {
       // showing is one phase of this department, and ringing the whole card as
       // well would say the card is what's open.
       isHighlighted={false}
+      pulse={data.pulse}
       cursor="default"
     >
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -383,6 +391,7 @@ function ContainerNode({
         fontSize={fontSize}
         fontWeight={fontWeight}
         isGhost={data.isGhost}
+        pulse={data.pulse}
         depth={depth}
         collapsible={collapsible}
         isCollapsed={data.isCollapsed}
@@ -445,6 +454,44 @@ function BuildingNode({ data }) {
       }
     />
   )
+}
+
+// The search box, INSIDE the provider so it can pan — DepartmentGraph itself
+// sits above the ReactFlowProvider it renders. A hit behind something shut is
+// held until `nodes` (the drawn layout) has a node for it, then panned to.
+function OptionSearch({ index, nodes, openForHit, onPulse }) {
+  const { setCenter, getZoom } = useReactFlow()
+  const onToast = useToast()
+  const pendingRef = useRef(null)
+
+  const focus = useCallback(
+    (hit) => {
+      const node = nodes.find((n) => n.id === hit.id)
+      if (!node) return false
+      // Option nodes are placed absolutely — no parentNode to add in.
+      const w = node.width ?? NODE_WIDTH
+      const h = node.height ?? node.data?.height ?? NODE_HEIGHT
+      setCenter(node.position.x + w / 2, node.position.y + h / 2, { zoom: getZoom(), duration: 600 })
+      onPulse(hit)
+      return true
+    },
+    [nodes, setCenter, getZoom, onPulse]
+  )
+
+  useEffect(() => {
+    if (pendingRef.current && focus(pendingRef.current)) pendingRef.current = null
+  }, [focus])
+
+  const run = (query) => {
+    const q = query.trim().toLowerCase()
+    if (!q) return
+    const hit = index.find((e) => e.name?.toLowerCase().includes(q))
+    if (!hit) return onToast(`Nothing on this canvas matches "${query.trim()}"`, 'error')
+    if (openForHit(hit)) pendingRef.current = hit
+    else focus(hit)
+  }
+
+  return <CanvasSearch onSearch={run} />
 }
 
 // Sections and groups are the same component; only the chrome grows as the
@@ -602,6 +649,12 @@ export default function DepartmentGraph({
     })
   }, [])
 
+  useExpandAll((open) => {
+    const ids = open ? catalogOpenIds(sections) : { groups: new Set(), departments: new Set() }
+    setExpandedGroups(ids.groups)
+    setExpandedRooms(ids.departments)
+  })
+
   const { nodes: rawNodes, order } = useMemo(
     () =>
       buildLayout({
@@ -683,11 +736,86 @@ export default function DepartmentGraph({
     ]
   )
 
+  // --- Search ----------------------------------------------------------------
+  //
+  // The Tree tab's search, over THIS canvas: every section, group, department
+  // and room the option canvas draws — ghosts included, they are on screen too.
+  // Indexed off a layout with everything open (ALWAYS_EXPANDED), since a shut
+  // group emits no department nodes at all; the drawn layout is `rawNodes`.
+  const searchIndex = useMemo(() => {
+    const groupOfDept = new Map()
+    ;(sections ?? []).forEach((s) =>
+      (s.tree?.groups ?? []).forEach((g) =>
+        (g.departments ?? []).forEach((d) => d.instance_id && groupOfDept.set(d.instance_id, g.instance_id))
+      )
+    )
+    const { nodes: all } = buildLayout({
+      optionName, departmentDefs, departments, perDepartment: summary.perDepartment, groups, sections,
+      sectionIds, buildings, buildingIds, buildingFactors, functions, phaseCount, dmgIds,
+      selectedDeptInstanceId: null, selectedPhase: null, selection: null,
+      onSelectContainer: () => {}, onClick: () => {}, onAdd: null, onAddSection: null,
+      onRequestRemoveSection: null, onRequestRemove: null,
+      expandedRooms: ALWAYS_EXPANDED, onToggleRooms: () => {},
+      expandedGroups: ALWAYS_EXPANDED, onToggleGroup: () => {},
+      frozenOrder: null,
+    })
+    const idx = []
+    all.forEach((n) => {
+      if (n.type === 'sectionBox') idx.push({ kind: 'section', name: n.data.name, id: n.id })
+      else if (n.type === 'groupBox') {
+        idx.push({ kind: 'group', name: n.data.name, id: n.id, groupId: n.id.replace(/^groupbox-/, '') })
+      } else if (n.type === 'department') {
+        const treeNodeId = n.data.treeNodeId
+        const groupId = groupOfDept.get(treeNodeId) ?? null
+        idx.push({ kind: 'department', name: n.data.name, id: n.id, groupId })
+        // A phased card has no room list to open or pulse — see the layout.
+        if (phaseCount === 1 && n.data.isReal) {
+          ;(n.data.rooms ?? []).forEach((r) =>
+            idx.push({ kind: 'room', name: r.name, id: n.id, groupId, treeNodeId, roomKey: r.key })
+          )
+        }
+      }
+    })
+    return idx
+  }, [optionName, departmentDefs, departments, summary, groups, sections, sectionIds, buildings, buildingIds,
+    buildingFactors, functions, phaseCount, dmgIds])
+
+  // What a search just landed on — a node to ring, and a room row to wash.
+  const [pulse, setPulse] = useState(null)
+
+  // Opens what a hit sits behind, and says whether anything had to open — in
+  // which case the pan waits for the layout that opening produces.
+  const openForHit = useCallback(
+    (hit) => {
+      const needsGroup = hit.groupId && !expandedGroups.has(hit.groupId)
+      const needsRooms = hit.kind === 'room' && !expandedRooms.has(hit.treeNodeId)
+      if (needsGroup) setExpandedGroups((cur) => new Set(cur).add(hit.groupId))
+      if (needsRooms) setExpandedRooms((cur) => new Set(cur).add(hit.treeNodeId))
+      return needsGroup || needsRooms
+    },
+    [expandedGroups, expandedRooms]
+  )
+
+  const onPulse = useCallback((hit) => {
+    const at = Date.now()
+    setPulse({ id: hit.id, roomKey: hit.roomKey ?? null, at })
+    setTimeout(() => setPulse((p) => (p?.at === at ? null : p)), 900)
+  }, [])
+
   // Beat 3: each card carries its own delay and duration, so the traveller
   // passes the others one at a time.
-  const { nodes, duration } = useMemo(
+  const { nodes: movedNodes, duration } = useMemo(
     () => applyMotion(rawNodes, order, travellingFrom),
     [rawNodes, order, travellingFrom]
+  )
+  const nodes = useMemo(
+    () =>
+      pulse
+        ? movedNodes.map((n) =>
+            n.id === pulse.id ? { ...n, data: { ...n.data, pulse: true, highlightRoomKey: pulse.roomKey } } : n
+          )
+        : movedNodes,
+    [movedNodes, pulse]
   )
 
   // Cleared once it has played, so a later render doesn't re-apply stale delays
@@ -714,6 +842,7 @@ export default function DepartmentGraph({
           adding or removing a department re-partitions the ghosts, so half a
           group can move at once and an instant redraw reads as the canvas
           having changed rather than a card having moved. See index.css. */}
+      <style>{PULSE_STYLE}</style>
       <div className="spp-option-canvas" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         <ReactFlowProvider>
           <CanvasFrame>
@@ -721,7 +850,6 @@ export default function DepartmentGraph({
               nodes={nodes}
               edges={NO_EDGES}
               nodeTypes={nodeTypes}
-              fitView
               proOptions={{ hideAttribution: true }}
               {...canvasInput}
               // NO onPaneClick. Clicking past the boxes used to clear the
@@ -733,7 +861,13 @@ export default function DepartmentGraph({
             >
               <Background />
             </ReactFlow>
+            {/* Opens on the first building's sections IN THE OPTION — ghosts
+                excluded. Keyed so opening another option fits again. */}
+            <InitialFit key={optionName} pick={FIRST_BUILDING_IN_OPTION} />
           </CanvasFrame>
+          {/* Outside the frame, as on the Tree tab: CanvasSearch clears the
+              gutters itself, so inside the pane it sat a gutter too far in. */}
+          <OptionSearch index={searchIndex} nodes={rawNodes} openForHit={openForHit} onPulse={onPulse} />
         </ReactFlowProvider>
       </div>
 

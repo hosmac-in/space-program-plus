@@ -8,7 +8,9 @@
 //
 // It also holds the analysis view, behind `diagram` — see below.
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import FullscreenControls, { FullscreenRoot } from '../primitives/FullscreenControls.jsx'
+import { GUTTER } from '../canvas/CanvasFrame.jsx'
 import DepartmentGraph from './DepartmentGraph.jsx'
 import OptionAnalysis from '../diagram/OptionAnalysis.jsx'
 
@@ -25,9 +27,13 @@ export default function OptionCanvas({ workspace, onSelectDepartment, diagram = 
   // shareable link that landed on it would be reporting the viewer's last
   // glance rather than anything about the option.
   const [showAnalysis, setShowAnalysis] = useState(false)
+  // The WHOLE view goes full screen, not just the canvas pane, so View Analysis
+  // and the analysis view (with its AHU toggle) come along. The Companion keeps
+  // the pane's own button — it has no analysis to bring.
+  const rootRef = useRef(null)
 
-  return (
-    <div style={{ position: 'absolute', inset: 0 }}>
+  const body = (
+    <div ref={rootRef} style={{ position: 'absolute', inset: 0, background: '#fff' }}>
       {showAnalysis && diagram ? (
         <OptionAnalysis departments={option.departments} buildingFactors={option.buildingFactors} />
       ) : (
@@ -75,9 +81,17 @@ export default function OptionCanvas({ workspace, onSelectDepartment, diagram = 
             cursor: 'pointer',
           }}
         >
-          {showAnalysis ? 'View Space Program' : 'View Analysis'}
+          {showAnalysis ? 'View Space Program' : 'View Treemap'}
         </button>
+      )}
+      {/* Collapse / Expand mean nothing on the treemap, so only on the canvas. */}
+      {/* On the canvas the root includes the frame's bottom gutter; the
+          analysis view has none. */}
+      {diagram && (
+        <FullscreenControls target={rootRef} expandable={!showAnalysis} bottom={showAnalysis ? 12 : GUTTER + 12} />
       )}
     </div>
   )
+
+  return diagram ? <FullscreenRoot>{body}</FullscreenRoot> : body
 }

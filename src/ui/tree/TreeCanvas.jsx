@@ -7,18 +7,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, { Background, ReactFlowProvider, useNodesState, useReactFlow } from 'reactflow'
-import CanvasFrame, { GUTTER, useCanvasInput } from '../canvas/CanvasFrame.jsx'
+import CanvasFrame, { firstBuildingSections, InitialFit, useCanvasInput } from '../canvas/CanvasFrame.jsx'
 import 'reactflow/dist/style.css'
 import { useCatalog } from '../../data/catalog.jsx'
-import { byName } from '../../data/tree.js'
+import { byName, findDeptContext } from '../../data/tree.js'
 import { buildTreeLayout, NODE_HEIGHT, NODE_WIDTH } from './treeLayout.js'
 import { CARD_GAP, GAP } from '../canvas/canvasLayout.js'
+import { catalogOpenIds, useExpandAll } from '../expandAll.jsx'
+import CanvasSearch, { ALWAYS_EXPANDED } from '../canvas/CanvasSearch.jsx'
 import { CANVAS_STYLE, COLLAPSE_MS, CarouselRow, nodeTypes } from './treeNodes.jsx'
 import { useTreeEditorContext } from './useTreeEditor.jsx'
 import { Band } from '../primitives/Band.jsx'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import { useToast } from '../primitives/Toast.jsx'
-import { Z } from '../primitives/zIndex.js'
 
 // Stable identity so React Flow doesn't see a new edge array every render. The
 // tree draws containment by nesting boxes, so it has no edges at all.
@@ -28,13 +29,7 @@ const NO_EDGES = []
 // is in flight.
 const DRAG_Z = 1000
 
-// A stand-in for `expandedGroups`/`expandedRooms` that answers every `.has()`
-// with true — buildTreeLayout never iterates either set, only tests
-// membership, so this is enough to make it emit every department and every
-// room row regardless of what is actually open on screen. Used ONLY to build
-// the search index below: a search has to find something behind a shut group,
-// which the real, current layout would simply not contain.
-const ALWAYS_EXPANDED = { has: () => true }
+const FIRST_BUILDING = firstBuildingSections()
 
 // buildTreeLayout wants a full callback set; the index it builds is thrown
 // away, so every one of these is a no-op.
@@ -45,93 +40,6 @@ const INDEX_CALLBACKS = {
   onRemoveGroup: () => {},
   onToggleRooms: () => {},
   onToggleGroup: () => {},
-}
-
-// THE SEARCH ICON'S OWN CORNER, absolutely positioned inside the canvas pane —
-// not the gutter, which is a scrollbar and has no room for a control on it.
-// Bottom-left because side and the carousels already own the right and the
-// top; this is the one corner of the drawing nothing else has claimed.
-function CanvasSearch({ onSearch }) {
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  const inputRef = useRef(null)
-
-  useEffect(() => {
-    if (open) inputRef.current?.focus()
-  }, [open])
-
-  return (
-    <div
-      // nodrag/nopan: without these, React Flow's own pointer handling on the
-      // pane claims the click before it reaches the input or the button.
-      className="nodrag nopan"
-      style={{
-        position: 'absolute',
-        left: GUTTER + 12,
-        bottom: GUTTER + 12,
-        zIndex: Z.mapControls,
-        display: 'flex',
-        alignItems: 'center',
-        background: '#fff',
-        borderRadius: open ? 8 : '50%',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-      }}
-    >
-      {open ? (
-        <input
-          ref={inputRef}
-          type="text"
-          value={query}
-          placeholder="Search a room, department, group…"
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') onSearch(query)
-            else if (e.key === 'Escape') {
-              setQuery('')
-              setOpen(false)
-            }
-          }}
-          // Closes itself once abandoned empty — a search box left open over
-          // the canvas with nothing typed is a control nobody is using.
-          onBlur={() => {
-            if (!query) setOpen(false)
-          }}
-          style={{
-            width: 220,
-            boxSizing: 'border-box',
-            padding: '8px 10px',
-            fontSize: 13,
-            border: 'none',
-            outline: 'none',
-            borderRadius: 8,
-            background: 'transparent',
-          }}
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          title="Search for a room, department, group, room group or section"
-          aria-label="Search the catalog"
-          style={{
-            width: 36,
-            height: 36,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            border: 'none',
-            background: 'transparent',
-            borderRadius: '50%',
-            cursor: 'pointer',
-            fontSize: 16,
-            lineHeight: 1,
-          }}
-        >
-          🔍
-        </button>
-      )}
-    </div>
-  )
 }
 
 
@@ -186,6 +94,24 @@ function TreeCanvasInner({
     []
   )
 
+  // A ROOM SWAP IN PROGRESS turns the next department click into its other
+  // half — asked in a modal below, never written on the click. Read through a
+  // ref: `editor` is a new object every render, and the layout's callbacks must
+  // not rebuild with it.
+  const editorRef = useRef(editor)
+  editorRef.current = editor
+  const [confirmSwap, setConfirmSwap] = useState(null)
+  const onPickDepartment = useCallback(
+    // (defId, instanceId) — the PLACEMENT is the second argument, and the one a
+    // swap is keyed by; the def id finds nothing and the swap did nothing.
+    (defId, instanceId) => {
+      const from = editorRef.current.swapFrom
+      if (from && from !== instanceId) setConfirmSwap({ from, to: instanceId })
+      else onSelectDepartment?.(defId, instanceId)
+    },
+    [onSelectDepartment]
+  )
+
   // WHICH CARDS HAVE THEIR ROOMS OPEN, by placement instance_id. Collapsed is the
   // resting state, and it lives here rather than in the card because the layout
   // stacks a group by each card's height — see buildTreeLayout.
@@ -230,6 +156,13 @@ function TreeCanvasInner({
     })
   }, [])
 
+  useExpandAll((open) => {
+    const ids = open ? catalogOpenIds(sections) : { groups: new Set(), departments: new Set() }
+    setCollapsing(true)
+    setExpandedGroups(ids.groups)
+    setExpandedRooms(ids.departments)
+  })
+
   useEffect(() => {
     if (!collapsing) return
     const t = setTimeout(() => setCollapsing(false), COLLAPSE_MS)
@@ -252,7 +185,7 @@ function TreeCanvasInner({
         },
         selectedDeptInstanceId,
         {
-          onSelectDepartment,
+          onSelectDepartment: onPickDepartment,
           onSelectBuilding,
           onRemoveDepartment: onCardRemoveDept,
           onRemoveGroup: onCardRemoveGroup,
@@ -276,7 +209,7 @@ function TreeCanvasInner({
       onToggleGroup,
       selectedDeptInstanceId,
       selectedBuildingId,
-      onSelectDepartment,
+      onPickDepartment,
       onSelectBuilding,
       onCardRemoveDept,
       onCardRemoveGroup,
@@ -934,12 +867,13 @@ function TreeCanvasInner({
             onNodeDrag={canEdit ? onNodeDrag : undefined}
             onNodeDragStop={canEdit ? onNodeDragStop : undefined}
             nodeTypes={nodeTypes}
-            fitView
             proOptions={{ hideAttribution: true }}
             {...canvasInput}
           >
             <Background />
           </ReactFlow>
+          {/* Opens on the first building's sections, not the whole catalog. */}
+          <InitialFit pick={FIRST_BUILDING} />
         </CanvasFrame>
 
         <CanvasSearch onSearch={runSearch} />
@@ -948,6 +882,35 @@ function TreeCanvasInner({
       {/* THE CATALOG IS SHARED, so this is not "your" card going away — it is
           the placement going away for everyone, and its rooms with it. The undo
           in the footer can put it back, which is what the last line says. */}
+      {confirmSwap && (() => {
+        const nameOf = (id) => {
+          const ctx = findDeptContext(sections, id)
+          const name = departments.find((d) => d.id === ctx?.deptNode.department_def_id)?.name ?? 'Department'
+          const group = groups.find((g) => g.id === ctx?.groupNode.group_def_id)?.name
+          return group ? `${name} (${group})` : name
+        }
+        const close = () => {
+          setConfirmSwap(null)
+          editor.setSwapFrom(null)
+        }
+        return (
+          <ConfirmModal
+            title="Swap all rooms?"
+            confirmLabel="Swap rooms"
+            onConfirm={() => {
+              editor.swapDeptRooms(confirmSwap.from, confirmSwap.to, { message: 'Rooms swapped' })
+              close()
+            }}
+            onCancel={close}
+          >
+            Every room and room group in <b>{nameOf(confirmSwap.from)}</b> moves to{' '}
+            <b>{nameOf(confirmSwap.to)}</b>, and theirs come the other way. Options using either department lose
+            those rooms the next time they are opened. You can undo the swap here, but not what an option has
+            already dropped.
+          </ConfirmModal>
+        )
+      })()}
+
       {confirmRemove && (
         <ConfirmModal
           title={confirmRemove.kind === 'group' ? 'Remove group?' : 'Remove department?'}

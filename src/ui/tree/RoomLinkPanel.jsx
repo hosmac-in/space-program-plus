@@ -573,6 +573,7 @@ export default function RoomLinkPanel({ selectedDeptInstanceId, canEdit }) {
 
       {editor.error && <p style={{ color: 'red', fontSize: 12 }}>{editor.error}</p>}
 
+
       {/* The catalog's DEFAULTS for this placement's two factors. Every option
           that uses this department inherits these and may override either — see
           data/factors.js. Written immediately, like everything else here.
