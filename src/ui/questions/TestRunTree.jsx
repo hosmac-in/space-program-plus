@@ -10,6 +10,7 @@
 // department with nothing under it is not drawn at all — see buildProgram.
 // Nothing here is saved; see useTestRun.jsx.
 
+import { useEffect, useRef, useState } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
 import { Branch, TreeLayer } from '../panel/PanelTree.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
@@ -18,15 +19,50 @@ import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, roomLabel, scopeToDmgs } from './questionModel.js'
 import { bedTally, buildProgram, useTestRun } from './useTestRun.jsx'
 import { useAreaUnit } from '../AreaUnitContext.jsx'
-import { formatArea, siteAreas } from '../map/area.js'
+import { formatArea, SQM_PER_SQFT } from '../map/area.js'
 import { optionSettingsOf } from './createOption.js'
 import { RULE } from '../layout.js'
 
 const ROW = 24
 
-function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', right }) {
+// A COUNT THAT MOVED FLASHES ITS WHOLE ROW — name and figure together — green
+// up, red down, then fades. Only a change flashes: a row arriving is Presence's
+// to animate, and the first value it mounts with is not a change. The key
+// restarts the animation when the same direction repeats.
+function useChangeFlash(n) {
+  const prev = useRef(n)
+  const [flash, setFlash] = useState(null)
+  useEffect(() => {
+    const was = prev.current
+    prev.current = n
+    if (Number.isFinite(was) && Number.isFinite(n) && n !== was) {
+      setFlash((f) => ({ dir: n > was ? 'up' : 'down', k: (f?.k ?? 0) + 1 }))
+    }
+  }, [n])
+  return flash
+}
+
+export const COUNT_FLASH_STYLE = `
+  @keyframes trFlashUp { 0% { background-color: rgba(30, 142, 62, 0.28); color: #137333; } 100% { background-color: transparent; } }
+  @keyframes trFlashDown { 0% { background-color: rgba(197, 34, 31, 0.24); color: #b3261e; } 100% { background-color: transparent; } }
+  @keyframes trInkUp { 0% { color: #137333; } }
+  @keyframes trInkDown { 0% { color: #b3261e; } }
+  .tr-flash-up { animation: trFlashUp var(--tr-flash-ms, 1100ms) ease-out; }
+  .tr-flash-down { animation: trFlashDown var(--tr-flash-ms, 1100ms) ease-out; }
+  /* The text takes the colour; only the row takes the wash, or it doubles. */
+  .tr-flash-up * { animation: trInkUp var(--tr-flash-ms, 1100ms) ease-out; }
+  .tr-flash-down * { animation: trInkDown var(--tr-flash-ms, 1100ms) ease-out; }
+  @media (prefers-reduced-motion: reduce) { .tr-flash-up, .tr-flash-up *, .tr-flash-down, .tr-flash-down * { animation: none; } }
+`
+
+function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', right, track }) {
+  const flash = useChangeFlash(track)
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: ROW, minWidth: 0 }}>
+    <div
+      key={flash?.k ?? 0}
+      className={flash ? `tr-flash-${flash.dir}` : undefined}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, height: ROW, minWidth: 0, borderRadius: 3 }}
+    >
       <span
         title={label}
         style={{
@@ -86,9 +122,10 @@ function sized(room) {
 // so a room on screen and a room in the total cannot be different rooms. Nothing
 // here is saved — see useTestRun.jsx.
 //
-// THE PLOT AND WHAT FSI ALLOWS ON IT. Plot is the project site's own area — so
-// only the option creator has one; the Test run tab belongs to no project and
-// shows a dash. FSI area is plot × the FSI answered on the General card, and the
+// THE PLOT AND WHAT FSI ALLOWS ON IT. Plot is `run.plotAreaSqm` — the very figure
+// the rules read as plot_area, so the HUD and a rule cannot disagree: the project
+// site's area in the creator, an ASSUMED 3 acres on the Test run tab (labelled
+// so, since it measures nothing). FSI area is plot × the FSI answered on the General card, and the
 // run's area is tallied against it the way beds are against theirs: "a / b",
 // red when over.
 export function TestRunHud({ buildingId, projectName = null, siteGeojson = null }) {
@@ -104,7 +141,11 @@ export function TestRunHud({ buildingId, projectName = null, siteGeojson = null 
   const { target, placed, areaSqft } = bedTally(model, run)
   const over = target !== null && placed > target
 
-  const plot = siteAreas(siteGeojson)
+  const plot = Number.isFinite(run.plotAreaSqm)
+    ? { sqm: run.plotAreaSqm, sqft: run.plotAreaSqm / SQM_PER_SQFT }
+    : null
+  // No site to measure means the figure is App's stand-in, not a measurement.
+  const assumed = plot && !siteGeojson
   const fsi = optionSettingsOf(run).fsi
   const fsiSqft = plot && fsi > 0 ? plot.sqft * fsi : null
   const overFsi = fsiSqft !== null && areaSqft > fsiSqft
@@ -146,7 +187,7 @@ export function TestRunHud({ buildingId, projectName = null, siteGeojson = null 
           tone={overFsi ? '#b3261e' : null}
         />
         <Figure
-          label="Plot"
+          label={assumed ? 'Plot (assumed)' : 'Plot'}
           value={plot ? formatArea(toDisplay(plot.sqft)) : '—'}
           unit={plot ? AREA_UNIT : undefined}
           muted={!plot}
@@ -217,6 +258,7 @@ export default function TestRunTree({ buildingId }) {
 
   return (
     <div style={{ minWidth: 0 }}>
+      <style>{COUNT_FLASH_STYLE}</style>
       <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#888' }}>
         What this builds
       </div>
@@ -229,36 +271,43 @@ export default function TestRunTree({ buildingId }) {
         {totalRooms === 0 ? 'Nothing yet' : `${totalRooms} room${totalRooms === 1 ? '' : 's'} so far`}
       </div>
 
-      {program.length === 0 ? (
+      {program.length === 0 && (
         <PanelNote>
           {shownSection
             ? `Answer yes to a group in ${shownSection.name} and count something, and it appears here.`
             : 'Answer yes to a group and count something, and it appears here.'}{' '}
           Nothing on this tab is saved.
         </PanelNote>
-      ) : (
+      )}
+      {
         // EVERY LEVEL SLIDES — a row an answer adds opens, one it takes away
         // shuts, as the option canvas's cards move. See Presence; the tree's
         // lines follow because the layer re-measures as the column resizes.
-        <TreeLayer>
-          <Presence items={program} keyOf={(s) => s.id}>
+        //
+        // MOUNTED EVEN WHEN EMPTY: a Presence treats what it mounts with as
+        // already there, so a tree created by the first answer never slid or
+        // flashed. KEYED BY THE SECTION: moving to another card is not the tree
+        // changing, and without a fresh mount it read as a whole section going
+        // red and another arriving green.
+        <TreeLayer key={run.sectionId ?? 'all'}>
+          <Presence flash items={program} keyOf={(s) => s.id}>
           {(section) => (
             <Branch endpoint="caret" expanded head={ROW / 2}>
               <Row label={section.name} weight={700} caps />
 
-              <Presence items={section.groups} keyOf={(g) => g.id}>
+              <Presence flash items={section.groups} keyOf={(g) => g.id}>
               {(group) => (
                 <Branch endpoint="caret" expanded head={ROW / 2}>
                   <Row label={group.name} weight={600} />
 
-                  <Presence items={group.departments} keyOf={(d) => d.id}>
+                  <Presence flash items={group.departments} keyOf={(d) => d.id}>
                   {(department) => (
                     <Branch endpoint="caret" expanded head={ROW / 2}>
                       <Row label={department.name} weight={500} />
 
                       {/* Keyed by placement: the once-per-department rule means
                           no room id repeats inside one department. */}
-                      <Presence items={department.rooms} keyOf={(r) => r.instance_id}>
+                      <Presence flash items={department.rooms} keyOf={(r) => r.instance_id}>
                       {(room) => (
                         <Branch
                           endpoint={sized(room).length > 0 ? 'caret' : 'dot'}
@@ -270,15 +319,16 @@ export default function TestRunTree({ buildingId }) {
                             size={12}
                             colour="#444"
                             right={<Count n={room.count} />}
+                            track={room.count}
                           />
                           {/* WHAT STANDS IN IT, for the objects a rule sized.
                               This is the one column that lists them: the
                               carousel answers by what a thing IS, and side is
                               where what that buys appears. */}
-                          <Presence items={sized(room)} keyOf={(o) => o.instance_id}>
+                          <Presence flash items={sized(room)} keyOf={(o) => o.instance_id}>
                           {(object) => (
                             <Branch endpoint="dot" head={ROW / 2}>
-                              <Row label={object.name} size={11} colour="#777" right={<Count n={object.count} />} />
+                              <Row label={object.name} size={11} colour="#777" right={<Count n={object.count} />} track={object.count} />
                             </Branch>
                           )}
                           </Presence>
@@ -295,7 +345,7 @@ export default function TestRunTree({ buildingId }) {
           )}
           </Presence>
         </TreeLayer>
-      )}
+      }
     </div>
   )
 }

@@ -35,6 +35,9 @@ import { QuestionnaireEditorProvider } from './questions/useQuestionnaireEditor.
 import TestRunTree, { TestRunHud } from './questions/TestRunTree.jsx'
 import { TestRunProvider } from './questions/useTestRun.jsx'
 import { ExpandAllProvider } from './expandAll.jsx'
+import { siteAreas, SQM_PER_ACRE } from './map/area.js'
+
+const TEST_RUN_PLOT_ACRES = 3
 import LoadingOverlay from './primitives/LoadingOverlay.jsx'
 import AppFooter from './AppFooter.jsx'
 import AppHeader from './AppHeader.jsx'
@@ -266,6 +269,16 @@ function SignedInApp({ session }) {
     }
   }, [selectedOptionId, selectedProjectId, navigate])
 
+  // The rules' `plot_area`: the option creator measures its project's site. The
+  // Test run has no project, so it ASSUMES a 3-acre plot — a stand-in so rules
+  // over plot_area, fsi_area and plinth preview as numbers. Null elsewhere.
+  const creatorPlotSqm =
+    view === 'creator'
+      ? (siteAreas(projects.find((p) => p.id === selectedProjectId)?.site_geojson)?.sqm ?? null)
+      : view === 'testrun'
+        ? TEST_RUN_PLOT_ACRES * SQM_PER_ACRE
+        : null
+
   return (
     <ReadOnlyProvider readOnly={readOnly}>
     <TreeEditorProvider>
@@ -277,7 +290,7 @@ function SignedInApp({ session }) {
         main asks and side reports what the answers built. Mounted at the top so
         stepping through the carousel and back does not lose them — leaving the
         tab does, deliberately, since nothing here is saved. */}
-    <TestRunProvider>
+    <TestRunProvider plotAreaSqm={creatorPlotSqm}>
     <ExpandAllProvider>
     {/* The four regions — header, main, side, footer — and the three
         regulating lines between them. See CLAUDE.md. */}

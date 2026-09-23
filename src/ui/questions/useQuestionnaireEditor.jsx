@@ -41,6 +41,7 @@ import {
   reorderQuestions,
   setDepartmentConnections,
   setDepartmentRole,
+  setDepartmentTitle,
   setDepartmentVariables,
   setGate,
   updateQuestion,
@@ -120,6 +121,15 @@ export function useQuestionnaireEditor(buildingId) {
   const setRole = useCallback(
     serialise(async (sectionId, groupId, deptId, role) => {
       await apply(setDepartmentRole(currentDefinition(), sectionId, groupId, deptId, role))
+    }),
+    []
+  )
+
+  // The run's heading for a department — see departmentTitle. `ownName` is what
+  // absence already reads as, so typing it back stores nothing.
+  const setTitle = useCallback(
+    serialise(async (sectionId, groupId, deptId, title, ownName) => {
+      await apply(setDepartmentTitle(currentDefinition(), sectionId, groupId, deptId, title, ownName))
     }),
     []
   )
@@ -213,6 +223,7 @@ export function useQuestionnaireEditor(buildingId) {
     ready: !!row,
     setGroupGate,
     setRole,
+    setTitle,
     setVariables,
     setSupportingConnections,
     addQuestion,

@@ -7,7 +7,7 @@
 import L from 'leaflet'
 
 export const SQM_PER_SQFT = 0.09290304
-const SQM_PER_ACRE = 4046.8564224
+export const SQM_PER_ACRE = 4046.8564224
 
 function ringArea(ring) {
   return L.GeometryUtil.geodesicArea(ring)

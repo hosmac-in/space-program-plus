@@ -35,6 +35,8 @@ import {
   questionWithVariable,
   ROOM,
   ROOM_GROUP,
+  DERIVED_GENERAL,
+  PLOT_AREA_VAR,
 } from '../../data/questionnaire.js'
 import { compileFormula, FORMULA_FUNCTIONS } from '../../data/formula.js'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
@@ -174,6 +176,59 @@ function GroupFace({ group, canEdit, editor }) {
   )
 }
 
+// THE HEADING THE TEST RUN PRINTS over this department's chips. Blank shows the
+// department's own name, greyed as the placeholder; typing that name back, or
+// clearing it, stores nothing. Commits on leaving the field or Enter — every
+// edit here is a whole-document write — and Escape abandons.
+function TitleField({ department, canEdit, editor }) {
+  const stored = department.title ?? ''
+  const [draft, setDraft] = useState(stored)
+  const [focused, setFocused] = useState(false)
+  useEffect(() => {
+    if (!focused) setDraft(stored)
+  }, [stored, focused])
+
+  const commit = () => {
+    setFocused(false)
+    if (draft.trim() === stored.trim()) return
+    editor.setTitle(department.sectionId, department.groupId, department.deptId, draft, department.name)
+  }
+
+  return (
+    <label style={{ display: 'block', margin: '10px 0', fontSize: 12, color: '#555' }}>
+      Title in the test run
+      <input
+        type="text"
+        value={draft}
+        disabled={!canEdit}
+        placeholder={department.name}
+        onFocus={() => setFocused(true)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+          else if (e.key === 'Escape') {
+            setDraft(stored)
+            setFocused(false)
+            e.currentTarget.blur()
+          }
+        }}
+        style={{
+          display: 'block',
+          width: '100%',
+          boxSizing: 'border-box',
+          marginTop: 4,
+          padding: '6px 8px',
+          fontSize: 14,
+          fontFamily: 'inherit',
+          borderRadius: 4,
+          border: '1px solid #ccc',
+        }}
+      />
+    </label>
+  )
+}
+
 function DepartmentFace({ department, group, canEdit, editor, general }) {
   const supporting = department.role === SUPPORTING
 
@@ -184,6 +239,7 @@ function DepartmentFace({ department, group, canEdit, editor, general }) {
         <Where>
           {group.name} → {department.name}
         </Where>
+        <TitleField department={department} canEdit={canEdit} editor={editor} />
         <PanelNote>
           {department.questions.length === 0
             ? 'No questions yet. Add one on the branch under this department.'
@@ -1804,6 +1860,9 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
   const general = (model.find((s) => s.kind === 'general')?.questions ?? [])
     .filter((q) => q.variable)
     .map((q) => ({ name: q.variable, numeric: q.numeric }))
+  // The names worked out from them — fsi_area, plinth — are in scope the same way.
+  general.push({ name: PLOT_AREA_VAR, numeric: true })
+  DERIVED_GENERAL.forEach((d) => general.push({ name: d.variable, numeric: true }))
   // Every question's named x rides along with them, previewing at 1 the same
   // way. A clashing one is left out, exactly as the model left it out of compile.
   model.forEach((s) =>

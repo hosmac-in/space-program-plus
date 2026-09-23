@@ -364,6 +364,22 @@ export function departmentRole(definition, sectionId, groupId, deptId) {
   return deptEntry(definition, sectionId, groupId, deptId)?.role === SUPPORTING ? SUPPORTING : FUNCTIONING
 }
 
+// THE HEADING THE RUN PRINTS over a department's chips, when somebody wrote
+// one. ABSENT IS THE DEPARTMENT'S OWN NAME — read live from sp_department, so a
+// rename still reaches every run that nobody retitled. Typing that name back,
+// or nothing, clears the key: a title never pins a stale copy of the name.
+export function departmentTitle(definition, sectionId, groupId, deptId) {
+  const t = deptEntry(definition, sectionId, groupId, deptId)?.title
+  return typeof t === 'string' && t.trim() ? t : null
+}
+
+export function setDepartmentTitle(definition, sectionId, groupId, deptId, title, ownName) {
+  const wording = (title ?? '').trim()
+  return updateDeptEntry(definition, sectionId, groupId, deptId, ({ title: _old, ...dept }) =>
+    wording && wording !== (ownName ?? '').trim() ? { ...dept, title: wording } : dept
+  )
+}
+
 export function departmentQuestions(definition, sectionId, groupId, deptId) {
   return deptEntry(definition, sectionId, groupId, deptId)?.questions ?? []
 }
@@ -443,8 +459,8 @@ export const DMG_ANSWER = 'dmgs'
 
 // THE OPTION'S OWN SETTINGS, asked as General questions — they were the New
 // Option dialog's fields, and the option creator writes them onto the option it
-// creates (ui/questions/createOption.js). No variable: they describe the
-// option, not the building, and no rule reads them.
+// creates (ui/questions/createOption.js). The numeric ones are variables too
+// (`phase`, `fsi`, `gc`), so a rule may size a room off the site.
 export const OPTION_ANSWERS = {
   name: 'option_name',
   phases: 'phases',
@@ -464,15 +480,15 @@ export const GENERAL_QUESTIONS = [
   { id: OPTION_ANSWERS.name, variable: null, kind: 'text', unit: '', prompt: 'What is this option called?' },
   {
     id: OPTION_ANSWERS.phases,
-    variable: null,
+    variable: 'phase',
     kind: 'number',
     unit: 'phases',
     prompt: 'How many phases is it built in?',
   },
-  { id: OPTION_ANSWERS.fsi, variable: null, kind: 'number', unit: 'FSI', prompt: 'What FSI does the site allow?' },
+  { id: OPTION_ANSWERS.fsi, variable: 'fsi', kind: 'number', unit: 'FSI', prompt: 'What FSI does the site allow?' },
   {
     id: OPTION_ANSWERS.groundCover,
-    variable: null,
+    variable: 'gc',
     kind: 'number',
     unit: '',
     prompt: 'What ground cover does the site allow?',
@@ -581,7 +597,38 @@ export function setGeneralOrder(definition, ids) {
 // Every name a rule may write. It is the constant's, so it cannot go stale and
 // cannot collide.
 export function generalVariableNames() {
-  return GENERAL_QUESTIONS.map((q) => q.variable).filter(Boolean)
+  return [
+    ...GENERAL_QUESTIONS.map((q) => q.variable).filter(Boolean),
+    PLOT_AREA_VAR,
+    ...DERIVED_GENERAL.map((d) => d.variable),
+  ]
+}
+
+// THE PLOT, MEASURED, NEVER ASKED — the project site's own outline, in m². Only
+// the option creator belongs to a project, so only there is it in scope; on the
+// Test run tab it, and everything derived from it, reads as unresolved.
+export const PLOT_AREA_VAR = 'plot_area'
+
+// NAMES WORKED OUT FROM THE GENERAL ANSWERS, never asked. In scope beside them,
+// previewing at 1 in the designer like every general name. In a run each is
+// present only once every input is, and a zero divisor leaves it out — so a
+// rule over it reads as unresolved, never as a quiet Infinity or 0.
+// `gc` is divided by as typed: the plinth is only right if ground cover is a
+// fraction (0.4), not a percentage (40).
+export const DERIVED_GENERAL = [
+  { variable: 'fsi_area', unit: 'm²', of: ['fsi', 'plot_area'], compute: ({ fsi, plot_area }) => fsi * plot_area },
+  { variable: 'plinth', unit: 'm²', of: ['fsi_area', 'gc'], compute: ({ fsi_area, gc }) => (gc ? fsi_area / gc : null) },
+]
+
+// Adds the derived names to a scope of general answers, in list order, so a
+// derived name may read an earlier one (plinth reads fsi_area).
+export function deriveGeneral(scope) {
+  DERIVED_GENERAL.forEach(({ variable, of, compute }) => {
+    if (!of.every((name) => Number.isFinite(scope[name]))) return
+    const value = compute(scope)
+    if (Number.isFinite(value)) scope[variable] = value
+  })
+  return scope
 }
 
 // Only the wording is stored, and typing the app's own words back stores

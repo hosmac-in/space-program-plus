@@ -347,6 +347,10 @@ function Rail({ deck, at, onJump, functions, run }) {
                     gap: 6,
                     padding: '0 10px',
                     background: colours.wash(here ? 0.66 : 0.88),
+                    // A black stroke on every box; the one you are on keeps its
+                    // hue ring inside it.
+                    border: '1px solid #000',
+                    boxSizing: 'border-box',
                     boxShadow: here ? `inset 0 0 0 2px ${colours.border}` : 'none',
                     overflow: 'hidden',
                   }}
@@ -813,6 +817,31 @@ function MultiplierSlider({ question, given, onChange }) {
   )
 }
 
+// PICKED IS GREEN, on a question chip and a DMG card alike: the edge and a glow
+// held tight to it. UN-PICKING FLASHES RED — the same pair the side tree's rows
+// use for up and down — so taking an answer away is seen, not just absent.
+const PICK_GREEN = '#138a7a'
+export const CHIP_STYLE = `
+  @keyframes chipUnpick {
+    0% { border-color: #a86a6a; box-shadow: inset 0 0 10px 0 rgba(150, 95, 95, 0.4); }
+    100% { border-color: #ddd; box-shadow: inset 0 0 0 0 rgba(150, 95, 95, 0); }
+  }
+  .chip-unpick { animation: chipUnpick 700ms ease-out; }
+  @media (prefers-reduced-motion: reduce) { .chip-unpick { animation: none; } }
+`
+
+// A class and key that replay the red flash each time `picked` falls to false.
+// The key restarts it when the same chip is un-picked twice in a row.
+function useUnpickFlash(picked) {
+  const was = useRef(picked)
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    if (was.current && !picked) setN((k) => k + 1)
+    was.current = picked
+  }, [picked])
+  return n
+}
+
 // ONE SWITCH PER DMG, each a row in the answer column like a gate's. What is
 // switched on decides which department groups the rest of the deck asks — see
 // scopeToDmgs. The list is sp_dmg's, read live.
@@ -835,9 +864,19 @@ function DmgChoices({ given, onChange }) {
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 12 }}>
       {dmgs.map((d) => {
         const chosen = on.includes(d.id)
-        return (
+        return <DmgCard key={d.id} d={d} chosen={chosen} on={on} onChange={onChange} />
+      })}
+    </div>
+    </>
+  )
+}
+
+function DmgCard({ d, chosen, on, onChange }) {
+  const flashes = useUnpickFlash(chosen)
+  return (
           <button
-            key={d.id}
+            key={flashes}
+            className={flashes && !chosen ? 'chip-unpick' : undefined}
             type="button"
             aria-pressed={chosen}
             title={d.name ?? ''}
@@ -860,9 +899,9 @@ function DmgChoices({ given, onChange }) {
               // not a fill, so the name stays black on white and no tick is
               // needed to say which are on. A shadow rather than a gradient
               // because it follows the rounded corners and it can tween.
-              border: `1.5px solid ${chosen ? '#1a73e8' : '#ddd'}`,
+              border: `1.5px solid ${chosen ? PICK_GREEN : '#ddd'}`,
               background: '#fff',
-              boxShadow: chosen ? 'inset 0 0 14px 0 rgba(26, 115, 232, 0.2)' : 'inset 0 0 0 0 rgba(26, 115, 232, 0)',
+              boxShadow: chosen ? 'inset 0 0 5px 0 rgba(19, 138, 122, 0.32)' : 'inset 0 0 0 0 rgba(19, 138, 122, 0)',
               color: '#222',
               // ONE WEIGHT FOR BOTH STATES. Bold on select reflowed the name,
               // which cannot tween and was the jolt; the glow alone says chosen.
@@ -872,10 +911,6 @@ function DmgChoices({ given, onChange }) {
           >
             {d.name ?? 'Unnamed'}
           </button>
-        )
-      })}
-    </div>
-    </>
   )
 }
 
@@ -945,18 +980,38 @@ function SectionCard({ step, run, functions, beds }) {
 
               {yes && (
                 <div style={{ padding: opened ? '14px 18px' : '4px 18px 12px' }}>
-                  {/* ANSWER_COLUMN's width, so every field ends on one right
-                      edge and the counters read as a column. */}
-                  <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0 }}>
-                    {!opened && <PanelNote>Nothing is asked about this yet.</PanelNote>}
-                    {opened && (
-                      <RuledList>
-                        {questions.map((node) => (
-                          <QuestionRow key={node.id} node={node} run={run} beds={beds} />
+                  {!opened && <PanelNote>Nothing is asked about this yet.</PanelNote>}
+                  {/* A MATRIX OF CHIPS, the DMG cards' idiom, across the card's
+                      whole width — a question asks one count, and a full row per
+                      count spent most of the card on air. */}
+                  {/* ONE ROW-RUN PER DEPARTMENT, under its name. This REVERSES
+                      "the run names no department" at the top of this file: with
+                      questions as chips, a heading costs one line where a whole
+                      column of rows used to, and it tells apart runs of chips
+                      that otherwise read as one grid. */}
+                  {opened && (
+                    // More air BETWEEN departments than between chips (12), so a
+                    // heading reads as starting a new run, not captioning the
+                    // row above it.
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+                      {group.departments
+                        .filter((d) => d.role !== SUPPORTING)
+                        .map((d) => ({ d, asked: d.questions.filter((node) => !node.dummy) }))
+                        .filter(({ asked }) => asked.length > 0)
+                        .map(({ d, asked }) => (
+                          <div key={d.id} style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: QUESTION_TYPE, fontWeight: 600, color: '#555', marginBottom: 8 }}>
+                              {d.title || d.name}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${CHIP_MIN}px, 1fr))`, gap: 12 }}>
+                              {asked.map((node) => (
+                                <QuestionChip key={node.id} node={node} run={run} beds={beds} />
+                              ))}
+                            </div>
+                          </div>
                         ))}
-                      </RuledList>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1014,63 +1069,121 @@ function BedBar({ mine, placed, target }) {
   )
 }
 
-// ONE QUESTION AND THE ONE NUMBER IT ASKS FOR. No department above it, no rooms
-// under it — what the number buys is worked out and drawn in side.
-function QuestionRow({ node, run, beds }) {
+// ONE QUESTION AS A CHIP, 4:3, in a grid — the DMG cards' look, since a question
+// asks one count and is picked from its group the way a DMG is.
+//
+// UNPICKED IS THE QUESTION ALONE: no counter, and clicking the chip anywhere
+// picks it at 1. PICKED takes the DMG glow and shows the counter; typing or
+// stepping to 0 UN-PICKS it — the key goes, so the chip reads as never
+// answered, which is what 0 already means to the run (it builds nothing).
+// The comment is the chip's tooltip; it has no room to be a paragraph here.
+const CHIP_MIN = 150
+
+function QuestionChip({ node, run, beds }) {
+  const x = run.xOf(node.id)
+  const picked = Number.isFinite(x) && x > 0
   const mine = beds?.byQuestion.get(node.id) ?? 0
+  const set = (n) => run.setQuestion(node.id, { x: Number.isFinite(n) && n > 0 ? n : undefined })
+  const prompt = node.question.prompt || 'Untitled question'
+  // A PRESS THAT BEGAN ON THE COUNTER NEVER PICKS THE CHIP. − at 1 un-picks on
+  // pointerdown, the counter unmounts, and the click then lands on the chip —
+  // now unpicked, so it re-picked at 1 and − appeared to do nothing.
+  const fromCounter = useRef(false)
+  const flashes = useUnpickFlash(picked)
 
   return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ minHeight: QUESTION_ROW, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: QUESTION_TYPE, lineHeight: 1.35 }}>
-          {node.question.prompt || 'Untitled question'}
-        </span>
-        {/* THE ONE ANSWER, AND IT IS A BOX. Everywhere else in the app a count is
-            a figure in a sentence — a value being read — and `boxed` is for the
-            one place the number is being SUPPLIED. Here that is the whole row:
-            empty until typed (see EMPTY in useTestRun, where a 0 is an answer
-            nobody gave), so unboxed it was an invisible field on a blank line and
-            there was nothing on the card saying where to answer. */}
+    <div
+      key={flashes}
+      className={flashes && !picked ? 'chip-unpick' : undefined}
+      role={picked ? undefined : 'button'}
+      tabIndex={picked ? undefined : 0}
+      aria-pressed={picked}
+      title={node.question.comment ? `${prompt}\n\n${node.question.comment}` : prompt}
+      onPointerDownCapture={(e) => {
+        fromCounter.current = !!e.target.closest?.('[data-chip-counter]')
+      }}
+      onClick={() => {
+        if (fromCounter.current) return (fromCounter.current = false)
+        if (!picked) set(1)
+      }}
+      // RIGHT-CLICK UN-PICKS, whatever the count — the fast way out of a chip
+      // at 12. The browser's menu is suppressed on every chip, picked or not,
+      // so the gesture never means two things.
+      onContextMenu={(e) => {
+        e.preventDefault()
+        if (picked) set(0)
+      }}
+      onKeyDown={picked ? undefined : (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), set(1))}
+      style={{
+        aspectRatio: '4 / 3',
+        minWidth: 0,
+        boxSizing: 'border-box',
+        // Name above, counter pinned to the foot: the name takes whatever the
+        // counter leaves and centres in THAT, so it never sits on the counter.
+        padding: '10px 10px 12px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: 8,
+        textAlign: 'center',
+        borderRadius: 8,
+        overflow: 'hidden',
+        cursor: picked ? 'default' : 'pointer',
+        background: '#fff',
+        color: '#222',
+        // The DMG card's chosen state, exactly — see DmgChoices.
+        border: `1.5px solid ${picked ? PICK_GREEN : '#ddd'}`,
+        boxShadow: picked ? 'inset 0 0 5px 0 rgba(19, 138, 122, 0.32)' : 'inset 0 0 0 0 rgba(19, 138, 122, 0)',
+        transition: 'box-shadow 700ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 700ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+      }}
+    >
+      <span
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 15,
+          fontWeight: 500,
+          lineHeight: 1.25,
+          overflowWrap: 'anywhere',
+        }}
+      >
+        {prompt}
+      </span>
+
+      {picked && (
         <span
-          style={{
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            gap: ANSWER_GAP,
-          }}
+          data-chip-counter
+          style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: ANSWER_GAP }}
         >
-          <span style={{ width: STEP_COL, display: 'flex', justifyContent: 'flex-start' }}>
-            <Stepper value={run.xOf(node.id)} onChange={(n) => run.setQuestion(node.id, { x: n })} />
-          </span>
-          <span style={{ width: FIELD_COL, display: 'flex', justifyContent: 'flex-start' }}>
-            <CountField
-              value={run.xOf(node.id) ?? ''}
-              min={0}
-              step={1}
-              prefix=""
-              boxed
-              digits={4}
-              steppers={false}
-              size="1.15em"
-              colour="#222"
-              boxBorder={ANSWER_STROKE}
-              title={node.question.prompt}
-              onChange={(n) => run.setQuestion(node.id, { x: n })}
-            />
-          </span>
-          <span style={unitStyle}>{node.unit}</span>
+          <Stepper value={x} onChange={set} />
+          <CountField
+            value={x}
+            min={0}
+            step={1}
+            prefix=""
+            boxed
+            digits={4}
+            steppers={false}
+            size="1.15em"
+            colour="#222"
+            boxBorder={ANSWER_STROKE}
+            title={prompt}
+            onChange={set}
+          />
+          {/* No unit on a chip — the prompt already says what is counted. The
+              unit is still authored and stored; only this drawing drops it. */}
         </span>
-      </div>
+      )}
 
-      {/* Only where this answer actually places beds, and only once somebody has
-          said how many the facility has — a bar against no target is a bar
-          against 0. */}
-      {mine > 0 && beds?.target && <BedBar mine={mine} placed={beds.placed} target={beds.target} />}
-
-      {node.question.comment && (
-        <div style={{ fontSize: 13, color: '#999', marginTop: 4, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
-          {node.question.comment}
-        </div>
+      {/* Beds this answer placed, against the facility's — the bar's reading,
+          as text: a chip has no width for the bar itself. */}
+      {picked && mine > 0 && beds?.target && (
+        <span style={{ flexShrink: 0, fontSize: 11, color: beds.placed > beds.target ? '#b3261e' : '#888' }}>
+          {mine} here · {beds.placed}/{beds.target} beds
+        </span>
       )}
     </div>
   )
@@ -1214,6 +1327,7 @@ export default function TestRun({ buildingId, creator = null }) {
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <style>{CHIP_STYLE}</style>
       {/* NO BANDS ON THIS TAB — no project, no option, no building picker. This
           is a run of the questionnaire from the top, and the things those rows
           switch between would all restart it. The building comes from `b=`, set

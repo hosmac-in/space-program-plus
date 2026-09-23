@@ -32,6 +32,7 @@ import {
   departmentVariables,
   generalQuestions,
   generalVariableNames,
+  departmentTitle,
   isNumericKind,
   memberVariableName,
   questionConnections,
@@ -528,6 +529,8 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
               name: nameOf(departments, deptNode.department_def_id, 'Untitled department'),
               functionId: defOf(departments, deptNode.department_def_id)?.function_id ?? null,
               role: departmentRole(definition, section.id, groupId, deptId),
+              // What the run heads its chips with; null means `name`.
+              title: departmentTitle(definition, section.id, groupId, deptId),
               catalogRooms,
               catalogGroups,
               catalogTargets,

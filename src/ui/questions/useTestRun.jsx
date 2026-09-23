@@ -17,7 +17,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { sqftToSqm } from '../../data/units.js'
 import { SUPPORTING } from './questionModel.js'
-import { DMG_ANSWER } from '../../data/questionnaire.js'
+import { deriveGeneral, DMG_ANSWER, PLOT_AREA_VAR } from '../../data/questionnaire.js'
 
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
@@ -37,7 +37,9 @@ const EMPTY = { gates: {}, questions: {}, general: {} }
 
 const TestRunContext = createContext(null)
 
-export function TestRunProvider({ children }) {
+// `plotAreaSqm` is the project site's area — the option creator's alone; null
+// on the Test run tab, which belongs to no project. See PLOT_AREA_VAR.
+export function TestRunProvider({ children, plotAreaSqm = null }) {
   const [answers, setAnswers] = useState(EMPTY)
 
   // WHICH CARD IS ON SCREEN, held here because TWO COLUMNS NEED IT and they are
@@ -97,8 +99,9 @@ export function TestRunProvider({ children }) {
       // only, exactly what a new option starts with — never "everything", or an
       // untouched run would ask every speciality in the catalog.
       dmgIds: Array.isArray(answers.general?.[DMG_ANSWER]) ? answers.general[DMG_ANSWER] : [],
+      plotAreaSqm,
     }),
-    [answers, setGate, setQuestion, setGeneral, reset, sectionId]
+    [answers, setGate, setQuestion, setGeneral, reset, sectionId, plotAreaSqm]
   )
 
   return <TestRunContext.Provider value={value}>{children}</TestRunContext.Provider>
@@ -332,6 +335,10 @@ export function evaluateRun(model, run) {
     }
     if (Number.isFinite(given)) general[node.variable] = given
   })
+  // The plot, measured off the project site — see PLOT_AREA_VAR — then fsi_area
+  // and plinth from it and the answers above (DERIVED_GENERAL).
+  if (Number.isFinite(run.plotAreaSqm)) general[PLOT_AREA_VAR] = run.plotAreaSqm
+  deriveGeneral(general)
 
   // A QUESTION'S NAMED x, for every other rule in the building. Typed, not
   // computed, so it belongs to this pass. An answered 0 is a real 0 a rule may
