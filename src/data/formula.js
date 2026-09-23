@@ -69,7 +69,18 @@ class FormulaError extends Error {
 
 const isDigit = (c) => c >= '0' && c <= '9'
 const isNameStart = (c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_'
-const isNameChar = (c) => isNameStart(c) || isDigit(c)
+
+// A DOT IS PART OF A NAME, NOT AN OPERATOR. `patient_care.operating_room` is ONE
+// name that happens to read as a path — the language has no member access and
+// needs none, since the scope is a flat map of whatever names the questionnaire
+// put in it. So nothing here parses the two halves and nothing can be wrong
+// about what a dot means.
+//
+// >>> SAFE BESIDE A DECIMAL POINT because a name cannot START with a digit and
+// >>> the number branch is tested first: `2.5` is a number, `a.b` is a name, and
+// >>> the two can never be read as each other. A trailing `a.` is a name nothing
+// >>> is called, which reads as unresolved — visible, and what it is.
+export const isNameChar = (c) => isNameStart(c) || isDigit(c) || c === '.'
 
 function tokenise(source) {
   const tokens = []

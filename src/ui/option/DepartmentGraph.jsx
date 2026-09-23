@@ -498,6 +498,8 @@ export default function DepartmentGraph({
   // grossed by them. See data/factors.js.
   buildingFactors,
   phaseCount = 1,
+  // The DMGs this option targets, null for no filter — see data/dmg.js.
+  dmgIds = null,
   onSelectDepartment,
   // What side is showing: { kind: 'department' | 'group' | 'section' |
   // 'building', id }, or null for nothing — which is the state an option opens
@@ -615,6 +617,7 @@ export default function DepartmentGraph({
         buildingFactors,
         functions,
         phaseCount,
+        dmgIds,
         selectedDeptInstanceId,
         selectedPhase,
         selection,
@@ -669,6 +672,7 @@ export default function DepartmentGraph({
       buildings,
       buildingIds,
       phaseCount,
+      dmgIds,
       functions,
       selectedDeptInstanceId,
       selectedPhase,

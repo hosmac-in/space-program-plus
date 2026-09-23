@@ -47,6 +47,7 @@ export default function OptionCanvas({ workspace, onSelectDepartment, diagram = 
           // for one department, on screen together.
           buildingFactors={option.buildingFactors}
           phaseCount={option.phaseCount}
+          dmgIds={option.dmgIds}
           selection={selection}
           onSelectContainer={(next) => guard(() => setSelection(next))}
           onSelectDepartment={onSelectDepartment}

@@ -18,6 +18,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { sqftToSqm } from '../../data/units.js'
 import { SUPPORTING } from './questionModel.js'
+import { DMG_ANSWER } from '../../data/questionnaire.js'
 
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
@@ -39,6 +40,13 @@ const TestRunContext = createContext(null)
 
 export function TestRunProvider({ children }) {
   const [answers, setAnswers] = useState(EMPTY)
+
+  // WHICH CARD IS ON SCREEN, held here because TWO COLUMNS NEED IT and they are
+  // mounted in different places — the carousel is main's, the tree is side's,
+  // and App is their only common ancestor. It is not an answer and is never
+  // evaluated; it is here because this is already the one thing both columns
+  // share.
+  const [sectionId, setSectionId] = useState(null)
 
   const setGate = useCallback((groupId, patch) => {
     setAnswers((a) => ({ ...a, gates: { ...a.gates, [groupId]: { ...a.gates[groupId], ...patch } } }))
@@ -72,6 +80,8 @@ export function TestRunProvider({ children }) {
       setQuestion,
       setGeneral,
       reset,
+      sectionId,
+      setSectionId,
       // A gate unanswered reads as NO. There is no third state: the form is
       // yes/no and an untouched switch is off, which is what the person
       // answering sees.
@@ -84,8 +94,12 @@ export function TestRunProvider({ children }) {
         return Number.isFinite(x) ? x : undefined
       },
       generalOf: (questionId) => answers.general?.[questionId],
+      // WHICH DMGs THIS RUN TARGETS. Unanswered is none — the untagged groups
+      // only, exactly what a new option starts with — never "everything", or an
+      // untouched run would ask every speciality in the catalog.
+      dmgIds: Array.isArray(answers.general?.[DMG_ANSWER]) ? answers.general[DMG_ANSWER] : [],
     }),
-    [answers, setGate, setQuestion, setGeneral, reset]
+    [answers, setGate, setQuestion, setGeneral, reset, sectionId]
   )
 
   return <TestRunContext.Provider value={value}>{children}</TestRunContext.Provider>
@@ -215,6 +229,10 @@ function evaluateConnection(connection, scope) {
 
   return {
     connection,
+    // HOW MANY SETS — what a rule naming this room group counts, and 1 for a
+    // single room. It is the group's own figure rather than its rooms' sum,
+    // which is what a set being a set means.
+    times,
     // THE CONNECTION'S OWN STATE IS ITS ROOMS'. A group's own rule says only how
     // many sets, so the one thing a reader can ask of the row is whether
     // anything under it computed: `ok` if any room did, and the worst thing
@@ -308,8 +326,30 @@ export function evaluateRun(model, run) {
       if (typeof given === 'boolean') general[node.variable] = given ? 1 : 0
       return
     }
+    // A multiplier untouched is its default, never out of scope — see footfall.
+    if (node.question.kind === 'multiplier') {
+      general[node.variable] = Number.isFinite(given) ? given : node.question.default ?? 1
+      return
+    }
     if (Number.isFinite(given)) general[node.variable] = given
   })
+
+  // A QUESTION'S NAMED x, for every other rule in the building. Typed, not
+  // computed, so it belongs to this pass. An answered 0 is a real 0 a rule may
+  // divide by; unanswered, or behind a gate that is not yes, is out of scope and
+  // reads as unresolved. A clashing name was never compiled in — see buildModel.
+  model.forEach((section) =>
+    section.groups.forEach((group) => {
+      if (!run.gateYes(group.id)) return
+      group.departments.forEach((department) => {
+        if (department.role === SUPPORTING) return
+        department.questions.forEach((node) => {
+          const x = run.xOf(node.id)
+          if (node.variable && !node.variableClash && Number.isFinite(x)) general[node.variable] = x
+        })
+      })
+    })
+  )
 
   // --- Pass 1 ---------------------------------------------------------------
   const answered = new Map()
@@ -355,6 +395,48 @@ export function evaluateRun(model, run) {
     areaSqm.set(deptId, sqftToSqm(netAreaOf(entry.results.flatMap((r) => r.rooms))))
   })
 
+  // WHAT A RULE COUNTS ONE LEVEL IN — per functioning department, a count for
+  // every room, room group and object it built. See memberVariables in
+  // questionModel.js for the names these answer to.
+  //
+  // >>> SEEDED AT 0 FOR AN OPEN DEPARTMENT, and left ABSENT for a closed one.
+  // >>> That is the whole distinction between "asked, and there are none" and
+  // >>> "nobody asked": the first is a real answer a rule may divide by, the
+  // >>> second is unresolved. It is the same line `a` and a department's own name
+  // >>> already draw.
+  const memberCounts = new Map()
+  model.forEach((section) =>
+    section.groups.forEach((group) =>
+      group.departments.forEach((department) => {
+        const entry = answered.get(department.id)
+        if (!entry?.open || department.role === SUPPORTING) return
+        const counts = new Map()
+        const add = (key, n) => key && counts.set(key, (counts.get(key) ?? 0) + n)
+
+        // Every name this department offers, at nought, before anything is added.
+        ;(department.catalogRooms ?? []).forEach((room) => counts.set(room.instance_id, 0))
+        ;(department.catalogGroups ?? []).forEach((g) => counts.set(g.instance_id, 0))
+        ;(department.catalogRooms ?? []).forEach((room) =>
+          (room.objects ?? []).forEach((object) => counts.set(object.instance_id, 0))
+        )
+
+        entry.results.forEach((result) => {
+          // A ROOM GROUP COUNTS ITS SETS, which is its own rule's figure and not
+          // its rooms' sum — see connectionMultiplier.
+          if (result.connection.grouped) add(result.connection.instance_id, result.times ?? 0)
+          result.rooms.forEach((room) => {
+            add(room.instance_id, room.count ?? 0)
+            // Keyed by the PLACEMENT, like its room: the name carries the room
+            // it stands in, so two rooms holding the same object are two names
+            // and two counts.
+            room.objects.forEach((object) => add(object.instance_id, object.count ?? 0))
+          })
+        })
+        memberCounts.set(department.id, counts)
+      })
+    )
+  )
+
   // --- Pass 2 ---------------------------------------------------------------
   model.forEach((section) =>
     section.groups.forEach((group) => {
@@ -378,6 +460,15 @@ export function evaluateRun(model, run) {
           }
           const area = areaSqm.get(variable.instance_id)
           if (Number.isFinite(area)) scope[variable.name] = area
+        })
+        // One level in: a COUNT, where the name above it is an area. A duplicate
+        // never reaches here — questionModel leaves it out of the list — so a
+        // rule naming one reads as unresolved rather than counting whichever of
+        // the two came first.
+        ;(department.members ?? []).forEach((member) => {
+          if (member.duplicate) return
+          const count = memberCounts.get(member.deptInstanceId)?.get(member.targetId)
+          if (Number.isFinite(count)) scope[member.name] = count
         })
         const results = open ? department.connections.map((c) => evaluateConnection(c, scope)) : []
         answered.set(department.id, { open, results, scope })

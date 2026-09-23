@@ -29,6 +29,8 @@ import { Band, BandRow } from '../primitives/Band.jsx'
 import AddButton from '../primitives/AddButton.jsx'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import TabButton from '../primitives/TabButton.jsx'
+import DmgChip from '../primitives/DmgChip.jsx'
+import { useReorderList } from '../primitives/useReorderList.js'
 import { PanelNote } from '../panel/panelParts.jsx'
 import { removeHint } from '../primitives/RemoveButton.jsx'
 import { Branch, BranchRoot, TreeLayer } from '../panel/PanelTree.jsx'
@@ -111,7 +113,7 @@ function MarkPair({ marks }) {
   )
 }
 
-function Row({ level, label, muted, selected, onSelect, right }) {
+function Row({ level, label, muted, selected, onSelect, right, lead = null }) {
   const type = LEVEL[level]
   return (
     <div
@@ -130,6 +132,7 @@ function Row({ level, label, muted, selected, onSelect, right }) {
         boxShadow: selected ? 'inset 0 0 0 1px #1a73e8' : undefined,
       }}
     >
+      {lead}
       <span
         title={label}
         style={{
@@ -201,8 +204,9 @@ function supportingMarks(department) {
 // >>> either — and one department of ten questions buried every heading the
 // >>> outline is scanned by. What is left of them is the mark on the row: how
 // >>> many rooms are still without a rule.
-function QuestionBranch({ node, canEdit, selectedId, onSelect, onRemove }) {
+function QuestionBranch({ node, canEdit, selectedId, onSelect, onRemove, dragHandleProps = null, dragging = false }) {
   return (
+    <div style={{ opacity: dragging ? 0.4 : 1 }}>
     <Branch
       endpoint="dot"
       head={ROW / 2}
@@ -217,9 +221,99 @@ function QuestionBranch({ node, canEdit, selectedId, onSelect, onRemove }) {
         muted={!node.question.prompt}
         selected={selectedId === node.id}
         onSelect={() => onSelect(node.id)}
+        lead={
+          // THE GRIP IS THE HANDLE, as a room's is — see useReorderList.
+          dragHandleProps && (
+            <span
+              {...dragHandleProps}
+              onClick={(e) => e.stopPropagation()}
+              title="Drag to reorder"
+              style={{ flexShrink: 0, cursor: 'grab', opacity: 0.55, fontSize: 11, lineHeight: 1, userSelect: 'none' }}
+            >
+              ⠿
+            </span>
+          )
+        }
         right={<MarkPair marks={questionMarks(node.question, node.connections)} />}
       />
     </Branch>
+    </div>
+  )
+}
+
+function Grip({ props }) {
+  if (!props) return null
+  return (
+    <span
+      {...props}
+      onClick={(e) => e.stopPropagation()}
+      title="Drag to reorder"
+      style={{ flexShrink: 0, cursor: 'grab', opacity: 0.55, fontSize: 11, lineHeight: 1, userSelect: 'none' }}
+    >
+      ⠿
+    </span>
+  )
+}
+
+// THE GENERAL QUESTIONS, IN THE ORDER ASKED. The list is the app's; only its
+// order is authored (`general_order`), so the grip is the one edit here beside
+// the wording. Written once on drop, as a department's questions are.
+function GeneralList({ section, canEdit, editor, selectedId, onSelect }) {
+  const order = useReorderList({
+    items: section.questions,
+    keyOf: (q) => q.id,
+    enabled: canEdit,
+    onCommit: (next) => editor.moveGeneral(next.map((q) => q.id)),
+  })
+  return (
+    <div {...(order.listProps ?? {})}>
+      {order.items.map((q) => (
+        <div key={q.id} {...order.itemProps(q.id)} style={{ opacity: order.draggingKey === q.id ? 0.4 : 1 }}>
+          <Branch endpoint="dot" padTop={GAP} head={GAP + ROW / 2}>
+            <Row
+              level="question"
+              label={q.question.prompt || 'Untitled question'}
+              muted={!q.question.prompt}
+              selected={selectedId === q.id}
+              onSelect={() => onSelect(q.id)}
+              lead={<Grip props={order.handleProps(q.id)} />}
+              // THE VARIABLE IS THE MARK — every rule in the building may name it.
+              right={<Marks text={q.variable} />}
+            />
+          </Branch>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// A DEPARTMENT'S QUESTIONS, IN THE ORDER ASKED, dragged by the grip. A component
+// of its own because the hook cannot live inside the outline's map. Previewed
+// live, written once on drop.
+function QuestionList({ department, canEdit, editor, selectedId, onSelect, onRemove }) {
+  const order = useReorderList({
+    items: department.questions,
+    keyOf: (q) => q.id,
+    enabled: canEdit,
+    onCommit: (next) =>
+      editor.moveQuestions(department.sectionId, department.groupId, department.deptId, next.map((q) => q.id)),
+  })
+  return (
+    <div {...(order.listProps ?? {})}>
+      {order.items.map((q) => (
+        <div key={q.id} {...order.itemProps(q.id)}>
+          <QuestionBranch
+            node={q}
+            canEdit={canEdit}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            onRemove={onRemove}
+            dragHandleProps={order.handleProps(q.id)}
+            dragging={order.draggingKey === q.id}
+          />
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -358,21 +452,13 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                 {/* NO + AND NO RIGHT-CLICK. The list is the app's — see GENERAL
                     in data/questionnaire.js — and the only thing authored about
                     one is how it is worded. */}
-                {section.questions.map((q) => (
-                  <Branch key={q.id} endpoint="dot" padTop={GAP} head={GAP + ROW / 2}>
-                    <Row
-                      level="question"
-                      label={q.question.prompt || 'Untitled question'}
-                      muted={!q.question.prompt}
-                      selected={selectedId === q.id}
-                      onSelect={() => onSelect(q.id)}
-                      // THE VARIABLE IS THE MARK. Every rule in the building may
-                      // name it, so it is the one thing about a general question
-                      // worth reading from the outline.
-                      right={<Marks text={q.variable} />}
-                    />
-                  </Branch>
-                ))}
+                <GeneralList
+                  section={section}
+                  canEdit={canEdit}
+                  editor={editor}
+                  selectedId={selectedId}
+                  onSelect={onSelect}
+                />
               </SectionCard>
             )
           }
@@ -395,7 +481,13 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
                     // The gate is the group's one question, so it is stated on
                     // the group's own row rather than drawn as a child — a
                     // level that always holds exactly one thing is not a level.
-                    right={<Marks text={group.gate?.prompt ? `“${group.gate.prompt}”` : 'no question yet'} />}
+                    right={
+                      <>
+                        <Marks text={group.gate?.prompt ? `“${group.gate.prompt}”` : 'no question yet'} />
+                        {/* Asked only when this DMG is chosen — data/dmg.js. */}
+                        <DmgChip dmgId={group.dmgId} />
+                      </>
+                    }
                   />
 
                   {group.departments.map((department) => {
@@ -441,16 +533,14 @@ export default function QuestionOutline({ buildingId, onSelectBuilding, selected
 
                         {!supporting && (
                           <>
-                            {department.questions.map((q) => (
-                              <QuestionBranch
-                                key={q.id}
-                                node={q}
-                                canEdit={canEdit}
-                                selectedId={selectedId}
-                                onSelect={onSelect}
-                                onRemove={setPendingRemove}
-                              />
-                            ))}
+                            <QuestionList
+                              department={department}
+                              canEdit={canEdit}
+                              editor={editor}
+                              selectedId={selectedId}
+                              onSelect={onSelect}
+                              onRemove={setPendingRemove}
+                            />
 
                             {canEdit && (
                               <Branch endpoint="add" head={GAP + ADD_ENDPOINT / 2} padTop={GAP}>

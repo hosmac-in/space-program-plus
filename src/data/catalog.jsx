@@ -5,7 +5,8 @@
 // every project and option, edited only by an admin.
 //
 //   sp_department     id, name, type, is_duplicable, function_id
-//   sp_group          id, name, is_duplicable, function_id
+//   sp_group          id, name, is_duplicable, function_id, dmg_id  <- dmg.js
+//   sp_dmg            id, name
 //   sp_room           id, name, type, function_id, area_sqm
 //   sp_object         id, name, type, area_sqm, is_bed
 //   sp_equipment      id, name, area_sqm
@@ -38,12 +39,16 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { supabase } from './supabase.js'
 import { PLACEHOLDER_SCHEDULES } from './schedules.js'
+import { foldDefaultDmg } from './dmg.js'
 
 // Column lists are always explicit. A shared default was how `type` ended up
 // being requested from sp_group, which has no such column.
 const TABLES = {
   departments: { table: 'sp_department', columns: 'id, name, type, is_duplicable, function_id', order: 'name' },
-  groups: { table: 'sp_group', columns: 'id, name, is_duplicable, function_id', order: 'name' },
+  // `dmg_id` is the group's disease management group, null for every facility —
+  // see data/dmg.js.
+  groups: { table: 'sp_group', columns: 'id, name, is_duplicable, function_id, dmg_id', order: 'name' },
+  dmgs: { table: 'sp_dmg', columns: 'id, name', order: 'name' },
   rooms: { table: 'sp_room', columns: 'id, name, type, function_id, area_sqm', order: 'name' },
   // `is_bed` is what makes a bed a bed. The questionnaire's General section asks
   // how many the facility has, and the run adds up the beds its own answers
@@ -87,6 +92,7 @@ async function fetchTable(key) {
 const EMPTY = {
   departments: [],
   groups: [],
+  dmgs: [],
   rooms: [],
   objects: [],
   equipment: [],
@@ -129,7 +135,9 @@ export function CatalogProvider({ children }) {
       if (mine !== requestRef.current) return
       // Built on EMPTY, so anything served without being fetched — schedules —
       // survives a reload instead of being dropped by the key list.
-      setData({ ...EMPTY, ...Object.fromEntries(keys.map((k, i) => [k, results[i]])) })
+      const fetched = Object.fromEntries(keys.map((k, i) => [k, results[i]]))
+      // The `default` DMG is every hospital's — see foldDefaultDmg.
+      setData({ ...EMPTY, ...fetched, ...foldDefaultDmg(fetched) })
       setError(null)
     } catch (err) {
       if (mine === requestRef.current) setError(err.message)

@@ -34,6 +34,7 @@ import {
 import { ADD_ENDPOINT, CARET_RING, GUIDE_DOT, GUIDE_GAP, GUIDE_INK, ROOM_STEP, ROW_INSET } from '../canvas/canvasLayout.js'
 import { CARET_HIT } from '../primitives/DisclosureCaret.jsx'
 import { removeHint } from '../primitives/RemoveButton.jsx'
+import { useLeaving } from '../primitives/Presence.jsx'
 
 // TWO COLUMNS, AND EVERY LEVEL USES BOTH. Measured from the left edge of the box
 // they are drawn in — the panel's own content box, then a room block, then the
@@ -309,10 +310,14 @@ export function Branch({
   const id = useId()
   const ref = useRef(null)
 
+  // A row sliding out of a Presence list leaves the drawing at once — see
+  // LeavingCtx. False everywhere else.
+  const leaving = useLeaving()
+
   useLayoutEffect(() => {
-    if (!layer) return undefined
+    if (!layer || leaving) return undefined
     return layer.register(id, { ref, endX, head, endpoint, expanded, parentId })
-  }, [layer, id, endX, head, endpoint, expanded, parentId])
+  }, [layer, id, endX, head, endpoint, expanded, parentId, leaving])
 
   const remove = onRemove
     ? (e) => {

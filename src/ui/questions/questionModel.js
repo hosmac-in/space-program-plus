@@ -26,11 +26,14 @@ import {
   connectionRoomFormula,
   connectionRooms,
   departmentConnections,
+  departmentQuestions,
   departmentRole,
+  questionVariable,
   departmentVariables,
   generalQuestions,
   generalVariableNames,
   isNumericKind,
+  memberVariableName,
   questionConnections,
   slugVariable,
   uniqueVariableName,
@@ -42,6 +45,7 @@ import {
   SUPPORTING,
 } from '../../data/questionnaire.js'
 import { compileFormula } from '../../data/formula.js'
+import { DMG_COLUMN, tagInScope } from '../../data/dmg.js'
 
 export { FUNCTIONING, SUPPORTING }
 
@@ -96,6 +100,56 @@ export function connectionRuled(connection) {
 // >>> the room it stands in changes that. The ONE place a blank is read as a
 // >>> figure is a BED with no rule, which is worth one per room, and that lives
 // >>> in the bed tally alone: see bedsIn in useTestRun.jsx.
+
+// EVERYTHING INSIDE ONE FUNCTIONING DEPARTMENT THAT A RULE MAY COUNT, each named
+// by ITS WHOLE PATH DOWN THE TREE — no level skipped, ever:
+//
+//   emergency.patient_care                        the department's AREA
+//   emergency.patient_care.recovery               a room in it
+//   emergency.patient_care.theatre_set            a room group — how many SETS
+//   emergency.patient_care.theatre_set.scrub_bay  a room inside that set
+//   emergency.patient_care.recovery.monitor       an object in a room
+//
+// A PATH IS THE ONE RULE WITH NO EXCEPTIONS. Naming an object under its
+// department rather than its room was shorter and it was wrong: the name then
+// says something the tree does not, and the moment two rooms hold the same
+// object there is nowhere for the difference to live. Length is what completion
+// is for.
+//
+// Read off the CATALOG NODE rather than off the sibling's model entry: the
+// departments of a group are mapped after this and cannot see each other.
+function memberVariables(deptPath, deptNode, roomDefs, objectDefs) {
+  const out = []
+  const add = (kind, targetId, path, label) => out.push({ kind, targetId, label, name: path })
+
+  const roomIn = (parentPath, roomNode) => {
+    const label = resolveRoomLabel(roomNode, null, defOf(roomDefs, roomNode.room_def_id)?.name || 'Unnamed room').name
+    const path = memberVariableName(parentPath, label)
+    add('room', roomNode.instance_id, path, label)
+    ;(roomNode.objects ?? []).forEach((objectNode) => {
+      const name = nameOf(objectDefs, objectNode.object_def_id, 'Unnamed object')
+      add('object', objectNode.instance_id, memberVariableName(path, name), name)
+    })
+  }
+
+  // The list as the Tree tab draws it, so a room group is a level and the rooms
+  // inside it hang off that — the same walk every other reader of the grouping
+  // makes. `keepEmpty`, because an empty group is still a name that resolves.
+  readRoomGroups(deptNode.rooms ?? [], deptRoomGroups(deptNode), { keepEmpty: true }).forEach((row) => {
+    if (row.kind === 'room') return roomIn(deptPath, row.room)
+    const label = row.group.name || 'Untitled group'
+    const path = memberVariableName(deptPath, label)
+    add('roomGroup', row.group.instance_id, path, label)
+    ;(row.rooms ?? []).forEach((roomNode) => roomIn(path, roomNode))
+  })
+
+  // AMBIGUOUS IS NOT USABLE. Both sides of a collision are marked, and every
+  // reader — the scope, the completion list, the help — drops them; the panel is
+  // the one place they still appear, in red, saying what to rename.
+  const times = new Map()
+  out.forEach((v) => times.set(v.name, (times.get(v.name) ?? 0) + 1))
+  return out.map((v) => ({ ...v, duplicate: times.get(v.name) > 1 }))
+}
 
 function resolveConnection(connection, catalogGroups, catalogRooms, allowedVars) {
   const compiled = compileFormula(connectionFormula(connection), allowedVars)
@@ -163,11 +217,48 @@ export function buildModel({ buildingId, definition, sections, groups, departmen
   // what currently resolves — compileFormula's rule — so an unanswered general
   // question is a name that compiles and reads as unresolved, not a syntax
   // error that zeroes the department around it.
-  const general = generalVariableNames()
+  const reserved = generalVariableNames()
+  const clashes = questionVariableClashes({ buildingId, definition, sections, reserved })
+  // A QUESTION'S NAMED x IS IN SCOPE EVERYWHERE TOO, beside the general names —
+  // except a clashing one, which is left out so a rule naming it reads as
+  // unresolved rather than as whichever question came first.
+  const named = [...clashes.names].filter((name) => !clashes.reasons.has(name))
+  const general = [...reserved, ...named]
   return [
     generalSection(definition),
-    ...resolveVariables(walk({ buildingId, definition, sections, groups, departments, rooms, objects, general })),
+    ...resolveVariables(
+      walk({ buildingId, definition, sections, groups, departments, rooms, objects, general, clashes })
+    ),
   ]
+}
+
+// EVERY NAMED QUESTION IN THE BUILDING, and which names are unusable: used by two
+// questions, or taken by `x`, `a` or a General answer. Read before the walk,
+// because every compile in it needs the whole building's list. Only catalog
+// departments that are functioning count — a supporting one asks nothing.
+function questionVariableClashes({ buildingId, definition, sections, reserved }) {
+  const times = new Map()
+  sections
+    .filter((s) => s.building_id === buildingId)
+    .forEach((section) =>
+      (section.tree?.groups ?? []).forEach((groupNode) =>
+        (groupNode.departments ?? []).forEach((deptNode) => {
+          const args = [definition, section.id, groupNode.instance_id, deptNode.instance_id]
+          if (departmentRole(...args) === SUPPORTING) return
+          departmentQuestions(...args).forEach((q) => {
+            const name = questionVariable(q)
+            if (name) times.set(name, (times.get(name) ?? 0) + 1)
+          })
+        })
+      )
+    )
+  const taken = new Set([QUESTION_VAR, GROUP_VAR, ...reserved])
+  const reasons = new Map()
+  times.forEach((n, name) => {
+    if (taken.has(name)) reasons.set(name, `“${name}” is reserved`)
+    else if (n > 1) reasons.set(name, `“${name}” is used by ${n} questions`)
+  })
+  return { names: new Set(times.keys()), reasons }
 }
 
 // GENERAL IS A SECTION, AND THE FIRST ONE. It hangs off no catalog node — see
@@ -199,7 +290,7 @@ function generalSection(definition) {
   }
 }
 
-function walk({ buildingId, definition, sections, groups, departments, rooms, objects, general }) {
+function walk({ buildingId, definition, sections, groups, departments, rooms, objects, general, clashes }) {
   return sections
     .filter((s) => s.building_id === buildingId)
     .sort(compareSections)
@@ -221,6 +312,10 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
           instance_id: n.instance_id,
           name: nameOf(departments, n.department_def_id, 'Untitled department'),
           role: departmentRole(definition, section.id, groupId, n.instance_id),
+          // The catalog node itself, so a sibling's rooms and objects can be
+          // named without waiting for its own model entry — the departments are
+          // mapped after this and cannot see each other.
+          node: n,
         }))
         const scaleOff = siblings.filter((s) => s.role !== SUPPORTING)
         return {
@@ -230,6 +325,8 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
           groupId,
           name: nameOf(groups, groupNode.group_def_id, 'Untitled group'),
           functionId: defOf(groups, groupNode.group_def_id)?.function_id ?? null,
+          // The group definition's DMG, null for every facility — data/dmg.js.
+          dmgId: defOf(groups, groupNode.group_def_id)?.[DMG_COLUMN] ?? null,
           gate: entry?.gate ?? null,
           departments: (groupNode.departments ?? []).map((deptNode) => {
             const deptId = deptNode.instance_id
@@ -301,11 +398,8 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
               catalogTargets.push({ kind: ROOM_GROUP, ...group })
             })
 
-            // A QUESTION'S RULES SEE ITS OWN NUMBER, `x`, AND THE GENERAL
-            // ANSWERS. The rule is a statement about the thing its question
-            // counts; no OTHER question can reach in and change it, and the
-            // general names are facts about the facility rather than about
-            // anybody's question — which is the whole reason they exist.
+            // A QUESTION'S RULES SEE ITS OWN NUMBER, `x`, THE GENERAL ANSWERS,
+            // AND EVERY OTHER QUESTION'S NAMED x — see questionVariable.
             const questions = (deptEntry?.questions ?? []).map((question) => ({
               kind: 'question',
               id: question.instance_id,
@@ -313,6 +407,9 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
               groupId,
               deptId,
               question,
+              variable: questionVariable(question),
+              // Why this question's name is not in scope, or null when it is.
+              variableClash: clashes.reasons.get(questionVariable(question)) ?? null,
               unit: typeof question.unit === 'string' ? question.unit : '',
               connections: questionConnections(question).map((c) =>
                 resolveConnection(c, catalogGroups, catalogRooms, [QUESTION_VAR, ...general])
@@ -339,10 +436,34 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
                 derived: true,
               },
             ]
+            // ONE LEVEL IN, under each sibling: its rooms, room groups and
+            // objects, as COUNTS where the department's own name is an area.
+            // They hang off the department they belong to rather than sitting in
+            // one long list, because the name says so and the panel reads the
+            // same way round.
+            // THE DEPARTMENT GROUP LEADS EVERY NAME. A department name is not
+            // unique in a building and a path that starts at the department says
+            // less than the tree does; this way one name is one place, read the
+            // same way down as the outline is.
+            const groupSlug = slugVariable(nameOf(groups, groupNode.group_def_id, 'group'))
+            const members = []
             variables.push(...scaleOff.map((sibling) => {
               const stored = overrides.find((v) => v.instance_id === sibling.instance_id)
-              const name = uniqueVariableName(stored?.name || slugVariable(sibling.name), taken)
+              // A STORED NAME IS SOMEBODY'S OWN and is left exactly as written —
+              // it predates all of this, and rewriting it would break the rules
+              // that already use it. Nothing writes a new one.
+              const name = uniqueVariableName(
+                stored?.name || memberVariableName(groupSlug, sibling.name),
+                taken
+              )
               taken.push(name)
+              members.push(
+                ...memberVariables(name, sibling.node, rooms, objects).map((m) => ({
+                  ...m,
+                  deptInstanceId: sibling.instance_id,
+                  deptLabel: sibling.name,
+                }))
+              )
               return { name, kind: 'department', instance_id: sibling.instance_id, label: sibling.name }
             }))
             // A name written against a department that has since left the group —
@@ -355,7 +476,14 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
                 taken.push(name)
                 variables.push({ ...v, name, orphaned: true })
               })
-            const variableNames = [...variables.map((v) => v.name), ...general]
+            // A DUPLICATE IS NOT A NAME. It is left out of what compiles, so a
+            // rule reaching for it reads as unresolved rather than quietly
+            // counting whichever of the two came first in the array.
+            const variableNames = [
+              ...variables.map((v) => v.name),
+              ...members.filter((m) => !m.duplicate).map((m) => m.name),
+              ...general,
+            ]
 
             // EVERY ROW THE CATALOG HAS, ALWAYS — a supporting department sizes
             // all of its rooms, so the list is the catalog's and the document
@@ -398,6 +526,9 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
               // they are kept, unread, so switching the role back is not
               // destructive, exactly as the questions are.
               variables,
+              // What a rule may count one level in — see memberVariables. Empty
+              // for a functioning department, like `variables` itself.
+              members,
               connections: supportingConnections,
               // A ROOM IS USED ONCE PER DEPARTMENT. Which question spoke for it,
               // and through which group, is what the picker greys a row with and
@@ -408,6 +539,23 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
         }
       }),
     }))
+}
+
+// THE MODEL AS ONE RUN ASKS IT: groups outside the DMGs answered are gone, and
+// a section they emptied goes with them. Filtered here, once, so the deck, the
+// rail, the evaluation and side cannot disagree about what is asked. General is
+// always first and never filtered, which is what keeps the card you answer this
+// on in its place when the deck behind it changes.
+export function scopeToDmgs(model, dmgIds) {
+  if (!Array.isArray(dmgIds)) return model
+  return model
+    .map((section) => {
+      if (section.kind === 'general') return section
+      const groups = section.groups.filter((g) => tagInScope(g.dmgId, dmgIds))
+      if (groups.length === 0 && section.groups.length > 0) return null
+      return { ...section, groups }
+    })
+    .filter(Boolean)
 }
 
 // EVERY DEPARTMENT IN THE BUILDING, by instance_id. A variable names one

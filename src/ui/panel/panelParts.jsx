@@ -327,6 +327,9 @@ export function CountField({
   // It takes the width as digits, not pixels, so it is asked for as what it
   // holds; the box then fits the caret and the padding round them.
   boxed = false,
+  // The box's stroke. Pale for a sample in a panel; the Test run passes ink,
+  // since its answers sit on white and a pale box there vanished.
+  boxBorder = '#ddd',
   digits = 5,
 }) {
   // FLOATS ARE ALLOWED EVERYWHERE. `decimals` still fixes the precision of a
@@ -509,7 +512,7 @@ export function CountField({
               width: undefined,
               justifyContent: 'flex-start',
               padding: '3px 6px',
-              border: '1px solid #ddd',
+              border: `1px solid ${boxBorder}`,
               borderRadius: 4,
               background: '#fff',
             }

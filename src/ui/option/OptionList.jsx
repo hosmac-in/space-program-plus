@@ -115,6 +115,29 @@ function BuildingChecklist({ buildings, selected, onToggle, countFor }) {
   )
 }
 
+// WHICH DISEASE MANAGEMENT GROUPS THE OPTION TARGETS. The canvas offers the
+// untagged groups always and the tagged ones only when ticked here — see
+// data/dmg.js. Unticking hides ghosts only, so it costs nothing and asks nothing.
+function DmgChecklist({ dmgs, selected, onToggle }) {
+  if (dmgs.length === 0) return null
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label>Disease management groups</label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+        {dmgs.map((d) => (
+          <label key={d.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13 }}>
+            <input type="checkbox" checked={selected.includes(d.id)} onChange={() => onToggle(d.id)} />
+            <span style={{ flex: 1, minWidth: 0 }}>{d.name ?? 'Unnamed'}</span>
+          </label>
+        ))}
+      </div>
+      <p style={{ fontSize: 12, color: '#777', marginTop: 6 }}>
+        Groups with no DMG are always offered. Anything already added stays whatever is ticked.
+      </p>
+    </div>
+  )
+}
+
 export default function OptionList({
   projectId,
   refreshKey,
@@ -132,11 +155,16 @@ export default function OptionList({
   openPhaseCount = DEFAULT_PHASE_COUNT,
   openFsi = null,
   openGroundCover = null,
+  // Null is an option from before DMGs: no filter, which the dialog shows as
+  // every box ticked, since that is what it offers.
+  openDmgIds = null,
   onSetOptionSettings,
   departmentCountByBuilding,
   departmentCountByPhase,
 }) {
-  const { buildings } = useCatalog()
+  const { buildings, dmgs } = useCatalog()
+  const [newDmgIds, setNewDmgIds] = useState([])
+  const [editDmgIds, setEditDmgIds] = useState([])
   // Picking an option is reading; creating one is not. See src/readOnly.jsx.
   const readOnly = useReadOnly()
   const [options, setOptions] = useState([])
@@ -207,6 +235,9 @@ export default function OptionList({
     // departments start empty and are filled in on the canvas.
     let data = {
       phase_count: newPhaseCount,
+      // Always written on a new option, even empty: [] is "no speciality", and
+      // only a row from before v20 means no filter.
+      dmgs: [...newDmgIds],
       buildings: [...newBuildingIds],
       sections: [],
       departments: [],
@@ -266,6 +297,7 @@ export default function OptionList({
     setNewPhaseCount(DEFAULT_PHASE_COUNT)
     setNewFsi(null)
     setNewGroundCover(null)
+    setNewDmgIds([])
     loadOptions()
     onSelectOption?.(inserted.id)
   }
@@ -284,6 +316,7 @@ export default function OptionList({
       setEditPhaseCount(openPhaseCount)
       setEditFsi(openFsi)
       setEditGroundCover(openGroundCover)
+      setEditDmgIds(openDmgIds ?? dmgs.map((d) => d.id))
       return
     }
     onSelectOption?.(id)
@@ -291,7 +324,10 @@ export default function OptionList({
 
   // All four settings go in one call: one Save, one undo step, one write.
   function applySettings(buildingIds, phaseCount, fsi, groundCover) {
-    onSetOptionSettings({ buildingIds, phaseCount, fsi, groundCover })
+    // Untouched on an old option with every box still ticked, the key stays
+    // absent — so opening the dialog and saving it changes nothing about it.
+    const allTicked = openDmgIds === null && dmgs.every((d) => editDmgIds.includes(d.id))
+    onSetOptionSettings({ buildingIds, phaseCount, fsi, groundCover, dmgIds: allTicked ? null : [...editDmgIds] })
     setEditBuildingIds(null)
   }
 
@@ -451,6 +487,12 @@ export default function OptionList({
                   onChangeGroundCover={setNewGroundCover}
                 />
               </div>
+
+              <DmgChecklist
+                dmgs={dmgs}
+                selected={newDmgIds}
+                onToggle={(id) => setNewDmgIds((prev) => toggle(prev, id))}
+              />
             </>
           )}
 
@@ -501,6 +543,14 @@ export default function OptionList({
               groundCover={editGroundCover}
               onChangeFsi={setEditFsi}
               onChangeGroundCover={setEditGroundCover}
+            />
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <DmgChecklist
+              dmgs={dmgs}
+              selected={editDmgIds}
+              onToggle={(id) => setEditDmgIds((prev) => toggle(prev, id))}
             />
           </div>
 

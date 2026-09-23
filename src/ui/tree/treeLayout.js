@@ -336,6 +336,7 @@ export function buildTreeLayout(
           data: {
             groupDefId: gb.groupDef.id,
             name: gb.groupDef.name,
+            dmgId: gb.groupDef.dmg_id ?? null,
             isEmpty: gb.isEmpty,
             sectionId: section.id,
             canEdit,

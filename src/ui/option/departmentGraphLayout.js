@@ -6,6 +6,7 @@
 // the two tabs inset their cards differently for weeks; keep it shared.
 
 import { functionColours } from '../../data/functions.js'
+import { groupInScope } from '../../data/dmg.js'
 import { buildingAreaSqft, roomGroupCount } from '../../data/optionData.js'
 import {
   catalogRoomNode,
@@ -166,6 +167,10 @@ export function buildLayout({
   // many strips, each independently in or out — see DepartmentGraph. 1 is the
   // unstaged option, and draws the card it always drew.
   phaseCount = 1,
+  // WHICH DMGs THIS OPTION TARGETS. A group outside them is not offered — but
+  // one already holding a department still draws, so nothing programmed is ever
+  // hidden by a tick. Null is no filter. See data/dmg.js.
+  dmgIds = null,
   groups,
   sections,
   // The section ids this option holds. A section is in the option because it
@@ -385,6 +390,7 @@ export function buildLayout({
               return def ? makeEntry(def, deptNode.instance_id) : null
             })
             .filter(Boolean)
+          if (!groupInScope(group, dmgIds) && !entries.some((e) => e.isReal)) return null
           const ordered = arrange(entries, (e) => deptKey(groupNode, e), (e) => e.isReal)
           return {
             groupNode,

@@ -19,6 +19,7 @@
 // write per character would be a write per character.
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   connectionsWithFormula,
   connectionsWithObjectFormula,
@@ -31,12 +32,15 @@ import {
   questionWithConnection,
   questionWithFormula,
   questionWithoutConnection,
+  questionWithVariable,
   ROOM,
   ROOM_GROUP,
 } from '../../data/questionnaire.js'
 import { compileFormula, FORMULA_FUNCTIONS } from '../../data/formula.js'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
 import ConfirmModal from '../primitives/ConfirmModal.jsx'
+import DisclosureCaret from '../primitives/DisclosureCaret.jsx'
+import CompletionList, { completionsFor, tokenAt } from '../primitives/CompletionList.jsx'
 import { removeHint } from '../primitives/RemoveButton.jsx'
 import Toggle from '../primitives/Toggle.jsx'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
@@ -259,6 +263,54 @@ function VariableRow({ name, variable, detail, detailColour = '#999', colour = '
   )
 }
 
+// EVERY COUNT A RULE MAY NAME, shut. One row per room, room group and object of
+// every department in scope, which is hundreds — the completion list in the rule
+// field is how one is actually reached, and this is where you look to see what
+// there is. Grouped under the department each belongs to, because that is what
+// the first half of every name says.
+function MemberList({ members }) {
+  const [open, setOpen] = useState(false)
+  const byDept = []
+  members.forEach((m) => {
+    const last = byDept[byDept.length - 1]
+    if (last && last.id === m.deptInstanceId) last.rows.push(m)
+    else byDept.push({ id: m.deptInstanceId, label: m.deptLabel, rows: [m] })
+  })
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          font: 'inherit',
+          fontSize: 11,
+          color: '#666',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+        }}
+      >
+        <DisclosureCaret expanded={open} />
+        {members.length} count{members.length === 1 ? '' : 's'} you can name inside these — type to complete one
+      </button>
+      {open &&
+        byDept.map((dept) => (
+          <div key={dept.id} style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 11, color: '#999', marginBottom: 2 }}>{dept.label}</div>
+            {dept.rows.map((m) => (
+              <VariableRow key={`${m.deptInstanceId}:${m.targetId}`} name={m.label} variable={m.name} />
+            ))}
+          </div>
+        ))}
+    </div>
+  )
+}
+
 // A SUPPORTING DEPARTMENT: the departments it scales off, and a rule per room
 // over their areas. It is the same shape as a question — names, then rules —
 // with an area where a counted number would be.
@@ -271,7 +323,13 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
   // The group's areas AND the facility's own answers — a supporting department's
   // rule may read either, and this field has to compile what the model compiled
   // or it calls a working rule broken as you type it.
-  const names = [...variables.map((v) => v.name), ...general.map((g) => g.name)]
+  // ONE LEVEL IN: `patient_care.operating_room`, a count rather than an area. A
+  // duplicate is left out of what compiles, so a rule naming one reads as
+  // unresolved — see memberVariables in questionModel.js.
+  const members = department.members ?? []
+  const usableMembers = members.filter((m) => !m.duplicate)
+  const clashes = members.filter((m) => m.duplicate)
+  const names = [...variables.map((v) => v.name), ...usableMembers.map((m) => m.name), ...general.map((g) => g.name)]
   const groupVar = variables.find((v) => v.kind === 'group') ?? null
   const departmentVars = variables.filter((v) => v.kind !== 'group')
 
@@ -298,6 +356,12 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
       departmentVars.map((v) => [v.name, departmentVars.length === 0 ? 0 : tryArea / departmentVars.length])
     ),
     ...(groupVar ? { [groupVar.name]: tryArea } : {}),
+    // A COUNT PREVIEWS AT 1, the identity — the same call the General answers
+    // make, and for the same reason: `ceil(a/750) * patient_care.operating_room`
+    // should preview as the part being written rather than as 0 and looking
+    // broken. There is no sample box for them; twenty rooms would be twenty
+    // boxes above a rule that names one.
+    ...Object.fromEntries(usableMembers.map((m) => [m.name, 1])),
   }
 
   // EVERY ROOM IS ALREADY HERE — there is no picker, because a supporting
@@ -360,6 +424,30 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
             detailColour={variable.orphaned ? '#8a6d1f' : '#999'}
           />
         ))}
+
+        {/* A COLLISION IS AN ERROR AND IS ALWAYS ON SCREEN — it is the one thing
+            here that needs doing rather than knowing, and the fix is a rename on
+            another tab. Both sides are listed: saying "operating_room is
+            ambiguous" without saying which two things are called it leaves you
+            hunting a department for a pair you cannot see. */}
+        {clashes.map((member) => (
+          <VariableRow
+            key={`${member.deptInstanceId}:${member.targetId}`}
+            name={`${member.deptLabel} → ${member.label}`}
+            variable={member.name}
+            colour="#b3261e"
+            detail="Two things here are called this, so no rule can name either — rename one on the Tree tab"
+            detailColour="#b3261e"
+          />
+        ))}
+
+        {/* SHUT, AND THE COMPLETION IS WHY. This list is every room, group and
+            object of every department in scope — hundreds of rows against the
+            handful above them — and the way you reach one is to start typing its
+            name in a rule. It is here to be browsed once, not read. */}
+        {usableMembers.length > 0 && (
+          <MemberList members={usableMembers} />
+        )}
       </div>
 
       <div style={{ marginTop: 18, borderTop: '1px solid #eee', paddingTop: 10 }}>
@@ -377,10 +465,16 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
               value={tryArea}
               onChange={setTryArea}
               suffix={departmentVars.length > 1 ? 'm², shared evenly' : 'm²'}
-              vars={names}
+              // THE AREA NAMES ONLY. The counts one level in are hundreds of
+              // names and listing them here would bury the handful of lines this
+              // help exists to say; the sentence below points at them and the
+              // field completes them, which is how one is actually reached.
+              vars={[...variables.map((v) => v.name), ...general.map((g) => g.name)]}
               subject={`each the net room area of that department, in m²${
-                general.length > 0 ? '. The General answers are in scope too, and preview at 1' : ''
-              }`}
+                usableMembers.length > 0
+                  ? `. A room, room group or object inside one of them is a COUNT, written ${usableMembers[0].name} — start typing and the box completes it`
+                  : ''
+              }${general.length > 0 ? '. The General answers are in scope too, and preview at 1' : ''}`}
             />
           )}
 
@@ -443,6 +537,12 @@ const OBJECT_TINT = '#fffbe8'
 // not read with the same weight as the part that does.
 const COMMENT_INK = '#a0a0a8'
 
+// One character of the rule field, in px — 12px in the monospace stack above.
+// Only the completion list reads it, to put itself under the caret rather than
+// under the box, and being a pixel out there costs nothing. The MIRROR needs no
+// such number: it is the same text in the same font, laid out by the browser.
+const CHAR_WIDTH = 7.23
+
 // The rule and its note. The split is the tokeniser's own — first `//` wins, and
 // everything after it is the note — so the colour and the language cannot
 // disagree about where one ends.
@@ -451,11 +551,230 @@ function splitComment(text) {
   return at < 0 ? [text ?? '', ''] : [text.slice(0, at), text.slice(at)]
 }
 
-function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
+// A RULE IS A ONE-LINE FIELD IN A NARROW PANEL, AND SOME RULES ARE NOT.
+// `emergency.patient_care.theatre_set.scrub_bay` is 44 characters before any
+// arithmetic, so a rule worth commenting cannot be read in the box it is typed
+// in. Double-click opens it at a size it can be read at.
+//
+// >>> IT IS A TEXTAREA, AND MULTI-LINE RULES ALREADY PARSED. The tokeniser has
+// >>> counted \n as whitespace since it was written, and a comment already ran to
+// >>> the end of ITS line — so a rule laid out over four lines with a note on
+// >>> each needed nothing added to the language. See data/formula.js.
+function FormulaLightbox({ label, value, allowedVars, scope, onSave, onClose }) {
+  const [draft, setDraft] = useState(value ?? '')
+  const area = useRef(null)
+  const mirror = useRef(null)
+  const [suggesting, setSuggesting] = useState(null)
+  const [active, setActive] = useState(0)
+  const suggestions = suggesting ? completionsFor(allowedVars ?? [], suggesting.text) : []
+
+  const compiled = compileFormula(draft, allowedVars)
+  const broken = compiled.authored && !compiled.ok
+  const result = scope && compiled.ok ? compiled.evaluate(scope) : null
+
+  // UNDER THE BOX, NOT UNDER THE CARET — the one place this differs from the
+  // inline field. A caret in a textarea is a line and a column, and finding its
+  // pixel needs a second mirror measured per keystroke; the box here is large and
+  // a list along its bottom edge points at it unmistakably.
+  const openCompletion = (el) => {
+    const { start, text } = tokenAt(el.value, el.selectionStart ?? 0)
+    if (!text) return setSuggesting(null)
+    const rect = el.getBoundingClientRect()
+    setSuggesting({ start, text, at: { left: rect.left, top: rect.top, bottom: rect.bottom } })
+    setActive(0)
+  }
+
+  const pick = (name) => {
+    if (!suggesting) return
+    const before = draft.slice(0, suggesting.start)
+    const after = draft.slice(suggesting.start + suggesting.text.length)
+    setDraft(`${before}${name}${after}`)
+    setSuggesting(null)
+    const caret = before.length + name.length
+    requestAnimationFrame(() => {
+      area.current?.focus()
+      area.current?.setSelectionRange(caret, caret)
+    })
+  }
+
+  const save = () => {
+    onSave(draft)
+    onClose()
+  }
+
+  const [rule, note] = splitComment(draft)
+  const box = {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: 14,
+    lineHeight: '22px',
+    width: '100%',
+    height: 180,
+    boxSizing: 'border-box',
+    padding: '10px 12px',
+    border: '1px solid transparent',
+    borderRadius: 6,
+    // The mirror wraps exactly as the textarea does, or the two disagree from
+    // the first line long enough to wrap.
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'break-word',
+    margin: 0,
+  }
+
+  return createPortal(
+    <div
+      // A CLICK OUTSIDE CLOSES WITHOUT SAVING, like every other dismissible
+      // surface here. The edit is not lost silently: there is a Save beside it
+      // and ⌘↵ does the same thing.
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.35)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 80,
+        padding: 24,
+      }}
+    >
+      <div
+        style={{
+          width: 'min(760px, 100%)',
+          background: '#fff',
+          borderRadius: 10,
+          boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
+          padding: 18,
+          minWidth: 0,
+        }}
+      >
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#222', marginBottom: 2 }}>{label || 'Rule'}</div>
+        <div style={{ fontSize: 11, color: '#999', marginBottom: 10 }}>
+          Enter starts a new line — a rule may be laid out over several, and <code>//</code> comments each one.
+        </div>
+
+        <div style={{ position: 'relative' }}>
+          <textarea
+            ref={area}
+            autoFocus
+            value={draft}
+            spellCheck={false}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              openCompletion(e.target)
+            }}
+            onScroll={(e) => {
+              if (mirror.current) mirror.current.scrollTop = e.currentTarget.scrollTop
+            }}
+            onKeyDown={(e) => {
+              if (suggestions.length > 0) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setActive((i) => (i + (e.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length)
+                  return
+                }
+                if (e.key === 'Tab') {
+                  e.preventDefault()
+                  pick(suggestions[active])
+                  return
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setSuggesting(null)
+                  return
+                }
+              }
+              // ⌘/Ctrl+Enter SAVES, and a bare Enter is a new line — the opposite
+              // of the inline field, where Enter is the only way out of a
+              // one-line box. A surface this size is one somebody types into.
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                save()
+              }
+              if (e.key === 'Escape') onClose()
+            }}
+            style={{
+              ...box,
+              position: 'relative',
+              display: 'block',
+              resize: 'vertical',
+              border: `1px solid ${broken ? '#e6a9a2' : '#ddd'}`,
+              background: broken ? '#fdf6f5' : '#fff',
+              color: 'transparent',
+              caretColor: '#222',
+              outline: 'none',
+            }}
+          />
+          {/* The same mirror the inline field uses, and for the same reason: a
+              textarea cannot colour half its own text either. */}
+          <div
+            ref={mirror}
+            aria-hidden="true"
+            style={{
+              ...box,
+              position: 'absolute',
+              inset: 0,
+              height: 'auto',
+              overflow: 'hidden',
+              pointerEvents: 'none',
+              color: '#222',
+              border: '1px solid transparent',
+            }}
+          >
+            {rule}
+            <span style={{ color: COMMENT_INK }}>{note}</span>
+          </div>
+        </div>
+
+        {/* WHAT IT COMES TO, OR WHY IT DOES NOT — the thing the inline row shows
+            in one character, said in full where there is room for it. */}
+        <div style={{ minHeight: 18, marginTop: 8, fontSize: 12 }}>
+          {broken ? (
+            <span style={{ color: '#b3261e' }}>{compiled.message}</span>
+          ) : result ? (
+            <span style={{ color: '#666' }}>
+              At the sample above this comes to <strong style={{ color: '#222' }}>{result.value}</strong>
+            </span>
+          ) : null}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+          <span style={{ flex: 1, fontSize: 11, color: '#aaa' }}>⌘↵ to save · Esc to close</span>
+          <button type="button" onClick={onClose} style={LIGHTBOX_BUTTON}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            style={{ ...LIGHTBOX_BUTTON, background: '#1a73e8', borderColor: '#1a73e8', color: '#fff' }}
+          >
+            Save
+          </button>
+        </div>
+
+        <CompletionList options={suggestions} active={active} at={suggesting?.at ?? null} onPick={pick} />
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+const LIGHTBOX_BUTTON = {
+  font: 'inherit',
+  fontSize: 12,
+  padding: '5px 12px',
+  borderRadius: 5,
+  border: '1px solid #ddd',
+  background: '#fff',
+  color: '#333',
+  cursor: 'pointer',
+}
+
+function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null, label = null, scope = null }) {
   const [draft, setDraft] = useState(value ?? '')
   useEffect(() => setDraft(value ?? ''), [value])
 
   const mirror = useRef(null)
+  const field = useRef(null)
   const follow = (e) => {
     if (mirror.current) mirror.current.scrollLeft = e.currentTarget.scrollLeft
   }
@@ -463,6 +782,65 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
   // Parsed as typed, so the message answers the keystroke that caused it.
   const compiled = compileFormula(draft, allowedVars)
   const broken = compiled.authored && !compiled.ok
+
+  // COMPLETION. `suggesting` is what the caret is inside — where that name
+  // starts, what has been typed of it, and the rectangle to hang the list off —
+  // or null when there is nothing to offer. It is state rather than derived,
+  // because Escape has to be able to put it away without changing the text.
+  const [suggesting, setSuggesting] = useState(null)
+  const [active, setActive] = useState(0)
+  const [expanded, setExpanded] = useState(false)
+  const suggestions = suggesting ? completionsFor(allowedVars ?? [], suggesting.text) : []
+
+  // The lightbox, and the one way into it. Double-click on an input normally
+  // selects a word; here the row is one short expression and reading the whole
+  // of it is worth more than selecting one term.
+  const lightbox = expanded && (
+    <FormulaLightbox
+      label={label}
+      value={draft}
+      allowedVars={allowedVars}
+      scope={scope}
+      onSave={(next) => {
+        setDraft(next)
+        if (next !== (value ?? '')) onCommit(next)
+      }}
+      onClose={() => setExpanded(false)}
+    />
+  )
+
+  // The list hangs off the CARET, not off the box: a rule is read character by
+  // character and a list under the far left of a 300px field points at nothing.
+  // Monospace is what makes the column arithmetic rather than measurement — the
+  // same property the mirror above relies on.
+  const openCompletion = (input) => {
+    const { start, text } = tokenAt(input.value, input.selectionStart ?? 0)
+    if (!text) return setSuggesting(null)
+    const rect = input.getBoundingClientRect()
+    const chars = start - (input.scrollLeft / CHAR_WIDTH)
+    setSuggesting({
+      start,
+      text,
+      at: { left: rect.left + 7 + chars * CHAR_WIDTH, top: rect.top, bottom: rect.bottom },
+    })
+    setActive(0)
+  }
+
+  // Replace the name being typed, and put the caret at its end — not at the end
+  // of the rule, which is where a naive setState leaves it and is wrong the
+  // moment a name is completed in the middle of an expression.
+  const pick = (name) => {
+    if (!suggesting) return
+    const before = draft.slice(0, suggesting.start)
+    const after = draft.slice(suggesting.start + suggesting.text.length)
+    setDraft(`${before}${name}${after}`)
+    setSuggesting(null)
+    const caret = before.length + name.length
+    requestAnimationFrame(() => {
+      field.current?.focus()
+      field.current?.setSelectionRange(caret, caret)
+    })
+  }
 
   const common = {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -481,6 +859,40 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
         ) : (
           'no rule yet'
         )}
+      </span>
+    )
+  }
+
+  // A RULE WRITTEN OVER SEVERAL LINES CANNOT LIVE IN A ONE-LINE INPUT — an
+  // <input> drops newlines on the way in, so typing in this row would silently
+  // flatten a layout somebody made in the lightbox. So the row becomes a
+  // READING of it, and the lightbox is where it is edited. Its first line is
+  // what shows, which is where a rule's subject is.
+  if (draft.includes('\n')) {
+    const [rule, note] = splitComment(draft.split('\n')[0])
+    return (
+      <span
+        onDoubleClick={() => setExpanded(true)}
+        title="Written over several lines — double-click to open it"
+        style={{
+          ...common,
+          display: 'block',
+          width: '100%',
+          padding: '4px 6px',
+          border: `1px dashed ${broken ? '#e6a9a2' : '#ddd'}`,
+          borderRadius: 4,
+          background: broken ? '#fdf6f5' : (tint ?? '#fff'),
+          color: '#222',
+          cursor: 'pointer',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {rule}
+        <span style={{ color: COMMENT_INK }}>{note}</span>
+        <span style={{ color: '#bbb' }}> …</span>
+        {lightbox}
       </span>
     )
   }
@@ -515,16 +927,46 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
     // then resolves against that rather than against the column.
     <span style={{ position: 'relative', display: 'block', width: '100%', minWidth: 0 }}>
       <input
+        ref={field}
         type="text"
         value={draft}
         placeholder="no rule yet"
         title={broken ? compiled.message : 'How many of this one answer buys'}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => draft !== (value ?? '') && onCommit(draft)}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          openCompletion(e.target)
+        }}
+        onDoubleClick={() => setExpanded(true)}
+        onBlur={() => {
+          setSuggesting(null)
+          if (draft !== (value ?? '')) onCommit(draft)
+        }}
         onScroll={follow}
         onSelect={follow}
         onKeyUp={follow}
         onKeyDown={(e) => {
+          // THE LIST TAKES THE KEYS FIRST, and only while it is up. Enter
+          // completes a name rather than leaving the field, and Escape shuts the
+          // list rather than abandoning the rule — one press per thing, so
+          // nothing is dismissed twice over.
+          if (suggestions.length > 0) {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+              e.preventDefault()
+              const step = e.key === 'ArrowDown' ? 1 : suggestions.length - 1
+              setActive((i) => (i + step) % suggestions.length)
+              return
+            }
+            if (e.key === 'Enter' || e.key === 'Tab') {
+              e.preventDefault()
+              pick(suggestions[active])
+              return
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              setSuggesting(null)
+              return
+            }
+          }
           if (e.key === 'Enter') e.currentTarget.blur()
           if (e.key === 'Escape') setDraft(value ?? '')
         }}
@@ -560,6 +1002,9 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null }) {
         {rule}
         <span style={{ color: COMMENT_INK }}>{note}</span>
       </span>
+
+      <CompletionList options={suggestions} active={active} at={suggesting?.at ?? null} onPick={pick} />
+      {lightbox}
     </span>
   )
 }
@@ -696,6 +1141,8 @@ function ObjectBranch({ object, depth, canEdit, allowedVars, scope, onFormula })
             canEdit={canEdit}
             tint={OBJECT_TINT}
             onCommit={onFormula}
+            label={object.name}
+            scope={scope}
           />
         }
         result={<Result compiled={object.compiled} scope={scope} />}
@@ -773,6 +1220,8 @@ function ConnectionBlock({
             allowedVars={allowedVars}
             canEdit={canEdit}
             onCommit={onFormula}
+            label={connection.name}
+            scope={scope}
           />
         }
         // A GROUP WITH NO RULE READS 1, NOT —. The em dash is "nothing here",
@@ -809,6 +1258,8 @@ function ConnectionBlock({
                   allowedVars={allowedVars}
                   canEdit={canEdit}
                   onCommit={(formula) => onRoomFormula(room.instance_id, formula)}
+                  label={`${connection.name} → ${room.label}`}
+                  scope={scope}
                 />
               }
               result={<Result compiled={room.compiled} scope={scope} />}
@@ -1077,10 +1528,9 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
 
   return (
     <div style={{ minWidth: 0 }}>
-      <Caption>Question</Caption>
-      <Where>
-        {group.name} → {department.name}
-      </Where>
+      {/* The face's title, at the department panel's 22px. No path under it:
+          the outline beside it already shows where the question sits. */}
+      <div style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2 }}>Question</div>
 
       <Field
         label="Asked as"
@@ -1090,15 +1540,34 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
         onCommit={(prompt) => edit((q) => ({ ...q, prompt }))}
       />
       <Field
-        label="Counted in"
+        label="Units"
         value={node.unit}
         placeholder="beds"
         canEdit={canEdit}
         onCommit={(unit) => edit((q) => ({ ...q, unit }))}
       />
-      <PanelNote>
-        Answered with one number. Every room below is a rule over it — <code>x</code> is what this question asks.
-      </PanelNote>
+
+      {/* WHAT OTHER RULES CALL THIS x. No path — it is unique in the building,
+          and a clash is shown here and left out of scope everywhere. */}
+      <Field
+        label="Variable Name"
+        value={node.variable ?? ''}
+        canEdit={canEdit}
+        onCommit={(name) => edit((q) => questionWithVariable(q, name))}
+      />
+      {node.variableClash ? (
+        <PanelNote>
+          <span style={{ color: '#c62828' }}>
+            {node.variableClash} — no rule can read it until it is renamed.
+          </span>
+        </PanelNote>
+      ) : (
+        node.variable && (
+          <PanelNote>
+            Every other rule in the building may read this answer as <code>{node.variable}</code>.
+          </PanelNote>
+        )
+      )}
 
       <Field
         label="Comment"
@@ -1113,7 +1582,7 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
           catalog, and nothing wider. One counter per connection, so a 3 Tesla
           MRI is one number over the three rooms its group holds. */}
       <div style={{ marginTop: 18, borderTop: '1px solid #eee', paddingTop: 10 }}>
-        <RuleTree caption="Connects to, one rule each">
+        <RuleTree caption="Ruleset">
         {connections.length === 0 && (
           <PanelNote>Nothing yet. Add a room group or a single room from this department.</PanelNote>
         )}
@@ -1244,12 +1713,31 @@ function GeneralQuestionFace({ node, canEdit, editor }) {
         onCommit={(prompt) => editor.setGeneralWording(node.id, prompt)}
       />
 
-      <PanelNote>
-        Answered with {question.kind === 'yesno' ? 'yes or no' : `a number${node.unit ? ` of ${node.unit}` : ''}`}, and
-        any rule in the building may read <code>{node.variable}</code>
-        {question.kind === 'yesno' ? ' — 1 for yes, 0 for no' : ''}. Until it is answered, a rule over it reads as
-        unresolved rather than as 0.
-      </PanelNote>
+      <Field
+        label="Caption"
+        value={question.comment}
+        placeholder="Printed under the question in the run"
+        canEdit={canEdit}
+        multiline
+        onCommit={(comment) => editor.setGeneralCaption(node.id, comment)}
+      />
+
+      {question.kind === 'dmgs' ? (
+        // A SCOPE, NOT A NUMBER: no rule reads it. See data/dmg.js.
+        <PanelNote>
+          Answered by switching on the disease management groups in sp_dmg. The run then asks only the department
+          groups with no DMG and those tagged with one switched on; unanswered, it asks the untagged ones alone.
+        </PanelNote>
+      ) : (
+        <PanelNote>
+          Answered with {question.kind === 'yesno' ? 'yes or no' : question.kind === 'multiplier' ? `a slider from ${question.min}× to ${question.max}×` : `a number${node.unit ? ` of ${node.unit}` : ''}`}, and
+          any rule in the building may read <code>{node.variable}</code>
+          {question.kind === 'yesno' ? ' — 1 for yes, 0 for no' : ''}.{' '}
+          {question.kind === 'multiplier'
+            ? `Untouched, it reads as ${question.default ?? 1}.`
+            : 'Until it is answered, a rule over it reads as unresolved rather than as 0.'}
+        </PanelNote>
+      )}
 
       {node.tally === 'beds' && (
         <PanelNote>
@@ -1292,6 +1780,18 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
   const general = (model.find((s) => s.kind === 'general')?.questions ?? [])
     .filter((q) => q.variable)
     .map((q) => ({ name: q.variable, numeric: q.numeric }))
+  // Every question's named x rides along with them, previewing at 1 the same
+  // way. A clashing one is left out, exactly as the model left it out of compile.
+  model.forEach((s) =>
+    s.groups.forEach((g) =>
+      g.departments.forEach((d) => {
+        if (d.role === SUPPORTING) return
+        d.questions.forEach((q) => {
+          if (q.variable && !q.variableClash) general.push({ name: q.variable, numeric: true })
+        })
+      })
+    )
+  )
 
   if (node.kind === 'general') return <GeneralFace section={section} />
 

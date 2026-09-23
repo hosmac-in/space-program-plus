@@ -34,8 +34,11 @@ import {
   EMPTY_DEFINITION,
   insertQuestion,
   setGeneralPrompt,
+  setGeneralComment,
+  setGeneralOrder,
   newQuestion,
   removeQuestion,
+  reorderQuestions,
   setDepartmentConnections,
   setDepartmentRole,
   setDepartmentVariables,
@@ -147,9 +150,23 @@ export function useQuestionnaireEditor(buildingId) {
   // GENERAL in data/questionnaire.js — so there is nothing here to add or
   // remove.
 
+  const moveGeneral = useCallback(
+    serialise(async (ids) => {
+      await apply(setGeneralOrder(currentDefinition(), ids))
+    }),
+    []
+  )
+
   const setGeneralWording = useCallback(
     serialise(async (id, prompt) => {
       await apply(setGeneralPrompt(currentDefinition(), id, prompt))
+    }),
+    []
+  )
+
+  const setGeneralCaption = useCallback(
+    serialise(async (id, comment) => {
+      await apply(setGeneralComment(currentDefinition(), id, comment))
     }),
     []
   )
@@ -174,6 +191,13 @@ export function useQuestionnaireEditor(buildingId) {
     []
   )
 
+  const moveQuestions = useCallback(
+    serialise(async (sectionId, groupId, deptId, ids) => {
+      await apply(reorderQuestions(currentDefinition(), sectionId, groupId, deptId, ids))
+    }),
+    []
+  )
+
   const setQuestion = useCallback(
     serialise(async (sectionId, groupId, deptId, questionId, updater) => {
       await apply(updateQuestion(currentDefinition(), sectionId, groupId, deptId, questionId, updater))
@@ -193,8 +217,11 @@ export function useQuestionnaireEditor(buildingId) {
     setSupportingConnections,
     addQuestion,
     deleteQuestion,
+    moveQuestions,
     setQuestion,
     setGeneralWording,
+    setGeneralCaption,
+    moveGeneral,
     // The write's own refusal, or the catalog read failing under it. One field:
     // to the outline they are the same thing — the tab cannot be trusted.
     error: error ?? catalog.error,

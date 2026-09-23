@@ -58,6 +58,8 @@ const EMPTY_OPTION = {
   // FSI and ground cover, typed on the same dialog as buildings and phases.
   // Neither has a catalog default to inherit — see data/optionData.js.
   areaMetrics: { fsi: null, groundCover: null },
+  // The DMGs it targets; null is no filter — see data/dmg.js.
+  dmgIds: null,
 }
 
 // Structural edits — a building, section or department added or removed, or the
@@ -106,7 +108,7 @@ export default function InstanceBuilder({
   // departments: an option may hold an empty section, and a building with no
   // sections.
   const [history, setHistory] = useState({ past: [], present: EMPTY_OPTION, future: [] })
-  const { departments, sectionIds, buildingIds, buildingFactors, phaseCount, areaMetrics } = history.present
+  const { departments, sectionIds, buildingIds, buildingFactors, phaseCount, areaMetrics, dmgIds } = history.present
   const { fsi, groundCover } = areaMetrics ?? {}
   const [optionName, setOptionName] = useState('')
   const [loadError, setLoadError] = useState(null)
@@ -290,7 +292,8 @@ export default function InstanceBuilder({
           {
             ...present.areaMetrics,
             ...(toPlotArea(siteAreas(siteRef.current?.site_geojson)) ?? plotAreaRef.current ?? {}),
-          }
+          },
+          present.dmgIds ?? null
         ),
         version: at + 1,
       })
@@ -466,6 +469,7 @@ export default function InstanceBuilder({
           buildingFactors: loaded.buildingFactors ?? {},
           phaseCount: loaded.phaseCount,
           areaMetrics: { fsi: loaded.areaMetrics?.fsi ?? null, groundCover: loaded.areaMetrics?.groundCover ?? null },
+          dmgIds: loaded.dmgIds,
         }
         resetOption(present)
         plotAreaRef.current = loaded.areaMetrics
@@ -676,11 +680,15 @@ export default function InstanceBuilder({
     phaseCount: nextPhaseCount,
     fsi: nextFsi,
     groundCover: nextGroundCover,
+    // Undefined leaves what the option has; DMGs cascade nothing — they filter
+    // ghosts only, so no department goes with one.
+    dmgIds: nextDmgIds,
   }) {
     const kept = new Set(nextBuildingIds)
     const doomedSectionIds = new Set(sections.filter((s) => !kept.has(s.building_id)).map((s) => s.id))
     mutateOption(
       (o) => ({
+        ...(nextDmgIds !== undefined ? { dmgIds: nextDmgIds } : {}),
         phaseCount: nextPhaseCount,
         buildingIds: [...nextBuildingIds],
         areaMetrics: { fsi: nextFsi ?? null, groundCover: nextGroundCover ?? null },
@@ -844,6 +852,7 @@ export default function InstanceBuilder({
       phaseCount,
       fsi,
       groundCover,
+      dmgIds,
       departmentDefs,
       optionName,
       addDepartments,
@@ -871,6 +880,7 @@ export default function InstanceBuilder({
     phaseCount,
     fsi,
     groundCover,
+    dmgIds,
     departmentDefs,
     optionName,
     history.past.length,

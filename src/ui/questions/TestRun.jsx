@@ -23,7 +23,7 @@ import Toggle from '../primitives/Toggle.jsx'
 import useHoldRepeat from '../primitives/useHoldRepeat.js'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, SUPPORTING } from './questionModel.js'
+import { buildModel, scopeToDmgs, SUPPORTING } from './questionModel.js'
 import { bedTally, useTestRun } from './useTestRun.jsx'
 
 const RAIL_WIDTH = 240
@@ -440,6 +440,21 @@ const STEP_COL = 40
 const FIELD_COL = 58
 const UNIT_COL = 64
 const ANSWER_GAP = 6
+// The answer boxes' and steppers' stroke: ink, not the app's pale #ddd, which
+// disappeared on the white group cards.
+const ANSWER_STROKE = '#222'
+// THE UNIT IS NEVER CUT OFF, AND NEVER MOVES THE FIELDS. A fixed width that a
+// long unit simply runs past to the right: a width that GREW with its text
+// pushed that row's stepper and box left, since the rows are right-aligned, and
+// the answers stopped being one column.
+const unitStyle = {
+  width: UNIT_COL,
+  flexShrink: 0,
+  fontSize: 12,
+  color: '#999',
+  whiteSpace: 'nowrap',
+  overflow: 'visible',
+}
 
 // THE COUNTER SITS OUTSIDE THE BOX, to its left. CountField's own steppers live
 // INSIDE the border — right for a figure in a sentence, wrong for a box someone
@@ -488,9 +503,9 @@ function StepKey({ label, by, from, onChange }) {
         fontSize: 14,
         lineHeight: '20px',
         borderRadius: 4,
-        border: '1px solid #e0e0e0',
-        background: '#fafafa',
-        color: '#666',
+        border: `1px solid ${ANSWER_STROKE}`,
+        background: '#fff',
+        color: '#222',
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.4 : 1,
         userSelect: 'none',
@@ -503,7 +518,10 @@ function StepKey({ label, by, from, onChange }) {
 }
 
 // THE GROUP'S OWN ROW: the one thing the section asks, and the switch for it.
-function GateRow({ group, gate, yes, run, tint }) {
+// It is the card's TITLE STRIP: in the group's colour once yes, and the switch
+// at its far right edge rather than in the answer column — it answers the whole
+// card, not one row in it.
+function GateRow({ group, gate, yes, run, tint, ink = '#222' }) {
   return (
     <>
       <div
@@ -513,6 +531,8 @@ function GateRow({ group, gate, yes, run, tint }) {
           gap: 16,
           height: GATE_ROW,
           minWidth: 0,
+          color: ink,
+          transition: 'color 250ms ease',
         }}
       >
         {/* The authored prompt when there is one — the gate still owns the
@@ -531,22 +551,13 @@ function GateRow({ group, gate, yes, run, tint }) {
           {gate?.prompt || group.name}
         </span>
 
-        {/* The switch stands in the same column the answer boxes do — it is the
-            gate's own answer, and a control on a different column from the ones
-            it opens reads as belonging to something else. */}
-        <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: ANSWER_GAP }}>
-          <span style={{ width: STEP_COL }} />
-          <span style={{ width: FIELD_COL, display: 'flex', justifyContent: 'flex-start' }}>
-            <span style={{ transform: 'scale(1.25)', transformOrigin: 'center left' }}>
-              <Toggle
-                checked={yes}
-                onChange={(v) => run.setGate(group.id, { yes: v })}
-                title={gate?.prompt || group.name}
-                tint={tint}
-              />
-            </span>
-          </span>
-          <span style={{ width: UNIT_COL }} />
+        <span style={{ flexShrink: 0, transform: 'scale(1.25)', transformOrigin: 'center right' }}>
+          <Toggle
+            checked={yes}
+            onChange={(v) => run.setGate(group.id, { yes: v })}
+            title={gate?.prompt || group.name}
+            tint={tint}
+          />
         </span>
       </div>
 
@@ -595,6 +606,7 @@ function GateRow({ group, gate, yes, run, tint }) {
                 steppers={false}
                 size="1.15em"
                 colour="#222"
+                boxBorder={ANSWER_STROKE}
                 onChange={(n) => run.setGate(group.id, { number: n })}
               />
             </span>
@@ -685,6 +697,7 @@ function GeneralRow({ node, run, beds }) {
                 steppers={false}
                 size="1.15em"
                 colour="#222"
+                boxBorder={ANSWER_STROKE}
                 title={node.question.prompt}
                 onChange={(n) => run.setGeneral(node.id, n)}
               />
@@ -697,7 +710,7 @@ function GeneralRow({ node, run, beds }) {
               />
             )}
           </span>
-          <span style={{ width: UNIT_COL, fontSize: 12, color: '#999', whiteSpace: 'nowrap' }}>
+          <span style={unitStyle}>
             {kind === 'number' ? node.unit : ''}
           </span>
         </span>
@@ -725,14 +738,114 @@ function GeneralRow({ node, run, beds }) {
         />
       )}
 
+      {kind === 'multiplier' && (
+        <MultiplierSlider question={node.question} given={given} onChange={(n) => run.setGeneral(node.id, n)} />
+      )}
+
+      {kind === 'dmgs' && <DmgChoices given={given} onChange={(ids) => run.setGeneral(node.id, ids)} />}
+
       {tally && <BedBar mine={tally.placed} placed={tally.placed} target={tally.target} />}
 
+      {/* BLACK, AT READING SIZE: a caption is what the person answering is told,
+          from across a desk — grey 13px was a footnote nobody read. */}
       {node.question.comment && (
-        <div style={{ fontSize: 13, color: '#999', marginTop: 4, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+        <div style={{ fontSize: 17, color: '#222', marginTop: 6, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
           {node.question.comment}
         </div>
       )}
     </div>
+  )
+}
+
+// A SLIDER, full width under its prompt with the figure at its end — a range
+// needs the length a 58px answer column cannot give it. Untouched shows the
+// default, which is also what the rules read.
+function MultiplierSlider({ question, given, onChange }) {
+  const value = Number.isFinite(given) ? given : question.default ?? 1
+  const digits = String(question.step ?? 0.1).split('.')[1]?.length ?? 0
+  return (
+    <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+      <input
+        type="range"
+        min={question.min ?? 1}
+        max={question.max ?? 3}
+        step={question.step ?? 0.1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        title={question.prompt}
+        style={{ flex: 1, minWidth: 0 }}
+      />
+      <span style={{ ...unitStyle, width: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+        {value.toFixed(digits)}
+        {question.unit}
+      </span>
+    </div>
+  )
+}
+
+// ONE SWITCH PER DMG, each a row in the answer column like a gate's. What is
+// switched on decides which department groups the rest of the deck asks — see
+// scopeToDmgs. The list is sp_dmg's, read live.
+function DmgChoices({ given, onChange }) {
+  const { dmgs } = useCatalog()
+  const on = Array.isArray(given) ? given : []
+  if (dmgs.length === 0) {
+    return <div style={{ fontSize: 13, color: '#999', marginTop: 4 }}>No disease management groups in sp_dmg yet.</div>
+  }
+  // CARDS, NOT SWITCHES: a DMG is picked from a set, and a grid of them reads as
+  // one choice where a column of switches read as four questions. THREE TO A
+  // ROW, every card the same fixed rectangle, so the grid is one picture however
+  // long a name is. The card is the whole target; chosen is filled.
+  // At least one is required to go on — see needsDmg in TestRun.
+  return (
+    <>
+    {on.length === 0 && (
+      <div style={{ fontSize: 13, color: '#c5221f', marginTop: 4 }}>Pick at least one to continue.</div>
+    )}
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 12 }}>
+      {dmgs.map((d) => {
+        const chosen = on.includes(d.id)
+        return (
+          <button
+            key={d.id}
+            type="button"
+            aria-pressed={chosen}
+            title={d.name ?? ''}
+            onClick={() => onChange(chosen ? on.filter((id) => id !== d.id) : [...on, d.id])}
+            style={{
+              height: 72,
+              minWidth: 0,
+              padding: '0 14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
+              lineHeight: 1.25,
+              overflow: 'hidden',
+              borderRadius: 8,
+              fontSize: 15,
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              // CHOSEN IS A BLUE EDGE BLEEDING INWARD TO WHITE — an inset glow,
+              // not a fill, so the name stays black on white and no tick is
+              // needed to say which are on. A shadow rather than a gradient
+              // because it follows the rounded corners and it can tween.
+              border: `1.5px solid ${chosen ? '#1a73e8' : '#ddd'}`,
+              background: '#fff',
+              boxShadow: chosen ? 'inset 0 0 14px 0 rgba(26, 115, 232, 0.2)' : 'inset 0 0 0 0 rgba(26, 115, 232, 0)',
+              color: '#222',
+              // ONE WEIGHT FOR BOTH STATES. Bold on select reflowed the name,
+              // which cannot tween and was the jolt; the glow alone says chosen.
+              fontWeight: 500,
+              transition: 'box-shadow 700ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 700ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+            }}
+          >
+            {d.name ?? 'Unnamed'}
+          </button>
+        )
+      })}
+    </div>
+    </>
   )
 }
 
@@ -763,43 +876,57 @@ function SectionCard({ step, run, functions, beds }) {
             .filter((d) => d.role !== SUPPORTING)
             .flatMap((d) => d.questions)
 
+          const opened = yes && questions.length > 0
           return (
+            // A TITLE CARD ONCE YES: the strip in the group's colour, the body
+            // white. Off, the strip is white too — no colour for the answer
+            // nobody gave, the rule the switch follows.
             <div
               key={group.id}
               style={{
-                padding: '14px 18px',
                 borderRadius: 8,
-                border: '1px solid rgba(0,0,0,0.08)',
+                // A real stroke, on or off: the pale hairline vanished against
+                // the section's wash and the cards ran into one another.
+                border: '1px solid #9a9a9a',
                 background: '#fff',
+                overflow: 'hidden',
                 minWidth: 0,
               }}
             >
-              {/* The width is ANSWER_COLUMN's: every field ends on the same
-                  right edge, which is what makes the switches and the counters
-                  read as one column rather than as a ragged edge. */}
-              <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0 }}>
+              <div
+                style={{
+                  padding: '10px 18px',
+                  // A neutral grey for now, not the function colour.
+                  background: yes ? '#dcdcdc' : '#fff',
+                  transition: 'background-color 250ms ease',
+                }}
+              >
                 <GateRow
                   group={group}
                   gate={gate}
                   yes={yes}
                   run={run}
-                  // THE SWITCH TAKES THE GROUP'S OWN HUE WHEN ON, never a fixed
-                  // accent — the rule every Toggle in the app follows. The
-                  // darkened form, because the knob is white and the track has
-                  // to read against it. OFF takes no colour: see Toggle.
-                  tint={functionColours(functions, group.functionId).inverted.color}
+                  ink="#222"
+                  tint="#444"
                 />
-
-                {yes && questions.length === 0 && <PanelNote>Nothing is asked about this yet.</PanelNote>}
-
-                {yes && questions.length > 0 && (
-                  <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    {questions.map((node) => (
-                      <QuestionRow key={node.id} node={node} run={run} beds={beds} />
-                    ))}
-                  </div>
-                )}
               </div>
+
+              {yes && (
+                <div style={{ padding: opened ? '14px 18px' : '4px 18px 12px' }}>
+                  {/* ANSWER_COLUMN's width, so every field ends on one right
+                      edge and the counters read as a column. */}
+                  <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0 }}>
+                    {!opened && <PanelNote>Nothing is asked about this yet.</PanelNote>}
+                    {opened && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                        {questions.map((node) => (
+                          <QuestionRow key={node.id} node={node} run={run} beds={beds} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )
         })}
@@ -894,22 +1021,12 @@ function QuestionRow({ node, run, beds }) {
               steppers={false}
               size="1.15em"
               colour="#222"
+              boxBorder={ANSWER_STROKE}
               title={node.question.prompt}
               onChange={(n) => run.setQuestion(node.id, { x: n })}
             />
           </span>
-          <span
-            style={{
-              width: UNIT_COL,
-              fontSize: 12,
-              color: '#999',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {node.unit}
-          </span>
+          <span style={unitStyle}>{node.unit}</span>
         </span>
       </div>
 
@@ -934,7 +1051,11 @@ export default function TestRun({ buildingId }) {
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
+  // Scoped to the DMGs answered on the General card — see scopeToDmgs.
+  const model = scopeToDmgs(
+    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects }),
+    run.dmgIds
+  )
   const deck = deckOf(model)
   // >>> THE CARDS DRAW NO COUNTS. Every room figure the carousel had has gone
   // >>> with the room rows — side is where the building appears.
@@ -948,6 +1069,17 @@ export default function TestRun({ buildingId }) {
 
   const [at, setAt] = useState(0)
 
+  // NO DMG, NO FURTHER. The rest of the deck is scoped by them, and none picked
+  // would ask only the untagged groups — a building nobody chose. The rail is
+  // the only way through, so refusing its jump off General is the whole gate.
+  // With no rows in sp_dmg there is nothing to pick and nothing is held.
+  const { dmgs } = useCatalog()
+  const needsDmg = dmgs.length > 0 && run.dmgIds.length === 0
+  const jump = (i) => {
+    if (needsDmg && deck[i]?.section.kind !== 'general') return
+    setAt(i)
+  }
+
   // Switching building changes the deck under the pointer; without this, step 7
   // of a long building becomes an out-of-range index in a short one.
   useEffect(() => {
@@ -956,6 +1088,15 @@ export default function TestRun({ buildingId }) {
 
   const here = Math.min(at, Math.max(deck.length - 1, 0))
   const step = deck[here]
+
+  // SIDE DRAWS THE SECTION THIS CARD IS ON, and nothing else — so what is being
+  // asked and what it has built are the same part of the building. Reported from
+  // here rather than worked out again in side, because the deck is what decides
+  // which section you are on and it is built in this file.
+  const shownSection = step?.section.id ?? null
+  useEffect(() => {
+    run.setSectionId(shownSection)
+  }, [shownSection, run])
 
   // THE CANVAS TAKES THE SECTION'S COLOUR. A PALE WASH, not the solid: the rows
   // on it are white and their text is black, and the heading is read at 38px.
@@ -971,7 +1112,7 @@ export default function TestRun({ buildingId }) {
           on the Questions tab; the footer's own Test run button is the way out.
           App drops its band for this view too. */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', minWidth: 0 }}>
-        <Rail deck={deck} at={here} onJump={setAt} functions={functions} run={run} />
+        <Rail deck={deck} at={here} onJump={jump} functions={functions} run={run} />
 
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           {!step ? (

@@ -9,6 +9,7 @@ import { DEPTH } from '../canvas/canvasLayout.js'
 import { guideNodeTypes } from '../canvas/CanvasGuides.jsx'
 import { BandRow } from '../primitives/Band.jsx'
 import { removeHint } from '../primitives/RemoveButton.jsx'
+import DmgChip from '../primitives/DmgChip.jsx'
 
 // How long a group's collapse runs. Exported because TreeCanvas has to hold the
 // class below for exactly as long as the rule it switches on.
@@ -136,6 +137,9 @@ function HGroupBoxCard({ data }) {
       isCollapsed={data.isCollapsed}
       onToggleCollapse={data.onToggleCollapse}
       depth={DEPTH.group}
+      // Which DMG it belongs to, where the area figure sits on the option canvas
+      // — a catalog group has no area. See data/dmg.js.
+      headerRight={data.dmgId ? <DmgChip dmgId={data.dmgId} /> : undefined}
       onRemove={data.onRemove}
       removeTitle={removeHint('from this section')}
     >

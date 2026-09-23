@@ -345,9 +345,18 @@ function SignedInApp({ session }) {
           projects={projects}
           error={projectsError}
           band={
-            // The Tree tab has carousels of its own; the other two share
-            // this one.
-            view === 'tree' ? null : (
+            // THE PROJECT AND OPTION ROWS BELONG WHERE A PROJECT DOES, and the
+            // catalog tabs are not it — the same rule the address bar follows,
+            // asked through the same predicate rather than a second list of
+            // views that could drift from it.
+            //
+            // Tree, Questions and Test run show the CATALOG, which every project
+            // shares. A band offering to switch project or open an option there
+            // was offering to change something nothing on screen belonged to,
+            // and the option it named could not even be open (see AN OPTION IS
+            // OPEN OR IT IS CLOSED). The Tree tab never had one; the other two
+            // had it by inheritance.
+            !viewKeepsProject(view) ? null : (
               <ProjectBand
                 canCreate={isAdmin}
                 selectedProjectId={selectedProjectId}
@@ -367,6 +376,7 @@ function SignedInApp({ session }) {
                 openPhaseCount={builderState.phaseCount}
                 openFsi={builderState.fsi}
                 openGroundCover={builderState.groundCover}
+                openDmgIds={builderState.dmgIds}
                 // One guarded action, not two: the dialog sets both with one
                 // Save, and `guard` holds a single pending action — two calls
                 // would leave only the second waiting behind the prompt. It can

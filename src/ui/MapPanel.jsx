@@ -111,10 +111,10 @@ export default function MapPanel({
         overflow: 'visible',
       }}
     >
-          {/* Test run has no band: it is a run of the questionnaire from the
-              top, and the project, option and building rows all switch between
-              things that would restart it. See TestRun.jsx. */}
-          {view !== 'testrun' && band}
+          {/* NULL ON EVERY CATALOG TAB, and App is what decides it — the band
+              names a project and a project means nothing on Tree, Questions or
+              Test run. This slot simply draws whatever it is handed. */}
+          {band}
 
           {/* Whatever the band leaves: every screen fills this box. */}
           <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>

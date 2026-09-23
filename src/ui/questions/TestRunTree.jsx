@@ -13,8 +13,9 @@
 import { useCatalog } from '../../data/catalog.jsx'
 import { Branch, TreeLayer } from '../panel/PanelTree.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
+import Presence from '../primitives/Presence.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
-import { buildModel, roomLabel } from './questionModel.js'
+import { buildModel, roomLabel, scopeToDmgs } from './questionModel.js'
 import { bedTally, buildProgram, useTestRun } from './useTestRun.jsx'
 import { useAreaUnit } from '../AreaUnitContext.jsx'
 import { formatArea } from '../map/area.js'
@@ -89,7 +90,10 @@ export function TestRunHud({ buildingId }) {
   const run = useTestRun()
   const { label: AREA_UNIT, toDisplay } = useAreaUnit()
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
+  const model = scopeToDmgs(
+    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects }),
+    run.dmgIds
+  )
   const { target, placed, areaSqft } = bedTally(model, run)
   const over = target !== null && placed > target
 
@@ -152,8 +156,27 @@ export default function TestRunTree({ buildingId }) {
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
-  const program = buildProgram(model, run)
+  const model = scopeToDmgs(
+    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects }),
+    run.dmgIds
+  )
+  const whole = buildProgram(model, run)
+
+  // ONLY THE SECTION THE CARD IS ON. The tree beside the carousel reports on
+  // what is being asked, and the whole building's worth of it pushed the section
+  // you were answering off the bottom of the column exactly when it started
+  // filling up. The HUD above keeps the whole-building totals, which is where a
+  // figure that spans sections belongs.
+  //
+  // It falls back to the WHOLE program while no card is reported — the frame
+  // before the carousel has said, and the Companion-less case where nothing
+  // sets it — rather than drawing nothing, which would read as "you have built
+  // nothing" instead of "nobody has said which section".
+  const program = run.sectionId ? whole.filter((s) => s.id === run.sectionId) : whole
+  // From the MODEL, not from the program: a section that has built nothing yet
+  // is not in the program, and it is exactly then that the empty note needs to
+  // say which section is empty.
+  const shownSection = run.sectionId ? model.find((s) => s.id === run.sectionId) : null
 
   const buildingName = buildings.find((b) => b.id === buildingId)?.name ?? 'This building'
   const totalRooms = program
@@ -168,35 +191,46 @@ export default function TestRunTree({ buildingId }) {
         What this builds
       </div>
       <div style={{ fontSize: 22, marginTop: 2 }}>{buildingName}</div>
+      {/* The count is one SECTION's now. The section is not named here: its own
+          row is the first thing in the tree below, and naming it twice two lines
+          apart is what the department heading already refuses to do. When there
+          is no tree to name it, the note below says which card you are on. */}
       <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
         {totalRooms === 0 ? 'Nothing yet' : `${totalRooms} room${totalRooms === 1 ? '' : 's'} so far`}
       </div>
 
       {program.length === 0 ? (
         <PanelNote>
-          Answer yes to a group and count something, and it appears here. Nothing on this tab is saved.
+          {shownSection
+            ? `Answer yes to a group in ${shownSection.name} and count something, and it appears here.`
+            : 'Answer yes to a group and count something, and it appears here.'}{' '}
+          Nothing on this tab is saved.
         </PanelNote>
       ) : (
+        // EVERY LEVEL SLIDES — a row an answer adds opens, one it takes away
+        // shuts, as the option canvas's cards move. See Presence; the tree's
+        // lines follow because the layer re-measures as the column resizes.
         <TreeLayer>
-          {program.map((section) => (
-            <Branch key={section.id} endpoint="caret" expanded head={ROW / 2}>
+          <Presence items={program} keyOf={(s) => s.id}>
+          {(section) => (
+            <Branch endpoint="caret" expanded head={ROW / 2}>
               <Row label={section.name} weight={700} caps />
 
-              {section.groups.map((group) => (
-                <Branch key={group.id} endpoint="caret" expanded head={ROW / 2}>
+              <Presence items={section.groups} keyOf={(g) => g.id}>
+              {(group) => (
+                <Branch endpoint="caret" expanded head={ROW / 2}>
                   <Row label={group.name} weight={600} />
 
-                  {group.departments.map((department) => (
-                    <Branch key={department.id} endpoint="caret" expanded head={ROW / 2}>
+                  <Presence items={group.departments} keyOf={(d) => d.id}>
+                  {(department) => (
+                    <Branch endpoint="caret" expanded head={ROW / 2}>
                       <Row label={department.name} weight={500} />
 
-                      {department.rooms.map((room, i) => (
-                        // A room placed by two sets would repeat its id, which
-                        // the once-per-department rule prevents — but the index
-                        // rides along so a future relaxation of that rule cannot
-                        // collide two keys silently.
+                      {/* Keyed by placement: the once-per-department rule means
+                          no room id repeats inside one department. */}
+                      <Presence items={department.rooms} keyOf={(r) => r.instance_id}>
+                      {(room) => (
                         <Branch
-                          key={`${room.instance_id}:${i}`}
                           endpoint={sized(room).length > 0 ? 'caret' : 'dot'}
                           expanded={sized(room).length > 0}
                           head={ROW / 2}
@@ -211,19 +245,25 @@ export default function TestRunTree({ buildingId }) {
                               This is the one column that lists them: the
                               carousel answers by what a thing IS, and side is
                               where what that buys appears. */}
-                          {sized(room).map((object) => (
-                            <Branch key={object.instance_id} endpoint="dot" head={ROW / 2}>
+                          <Presence items={sized(room)} keyOf={(o) => o.instance_id}>
+                          {(object) => (
+                            <Branch endpoint="dot" head={ROW / 2}>
                               <Row label={object.name} size={11} colour="#777" right={<Count n={object.count} />} />
                             </Branch>
-                          ))}
+                          )}
+                          </Presence>
                         </Branch>
-                      ))}
+                      )}
+                      </Presence>
                     </Branch>
-                  ))}
+                  )}
+                  </Presence>
                 </Branch>
-              ))}
+              )}
+              </Presence>
             </Branch>
-          ))}
+          )}
+          </Presence>
         </TreeLayer>
       )}
     </div>

@@ -142,6 +142,12 @@
 // SCHEMA VERSIONS. Every older row still loads, and absence always means the
 // behaviour that version had, so none of these needs a migration.
 //
+// 20  `dmgs`: the sp_dmg ids this option targets. The Project tab offers only
+//     groups untagged or tagged with one of them — see data/dmg.js. It filters
+//     GHOSTS only: a group already holding departments is drawn regardless, so
+//     unticking a DMG loses nothing. Absent: no filter, every group offered,
+//     which is what every older row means. [] is a choice — untagged groups only.
+//
 // 19  a department may carry `room_group_counts`: how many of each of the
 //     CATALOG's room groups this option takes, keyed by the group's
 //     instance_id. It MULTIPLIES the counts of the rooms inside it — two of a
@@ -249,8 +255,9 @@ import {
 } from './factors.js'
 import { catalogRoomsForNode, deptNodeIndex, roomGroupId } from './tree.js'
 import { sqmToSqft } from './units.js'
+import { readDmgIds } from './dmg.js'
 
-export const SCHEMA_VERSION = 19
+export const SCHEMA_VERSION = 20
 
 // HOW MANY OF A ROOM GROUP THIS OPTION TAKES — 1 unless it says otherwise, and
 // the ONE definition of that fallback. An absent map, an absent key and a
@@ -320,9 +327,13 @@ export function buildInstanceData(
   buildingFactors = {},
   weather = null,
   site = null,
-  areaMetrics = null
+  areaMetrics = null,
+  dmgIds = null
 ) {
   return {
+    // Null writes no key, so an option nobody has set DMGs on keeps its payload
+    // and goes on offering every group. See v20.
+    ...(Array.isArray(dmgIds) ? { dmgs: [...dmgIds] } : {}),
     // Copied from the project on every save, not resolved on read: Grasshopper
     // reads this document alone. A project with no station writes no key.
     ...(weather?.epw_url ? { weather } : {}),
@@ -668,6 +679,8 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
       plotAreaSqm: Number.isFinite(data?.area_metrics?.plot_area_sqm) ? data.area_metrics.plot_area_sqm : null,
       plotAreaAcre: Number.isFinite(data?.area_metrics?.plot_area_acre) ? data.area_metrics.plot_area_acre : null,
     },
+    // Null for a row saved before v20 — no filter — never [], which is a choice.
+    dmgIds: readDmgIds(data?.dmgs),
   }
 }
 

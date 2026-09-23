@@ -31,6 +31,7 @@ export default function ProjectBand({
   openPhaseCount,
   openFsi,
   openGroundCover,
+  openDmgIds,
   onSetOptionSettings,
   departmentCountByBuilding,
   departmentCountByPhase,
@@ -63,6 +64,7 @@ export default function ProjectBand({
             openPhaseCount={openPhaseCount}
             openFsi={openFsi}
             openGroundCover={openGroundCover}
+            openDmgIds={openDmgIds}
             onSetOptionSettings={onSetOptionSettings}
             departmentCountByBuilding={departmentCountByBuilding}
             departmentCountByPhase={departmentCountByPhase}

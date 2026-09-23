@@ -287,6 +287,48 @@ export function uniqueVariableName(seed, taken) {
   return `${seed}_${n}`
 }
 
+// A NAME IS A PATH DOWN THE TREE, AND NO LEVEL IS EVER SKIPPED — the department
+// group, the department, then whatever is inside it:
+//
+//   emergency.patient_care                        the department's AREA, in m²
+//   emergency.patient_care.recovery               a room in it — a COUNT
+//   emergency.patient_care.theatre_set            a room group — how many SETS
+//   emergency.patient_care.theatre_set.scrub_bay  a room inside that set
+//   emergency.patient_care.recovery.monitor       an object in a room
+//
+//   sterile store   ceil(emergency.patient_care.operating_room / 2)
+//
+// EVERYTHING BELOW THE DEPARTMENT IS A COUNT, where the department itself is an
+// area. A rule reaching in asks "how many operating rooms are there", which is a
+// count question, and there is no second form of it worth the ambiguity. A room
+// group counts its SETS, not the rooms in them — the figure its own rule states,
+// which is what a set being a set means.
+//
+//   >>> THE PATH IS THE ONE RULE WITH NO EXCEPTIONS. Objects were briefly named
+//   >>> under their DEPARTMENT rather than their room, which was shorter and
+//   >>> wrong: the name then says something the tree does not, and two rooms
+//   >>> holding the same object have nowhere to differ. A department group leads
+//   >>> every name for the same reason — a department name is not unique in a
+//   >>> building. LENGTH IS WHAT COMPLETION IS FOR.
+//
+//   >>> DUPLICATES ARE THE AUTHOR'S TO FIX, AND ARE FLAGGED WHERE THEY AUTHOR.
+//   >>> Two Toilets in one ROOM slug alike; the answer is to label them
+//   >>> (Toilet - Male, Toilet - Female) on the Tree tab, which is a thing worth
+//   >>> doing anyway. So an ambiguous name is NOT put in scope and is NOT offered
+//   >>> for completion — it is listed in the designer, in red, saying what
+//   >>> collided. Picking one of the two silently would size a department off
+//   >>> whichever room happened to be first in the array.
+//
+//   >>> A RENAME ON THE TREE TAB BREAKS THE RULES NAMING IT, VISIBLY — they read
+//   >>> as unresolved, exactly as a department's own name already does. This was
+//   >>> decided over storing an id and displaying a name: an id in the source
+//   >>> would survive renames, but the field paints its comments with a mirror
+//   >>> that is character-identical to the input, and a chip standing for 36
+//   >>> characters of uuid breaks that outright.
+export function memberVariableName(deptSlug, memberName) {
+  return `${deptSlug}.${slugVariable(memberName)}`
+}
+
 export function newVariable(name, instanceId, label) {
   return { name, kind: 'department', instance_id: instanceId, label: label ?? '' }
 }
@@ -397,10 +439,12 @@ export function setDepartmentRole(definition, sectionId, groupId, deptId, role) 
 
 // THE VARIABLE EVERY BED RULE AND EVERY BED TALLY IS WRITTEN AGAINST.
 export const BED_VAR = 'beds'
+export const DMG_ANSWER = 'dmgs'
 
 // THE LIST, AND IT IS THE APP'S. `id` is the document's key and never changes —
 // rewording a question must not orphan its answer — and `variable` is what rules
-// name it by. `kind` is 'number' or 'yesno'; both reach a rule as a number.
+// name it by. `kind` is 'number', 'yesno' or 'multiplier' (a slider carrying
+// its own min/max/step/default); all three reach a rule as a number.
 //
 // Adding one here is the whole of adding a general question. Removing one leaves
 // any wording written for it in the document, unread, which is this file's rule
@@ -416,10 +460,37 @@ export const GENERAL_QUESTIONS = [
     // way, and the check lives in the tally rather than here.
     tally: 'beds',
   },
+  // HOW BUSY THE FACILITY IS AGAINST THE CATALOG. 1 is what the catalog's areas
+  // were sized for; above it is busier — what a given figure correlates to (cost
+  // of treatment, catchment) is still to be worked out, so it is set by eye.
+  // UNANSWERED IS 1, not unresolved: it is a multiplier, and the identity is the
+  // only reading of "nobody moved it" that leaves every rule as written.
+  {
+    id: 'footfall',
+    variable: 'footfall',
+    kind: 'multiplier',
+    unit: '×',
+    prompt: 'How busy is the facility, against a typical one?',
+    min: 1,
+    max: 2.5,
+    step: 0.1,
+    default: 1,
+  },
+  // WHICH DISEASE MANAGEMENT GROUPS THE FACILITY TARGETS — the choices are
+  // sp_dmg's rows, and the answer is which department groups the run goes on to
+  // ask (see data/dmg.js). No variable: it is a scope, not a number, and no rule
+  // reads it.
+  {
+    id: DMG_ANSWER,
+    variable: null,
+    kind: 'dmgs',
+    unit: '',
+    prompt: 'Which disease management groups does the facility target?',
+  },
 ]
 
 export function isNumericKind(kind) {
-  return kind === 'number' || kind === 'yesno'
+  return kind === 'number' || kind === 'yesno' || kind === 'multiplier'
 }
 
 // The wording somebody wrote for one, or the app's own.
@@ -432,28 +503,67 @@ export function generalPrompt(definition, id) {
 // over it. Both columns and the run read this, so none of them can disagree
 // about what is asked.
 export function generalQuestions(definition) {
-  return GENERAL_QUESTIONS.map((q) => ({ ...q, prompt: generalPrompt(definition, q.id) ?? q.prompt }))
+  const order = Array.isArray(definition?.general_order) ? definition.general_order : []
+  // THE ORDER IS AUTHORED, the list is not: `general_order` holds ids, and one
+  // it does not name — added to the constant since — goes after, in the
+  // constant's order. A stale id names nothing and is skipped.
+  const rank = (q) => {
+    const i = order.indexOf(q.id)
+    return i < 0 ? order.length + GENERAL_QUESTIONS.indexOf(q) : i
+  }
+  return [...GENERAL_QUESTIONS]
+    .sort((a, b) => rank(a) - rank(b))
+    .map((q) => ({
+      ...q,
+      prompt: generalPrompt(definition, q.id) ?? q.prompt,
+      comment: generalComment(definition, q.id),
+    }))
+}
+
+// THE CAPTION under a general question — authored outright, since the app has
+// no words of its own to fall back to. Absent is none.
+export function generalComment(definition, id) {
+  const stored = definition?.general?.[id]?.comment
+  return typeof stored === 'string' && stored.trim() ? stored : ''
+}
+
+export function setGeneralComment(definition, id, comment) {
+  return setGeneralKey(definition, id, 'comment', comment.trim())
+}
+
+// One key on one entry, cleared by deleting it, and the entry and `general`
+// with it once empty — so an untouched question stores nothing.
+function setGeneralKey(definition, id, key, value) {
+  const base = definition ?? EMPTY_DEFINITION
+  const general = { ...(base.general ?? {}) }
+  const entry = { ...(general[id] ?? {}) }
+  if (value) entry[key] = value
+  else delete entry[key]
+  if (Object.keys(entry).length === 0) delete general[id]
+  else general[id] = entry
+  const next = { ...base }
+  if (Object.keys(general).length === 0) delete next.general
+  else next.general = general
+  return next
+}
+
+export function setGeneralOrder(definition, ids) {
+  return { ...(definition ?? EMPTY_DEFINITION), general_order: [...ids] }
 }
 
 // Every name a rule may write. It is the constant's, so it cannot go stale and
 // cannot collide.
 export function generalVariableNames() {
-  return GENERAL_QUESTIONS.map((q) => q.variable)
+  return GENERAL_QUESTIONS.map((q) => q.variable).filter(Boolean)
 }
 
 // Only the wording is stored, and typing the app's own words back stores
 // nothing — the same rule a room's label follows, so a question is never pinned
 // against a later rewording by somebody who only meant to look.
 export function setGeneralPrompt(definition, id, prompt) {
-  const base = definition ?? EMPTY_DEFINITION
   const fallback = GENERAL_QUESTIONS.find((q) => q.id === id)?.prompt ?? ''
-  const general = { ...(base.general ?? {}) }
-  if (!prompt.trim() || prompt.trim() === fallback) delete general[id]
-  else general[id] = { ...(general[id] ?? {}), prompt: prompt.trim() }
-  const next = { ...base }
-  if (Object.keys(general).length === 0) delete next.general
-  else next.general = general
-  return next
+  const wording = prompt.trim() === fallback ? '' : prompt.trim()
+  return setGeneralKey(definition, id, 'prompt', wording)
 }
 
 // --- Questions --------------------------------------------------------------
@@ -472,11 +582,39 @@ export function removeQuestion(definition, sectionId, groupId, deptId, questionI
   }))
 }
 
+// THE ARRAY'S ORDER IS THE ORDER ASKED. `ids` is the new arrangement; a stored
+// question it does not name keeps its place at the end rather than being lost.
+export function reorderQuestions(definition, sectionId, groupId, deptId, ids) {
+  return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => {
+    const all = dept.questions ?? []
+    const byId = new Map(all.map((q) => [q.instance_id, q]))
+    const moved = ids.map((id) => byId.get(id)).filter(Boolean)
+    return { ...dept, questions: [...moved, ...all.filter((q) => !ids.includes(q.instance_id))] }
+  })
+}
+
 export function updateQuestion(definition, sectionId, groupId, deptId, questionId, updater) {
   return updateDeptEntry(definition, sectionId, groupId, deptId, (dept) => ({
     ...dept,
     questions: (dept.questions ?? []).map((q) => (q.instance_id === questionId ? updater(q) : q)),
   }))
+}
+
+// A QUESTION'S OWN NAME FOR ITS x, so another question's rules can read it. The
+// admin types it and it has NO PATH: it is unique across the building, and a
+// clash is flagged rather than resolved — see questionVariableClashes in
+// questionModel.js. Absent means nobody named it, and only its own `x` reaches it.
+export function questionVariable(question) {
+  return typeof question?.variable === 'string' && question.variable ? question.variable : null
+}
+
+// Slugged on the way in, so what is stored is always a name the language reads.
+// Emptying it deletes the key.
+export function questionWithVariable(question, name) {
+  const next = { ...question }
+  if (!String(name ?? '').trim()) delete next.variable
+  else next.variable = slugVariable(name)
+  return next
 }
 
 // --- Connections --------------------------------------------------------------

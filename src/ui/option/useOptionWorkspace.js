@@ -33,6 +33,7 @@ const NOT_LOADED = {
   phaseCount: 1,
   fsi: null,
   groundCover: null,
+  dmgIds: null,
   setOptionSettings: () => {},
   undo: () => {},
   redo: () => {},
