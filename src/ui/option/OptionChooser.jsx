@@ -10,7 +10,7 @@
 import { useCallback, useState } from 'react'
 import OptionList from './OptionList.jsx'
 
-export default function OptionChooser({ projectId, refreshKey, onSelectOption }) {
+export default function OptionChooser({ projectId, refreshKey, onSelectOption, onStartCreator }) {
   // Null until the list has loaded, so neither caption flashes before it's
   // known which one is true.
   const [count, setCount] = useState(null)
@@ -54,6 +54,7 @@ export default function OptionChooser({ projectId, refreshKey, onSelectOption })
           selectedOptionId={null}
           onSelectOption={onSelectOption}
           onCount={onCount}
+          onStartCreator={onStartCreator}
         />
       </div>
     </div>

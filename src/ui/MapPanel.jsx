@@ -4,6 +4,8 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import DrawControl from './map/DrawControl.jsx'
 import SiteClusterLayer from './map/SiteClusterLayer.jsx'
+import PlaceSearch from './map/PlaceSearch.jsx'
+import ReferenceHospitalsLayer from './map/ReferenceHospitalsLayer.jsx'
 import TreeCanvas from './tree/TreeCanvas.jsx'
 import QuestionOutline from './questions/QuestionOutline.jsx'
 import TestRun from './questions/TestRun.jsx'
@@ -89,9 +91,12 @@ export default function MapPanel({
   // the same list — see ProjectSummary.
   projects,
   error,
+  // The option creator's { projectId, onCreated, onCancel } — see TestRun.
+  creator,
 }) {
   const [baseOpacity, setBaseOpacity] = useState(0.5)
   const [baseLayerType, setBaseLayerType] = useState('street')
+  const [showReference, setShowReference] = useState(true)
   const skipNextFlyRef = useRef(false)
 
   const selectedProject = projects.find((p) => p.id === projectId)
@@ -150,6 +155,12 @@ export default function MapPanel({
           {view === 'testrun' && (
             <div style={{ position: 'absolute', inset: 0 }}>
               <TestRun buildingId={questionBuildingId} />
+            </div>
+          )}
+
+          {view === 'creator' && (
+            <div style={{ position: 'absolute', inset: 0 }}>
+              <TestRun buildingId={questionBuildingId} creator={creator} />
             </div>
           )}
 
@@ -212,6 +223,16 @@ export default function MapPanel({
                   Satellite
                 </label>
               </div>
+              <div style={{ marginTop: 6 }}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={showReference}
+                    onChange={(e) => setShowReference(e.target.checked)}
+                  />{' '}
+                  Cancer hospitals
+                </label>
+              </div>
             </div>
 
           </div>
@@ -222,12 +243,17 @@ export default function MapPanel({
         zoomControl={false}
       >
         <ZoomControl position="bottomleft" />
+        <PlaceSearch />
         <TileLayer
           key={baseLayerType}
           attribution={BASE_LAYERS[baseLayerType].attribution}
           url={BASE_LAYERS[baseLayerType].url}
           opacity={baseOpacity}
         />
+
+        {/* Under the project sites, so a site drawn over a reference campus
+            still takes the click. */}
+        {showReference && <ReferenceHospitalsLayer drawMode={drawMode} />}
 
         {projects
           .filter((p) => p.site_geojson)

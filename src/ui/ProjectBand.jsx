@@ -35,6 +35,7 @@ export default function ProjectBand({
   onSetOptionSettings,
   departmentCountByBuilding,
   departmentCountByPhase,
+  onStartCreator,
 }) {
   return (
     <Band edge="bottom">
@@ -68,6 +69,7 @@ export default function ProjectBand({
             onSetOptionSettings={onSetOptionSettings}
             departmentCountByBuilding={departmentCountByBuilding}
             departmentCountByPhase={departmentCountByPhase}
+            onStartCreator={onStartCreator}
           />
         ) : (
           <span style={{ fontSize: 12, color: '#bbb' }}>Pick a project first</span>

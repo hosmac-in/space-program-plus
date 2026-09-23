@@ -25,6 +25,7 @@ import { CountField, PanelNote } from '../panel/panelParts.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, scopeToDmgs, SUPPORTING } from './questionModel.js'
 import { bedTally, useTestRun } from './useTestRun.jsx'
+import { createOptionFromRun } from './createOption.js'
 
 const RAIL_WIDTH = 240
 const CARD_MAX = 860
@@ -1077,10 +1078,86 @@ function QuestionRow({ node, run, beds }) {
 
 // --- The tab ------------------------------------------------------------------
 
-export default function TestRun({ buildingId }) {
-  const { sections, groups, departments, rooms, objects, functions } = useCatalog()
+// THE OPTION CREATOR'S ONE WAY OUT FORWARD. Not navigation — the rail still is
+// that — but the one act the preview must never have: writing what was answered.
+// A ref guards the insert, since a fast second click beats a disabled button.
+function CreatorBar({ creator, blocked, create }) {
+  const busyRef = useRef(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const go = async () => {
+    if (busyRef.current || blocked) return
+    busyRef.current = true
+    setBusy(true)
+    setError(null)
+    try {
+      const id = await create()
+      creator.onCreated(id)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      busyRef.current = false
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      style={{
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '12px 24px',
+        borderTop: '1px solid #ddd',
+        background: '#fff',
+        fontSize: 15,
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 0, color: error ? '#c0392b' : '#777' }}>
+        {error ?? blocked ?? 'Finished? Create the option from these answers.'}
+      </span>
+      <button type="button" onClick={creator.onCancel} disabled={busy} style={{ fontSize: 15, padding: '8px 16px' }}>
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={go}
+        disabled={busy || !!blocked}
+        style={{
+          fontSize: 15,
+          padding: '8px 16px',
+          background: '#1a73e8',
+          color: '#fff',
+          border: 'none',
+          borderRadius: 4,
+          cursor: busy || blocked ? 'default' : 'pointer',
+          opacity: busy || blocked ? 0.5 : 1,
+        }}
+      >
+        {busy ? 'Creating…' : 'Create option'}
+      </button>
+    </div>
+  )
+}
+
+// `creator` turns the preview into THE OPTION CREATOR: the same deck, started
+// fresh, with a bar under it that writes the option — { projectId, onCreated,
+// onCancel }. Absent, this is the Test run tab and saves nothing.
+export default function TestRun({ buildingId, creator = null }) {
+  const catalog = useCatalog()
+  const { sections, groups, departments, rooms, objects, functions } = catalog
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
+
+  // A NEW OPTION STARTS FROM NOTHING. The answers are shared with the preview
+  // tab, and a half-answered preview must not become somebody's program.
+  const { reset } = run
+  const isCreator = !!creator
+  useEffect(() => {
+    if (isCreator) reset()
+  }, [isCreator, buildingId, reset])
 
   // Scoped to the DMGs answered on the General card — see scopeToDmgs.
   const model = scopeToDmgs(
@@ -1173,6 +1250,21 @@ export default function TestRun({ buildingId }) {
                 <SectionCard step={step} run={run} functions={functions} beds={beds} />
               </div>
             </div>
+          )}
+          {creator && (
+            <CreatorBar
+              creator={creator}
+              blocked={needsDmg ? 'Pick the disease management groups first.' : null}
+              create={() =>
+                createOptionFromRun({
+                  projectId: creator.projectId,
+                  model,
+                  run,
+                  buildingId,
+                  catalog,
+                })
+              }
+            />
           )}
         </div>
       </div>

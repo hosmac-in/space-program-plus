@@ -6,10 +6,9 @@
 // thing the designer cannot show you — an outline of questions is not a
 // questionnaire any more than a schema is a database.
 //
-// >>> DO NOT GIVE THIS A SAVE. The engine that turns answers into an
-// >>> sp_option.data is a real and separate piece of work (see CLAUDE.md, Open
-// >>> questions); a half-one wired to this state would write a program nobody
-// >>> asked for. This tab exists to check the FORM, not to fill one in.
+// >>> THE TEST RUN TAB NEVER SAVES — it checks the FORM. The same state feeds
+// >>> THE OPTION CREATOR, reached only from New Option, which starts it fresh and
+// >>> writes the option when it is finished: createOption.js is the one writer.
 //
 // The state is held above both columns for the same reason the editor is: main
 // asks the questions and side reports what they have built, and two copies would

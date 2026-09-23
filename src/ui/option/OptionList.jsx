@@ -161,9 +161,10 @@ export default function OptionList({
   onSetOptionSettings,
   departmentCountByBuilding,
   departmentCountByPhase,
+  // Opens the option creator on one building's questionnaire — see App.
+  onStartCreator,
 }) {
   const { buildings, dmgs } = useCatalog()
-  const [newDmgIds, setNewDmgIds] = useState([])
   const [editDmgIds, setEditDmgIds] = useState([])
   // Picking an option is reading; creating one is not. See src/readOnly.jsx.
   const readOnly = useReadOnly()
@@ -173,10 +174,8 @@ export default function OptionList({
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [newOptionName, setNewOptionName] = useState('')
   const [duplicateFromId, setDuplicateFromId] = useState('')
-  const [newBuildingIds, setNewBuildingIds] = useState([])
-  const [newPhaseCount, setNewPhaseCount] = useState(DEFAULT_PHASE_COUNT)
-  const [newFsi, setNewFsi] = useState(null)
-  const [newGroundCover, setNewGroundCover] = useState(null)
+  // The one building the option creator will run the questionnaire of.
+  const [newBuildingId, setNewBuildingId] = useState(null)
   const [creating, setCreating] = useState(false)
   const creatingRef = useRef(false)
   const [createError, setCreateError] = useState(null)
@@ -222,54 +221,31 @@ export default function OptionList({
 
   useEffect(() => loadOptions(), [projectId, refreshKey])
 
-  async function handleCreate() {
+  // A NEW OPTION IS MADE BY THE QUESTIONNAIRE, and only by it — the option
+  // creator (ui/questions/createOption.js). The one thing this dialog still
+  // writes itself is a DUPLICATE, which copies an option that already exists.
+  async function handleDuplicate() {
     // A ref, not the `creating` state: state disables the button on the NEXT
     // render, which a fast second click beats — and two inserts are two options.
-    if (creatingRef.current) return
+    if (creatingRef.current || !duplicateFromId) return
     creatingRef.current = true
     setCreateError(null)
     setCreating(true)
 
-    // The buildings are the one thing chosen up front — the canvas draws only
-    // those, and every section it offers is one of theirs. Sections and
-    // departments start empty and are filled in on the canvas.
-    let data = {
-      phase_count: newPhaseCount,
-      // Always written on a new option, even empty: [] is "no speciality", and
-      // only a row from before v20 means no filter.
-      dmgs: [...newDmgIds],
-      buildings: [...newBuildingIds],
-      sections: [],
-      departments: [],
-      // Only when typed: plot_area_sqft is measured from the site, not entered
-      // here, and follows once InstanceBuilder saves this option for the first
-      // time — see buildInstanceData.
-      ...(newFsi != null || newGroundCover != null
-        ? {
-            area_metrics: {
-              ...(newFsi != null ? { fsi: newFsi } : {}),
-              ...(newGroundCover != null ? { ground_cover: newGroundCover } : {}),
-            },
-          }
-        : {}),
-    }
+    const { data: source, error: sourceError } = await supabase
+      .from('sp_option')
+      .select('data')
+      .eq('id', duplicateFromId)
+      .single()
 
-    if (duplicateFromId) {
-      const { data: source, error: sourceError } = await supabase
-        .from('sp_option')
-        .select('data')
-        .eq('id', duplicateFromId)
-        .single()
-
-      if (sourceError) {
-        // Release the guard on every exit, or the button never works again.
-        creatingRef.current = false
-        setCreateError(sourceError.message)
-        setCreating(false)
-        return
-      }
-      data = source.data
+    if (sourceError) {
+      // Release the guard on every exit, or the button never works again.
+      creatingRef.current = false
+      setCreateError(sourceError.message)
+      setCreating(false)
+      return
     }
+    const data = source.data
 
     const { data: inserted, error: insertError } = await supabase
       .from('sp_option')
@@ -293,11 +269,6 @@ export default function OptionList({
     setShowCreateModal(false)
     setNewOptionName('')
     setDuplicateFromId('')
-    setNewBuildingIds([])
-    setNewPhaseCount(DEFAULT_PHASE_COUNT)
-    setNewFsi(null)
-    setNewGroundCover(null)
-    setNewDmgIds([])
     loadOptions()
     onSelectOption?.(inserted.id)
   }
@@ -432,75 +403,78 @@ export default function OptionList({
       {showCreateModal && (
         <Modal title="New Option" onClose={() => setShowCreateModal(false)}>
           <div style={{ marginBottom: 12 }}>
-            <label>Option name</label>
-            <input
-              type="text"
-              value={newOptionName}
-              onChange={(e) => setNewOptionName(e.target.value)}
-              style={{ width: '100%', padding: 6 }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 12 }}>
-            <label>Duplicate from (optional)</label>
+            <label>Start from</label>
             <select
               value={duplicateFromId}
               onChange={(e) => setDuplicateFromId(e.target.value)}
               style={{ width: '100%', padding: 6 }}
             >
-              <option value="">Start blank</option>
+              <option value="">The questionnaire</option>
               {options.map((o) => (
                 <option key={o.id} value={o.id}>
-                  {o.option_name}
+                  A copy of {o.option_name}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Duplicating copies the source option's buildings and phases along
-              with everything else, so choosing them here would be choosing
-              twice. */}
-          {!duplicateFromId && (
+          {/* THE QUESTIONNAIRE ASKS EVERYTHING ELSE — the name, the phases, FSI,
+              ground cover and the DMGs are its General questions now. What it
+              cannot ask is which building's questionnaire to run, so that is
+              the one thing chosen here. One building per run. */}
+          {!duplicateFromId ? (
             <>
               <div style={{ marginBottom: 12 }}>
-                <label>Buildings</label>
-                <BuildingChecklist
-                  buildings={buildings}
-                  selected={newBuildingIds}
-                  onToggle={(id) => setNewBuildingIds((prev) => toggle(prev, id))}
-                />
+                <label>Building</label>
+                {buildings.length === 0 ? (
+                  <PanelNote>No buildings yet — run sql/building_setup.sql.</PanelNote>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                    {buildings.map((b) => (
+                      <label key={b.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13 }}>
+                        <input
+                          type="radio"
+                          name="newOptionBuilding"
+                          checked={newBuildingId === b.id}
+                          onChange={() => setNewBuildingId(b.id)}
+                        />
+                        <span style={{ flex: 1, minWidth: 0 }}>{b.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
+              <button
+                type="button"
+                disabled={!newBuildingId || !onStartCreator}
+                onClick={() => {
+                  setShowCreateModal(false)
+                  onStartCreator?.(newBuildingId)
+                }}
+              >
+                Start the questionnaire
+              </button>
+            </>
+          ) : (
+            <>
               <div style={{ marginBottom: 12 }}>
-                <PhaseCountField
-                  value={newPhaseCount}
-                  onChange={setNewPhaseCount}
-                  note="One phase is an option built in one go."
+                <label>Option name</label>
+                <input
+                  type="text"
+                  value={newOptionName}
+                  onChange={(e) => setNewOptionName(e.target.value)}
+                  style={{ width: '100%', padding: 6 }}
                 />
               </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <AreaMetricsFields
-                  fsi={newFsi}
-                  groundCover={newGroundCover}
-                  onChangeFsi={setNewFsi}
-                  onChangeGroundCover={setNewGroundCover}
-                />
-              </div>
+              {createError && <p style={{ color: 'red' }}>{createError}</p>}
 
-              <DmgChecklist
-                dmgs={dmgs}
-                selected={newDmgIds}
-                onToggle={(id) => setNewDmgIds((prev) => toggle(prev, id))}
-              />
+              <button type="button" onClick={handleDuplicate} disabled={creating}>
+                {creating ? 'Creating...' : 'Duplicate'}
+              </button>
             </>
           )}
-
-          {createError && <p style={{ color: 'red' }}>{createError}</p>}
-
-          <button type="button" onClick={handleCreate} disabled={creating}>
-            {creating ? 'Creating...' : 'Create Option'}
-          </button>
         </Modal>
       )}
 

@@ -208,26 +208,15 @@ function DepartmentFace({ department, group, canEdit, editor, general }) {
 // EVERY ROW IS THE SAME ROW, including the group's total: it is one of the names
 // a rule may use, and drawing it bold, unindented and with a summary under it
 // made it a heading over the list rather than the first member of it.
-const VAR_NAME = 150
-const VAR_BOX = 130
 
 function VariableRow({ name, variable, detail, detailColour = '#999', colour = '#222' }) {
   return (
-    <div
-      className="spp-row"
-      style={{ display: 'flex', alignItems: 'baseline', gap: 8, paddingBlock: 4, minWidth: 0 }}
-    >
-      <span style={{ flexShrink: 0, width: VAR_NAME, minWidth: 0 }}>
-        <span
-          style={{
-            display: 'block',
-            fontSize: 13,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            color: colour,
-          }}
-        >
+    // STACKED, AND NOTHING IS CUT: the name over its variable, each the panel's
+    // full width and wrapping. Side by side, both halves were ellipsed, and the
+    // tail is exactly what tells `…diagnostics_ct` from `…diagnostics_mri`.
+    <div className="spp-row" style={{ paddingBlock: 5, minWidth: 0 }}>
+      <span style={{ display: 'block', minWidth: 0 }}>
+        <span style={{ display: 'block', fontSize: 13, lineHeight: 1.35, color: colour }}>
           {name}
         </span>
         {/* Kept for the one thing you cannot work out: why a name cannot be
@@ -242,8 +231,9 @@ function VariableRow({ name, variable, detail, detailColour = '#999', colour = '
           broken. */}
       <code
         style={{
-          flexShrink: 0,
-          width: VAR_BOX,
+          display: 'inline-block',
+          maxWidth: '100%',
+          marginTop: 3,
           boxSizing: 'border-box',
           padding: '3px 6px',
           borderRadius: 4,
@@ -251,14 +241,13 @@ function VariableRow({ name, variable, detail, detailColour = '#999', colour = '
           background: '#f4f4f5',
           fontSize: 12,
           color: '#555',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          // A slug has no spaces; break at the dots and underscores' neighbours
+          // rather than running off the panel.
+          overflowWrap: 'anywhere',
         }}
       >
         {variable}
       </code>
-      <span style={{ flex: 1, minWidth: 0 }} />
     </div>
   )
 }
@@ -393,7 +382,7 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
             as a heading over the list rather than as a member of it. */}
         {groupVar && (
           <VariableRow
-            name={`All of ${group.name}`}
+            name="Sum of functioning departments"
             variable={groupVar.name}
             // The only thing left on this row, and only when it means something:
             // an empty group really does read 0.
@@ -1757,6 +1746,11 @@ function GeneralQuestionFace({ node, canEdit, editor }) {
         <PanelNote>
           Answered by switching on the disease management groups in sp_dmg. The run then asks only the department
           groups with no DMG and those tagged with one switched on; unanswered, it asks the untagged ones alone.
+        </PanelNote>
+      ) : !node.variable ? (
+        // THE OPTION'S OWN SETTINGS — see OPTION_ANSWERS. No rule reads them.
+        <PanelNote>
+          A setting of the option the creator makes, written onto it when the run is finished. No rule reads it.
         </PanelNote>
       ) : (
         <PanelNote>

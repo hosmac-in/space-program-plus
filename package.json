@@ -12,6 +12,10 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
+    "@turf/bbox": "^7.4.0",
+    "@turf/helpers": "^7.4.0",
+    "@turf/intersect": "^7.4.0",
+    "@turf/voronoi": "^7.4.0",
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4",
     "leaflet.markercluster": "^1.5.3",

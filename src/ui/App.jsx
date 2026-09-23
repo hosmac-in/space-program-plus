@@ -217,6 +217,10 @@ function SignedInApp({ session }) {
   // is the thing this is preventing.
   const openOption = (optionId) => leaveOption({ view: 'project', optionId })
 
+  // THE OPTION CREATOR — the only way a new option is made. Guarded: it closes
+  // whatever option is open, like every other way off the Project tab.
+  const startCreator = (buildingId) => leaveOption({ view: 'creator', buildingId, optionId: null })
+
   function handleSelectTreeBuilding(buildingId) {
     setSelectedTreeBuildingId(buildingId)
     // The pane shows one or the other. No guard: the Tree tab writes every edit
@@ -344,6 +348,14 @@ function SignedInApp({ session }) {
           isAdmin={isAdmin}
           projects={projects}
           error={projectsError}
+          creator={{
+            projectId: selectedProjectId,
+            onCreated: (id) => {
+              setOptionsRefreshKey((k) => k + 1)
+              navigate({ view: 'project', optionId: id })
+            },
+            onCancel: () => navigate({ view: 'project', optionId: null }),
+          }}
           band={
             // THE PROJECT AND OPTION ROWS BELONG WHERE A PROJECT DOES, and the
             // catalog tabs are not it — the same rule the address bar follows,
@@ -356,7 +368,9 @@ function SignedInApp({ session }) {
             // and the option it named could not even be open (see AN OPTION IS
             // OPEN OR IT IS CLOSED). The Tree tab never had one; the other two
             // had it by inheritance.
-            !viewKeepsProject(view) ? null : (
+            // The option creator is a run from the top, like the Test run: a
+            // band switching project there would restart it.
+            !viewKeepsProject(view) || view === 'creator' ? null : (
               <ProjectBand
                 canCreate={isAdmin}
                 selectedProjectId={selectedProjectId}
@@ -387,6 +401,7 @@ function SignedInApp({ session }) {
                 // How many entries a lower phase count would drop, so the
                 // dialog can say what it costs before you commit.
                 departmentCountByPhase={departmentCountByPhase}
+                onStartCreator={startCreator}
               />
             )
           }
@@ -397,6 +412,7 @@ function SignedInApp({ session }) {
                 projectId={selectedProjectId}
                 refreshKey={optionsRefreshKey}
                 onSelectOption={openOption}
+                onStartCreator={startCreator}
               />
             ) : (
               <PanelNote pad>Select a project to begin.</PanelNote>
@@ -479,7 +495,7 @@ function SignedInApp({ session }) {
 
           {/* Side reports on main here too: the carousel asks, this shows what
               the answers have built. Nothing on that tab is saved. */}
-          {view === 'testrun' && (
+          {(view === 'testrun' || view === 'creator') && (
             <div style={{ padding: 16, minWidth: 0 }}>
               <TestRunTree buildingId={questionBuildingId} />
             </div>
@@ -498,8 +514,17 @@ function SignedInApp({ session }) {
             question — how big is this — in the one place that is always on
             screen. */}
         {view === 'testrun' && <TestRunHud buildingId={questionBuildingId} />}
+        {/* The creator belongs to a project, so its HUD has a plot to measure
+            FSI against. */}
+        {view === 'creator' && (
+          <TestRunHud
+            buildingId={questionBuildingId}
+            projectName={projects.find((p) => p.id === selectedProjectId)?.name}
+            siteGeojson={projects.find((p) => p.id === selectedProjectId)?.site_geojson}
+          />
+        )}
 
-        {optionOpen && view !== 'testrun' && (
+        {optionOpen && view !== 'testrun' && view !== 'creator' && (
         <Hud
           projectName={projects.find((p) => p.id === selectedProjectId)?.name}
           siteGeojson={projects.find((p) => p.id === selectedProjectId)?.site_geojson}

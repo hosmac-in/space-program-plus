@@ -7,6 +7,7 @@
 //   #/tree
 //   #/questions?b=1d9e5a30…
 //   #/test-run?b=1d9e5a30…
+//   #/option-creator?p=7f3a1c2e…&b=1d9e5a30…
 //
 //   p = sp_project.id      o = sp_option.id      b = sp_building.id
 //
@@ -49,6 +50,7 @@ const VIEW_BY_SLUG = {
   tree: 'tree',
   questions: 'questions',
   'test-run': 'testrun',
+  'option-creator': 'creator',
 }
 const SLUG_BY_VIEW = {
   map: 'uhdp',
@@ -56,16 +58,20 @@ const SLUG_BY_VIEW = {
   tree: 'tree',
   questions: 'questions',
   testrun: 'test-run',
+  creator: 'option-creator',
 }
 
 // The tabs that author or answer ONE building's questionnaire, and so the ones
 // `b` means anything on.
-const BUILDING_VIEWS = new Set(['questions', 'testrun'])
+const BUILDING_VIEWS = new Set(['questions', 'testrun', 'creator'])
 
 // The tabs a PROJECT means anything on. The other three show the catalog, which
 // belongs to no project — see the header. Exported because App has to know
 // whether picking a project can leave you where you are.
-const PROJECT_VIEWS = new Set(['map', 'project'])
+//
+// THE OPTION CREATOR takes both: it is a questionnaire run (`b`) that ends in an
+// option of one project (`p`).
+const PROJECT_VIEWS = new Set(['map', 'project', 'creator'])
 
 export function viewKeepsProject(view) {
   return PROJECT_VIEWS.has(view)

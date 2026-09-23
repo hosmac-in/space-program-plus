@@ -441,6 +441,17 @@ export function setDepartmentRole(definition, sectionId, groupId, deptId, role) 
 export const BED_VAR = 'beds'
 export const DMG_ANSWER = 'dmgs'
 
+// THE OPTION'S OWN SETTINGS, asked as General questions — they were the New
+// Option dialog's fields, and the option creator writes them onto the option it
+// creates (ui/questions/createOption.js). No variable: they describe the
+// option, not the building, and no rule reads them.
+export const OPTION_ANSWERS = {
+  name: 'option_name',
+  phases: 'phases',
+  fsi: 'fsi',
+  groundCover: 'ground_cover',
+}
+
 // THE LIST, AND IT IS THE APP'S. `id` is the document's key and never changes —
 // rewording a question must not orphan its answer — and `variable` is what rules
 // name it by. `kind` is 'number', 'yesno' or 'multiplier' (a slider carrying
@@ -450,6 +461,22 @@ export const DMG_ANSWER = 'dmgs'
 // any wording written for it in the document, unread, which is this file's rule
 // for everything else too.
 export const GENERAL_QUESTIONS = [
+  { id: OPTION_ANSWERS.name, variable: null, kind: 'text', unit: '', prompt: 'What is this option called?' },
+  {
+    id: OPTION_ANSWERS.phases,
+    variable: null,
+    kind: 'number',
+    unit: 'phases',
+    prompt: 'How many phases is it built in?',
+  },
+  { id: OPTION_ANSWERS.fsi, variable: null, kind: 'number', unit: 'FSI', prompt: 'What FSI does the site allow?' },
+  {
+    id: OPTION_ANSWERS.groundCover,
+    variable: null,
+    kind: 'number',
+    unit: '',
+    prompt: 'What ground cover does the site allow?',
+  },
   {
     id: BED_VAR,
     variable: BED_VAR,

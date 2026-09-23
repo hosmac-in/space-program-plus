@@ -18,7 +18,8 @@ import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, roomLabel, scopeToDmgs } from './questionModel.js'
 import { bedTally, buildProgram, useTestRun } from './useTestRun.jsx'
 import { useAreaUnit } from '../AreaUnitContext.jsx'
-import { formatArea } from '../map/area.js'
+import { formatArea, siteAreas } from '../map/area.js'
+import { optionSettingsOf } from './createOption.js'
 import { RULE } from '../layout.js'
 
 const ROW = 24
@@ -84,7 +85,13 @@ function sized(room) {
 // The figures come from `bedTally`, which walks the SAME results the tree does,
 // so a room on screen and a room in the total cannot be different rooms. Nothing
 // here is saved — see useTestRun.jsx.
-export function TestRunHud({ buildingId }) {
+//
+// THE PLOT AND WHAT FSI ALLOWS ON IT. Plot is the project site's own area — so
+// only the option creator has one; the Test run tab belongs to no project and
+// shows a dash. FSI area is plot × the FSI answered on the General card, and the
+// run's area is tallied against it the way beds are against theirs: "a / b",
+// red when over.
+export function TestRunHud({ buildingId, projectName = null, siteGeojson = null }) {
   const { sections, groups, departments, rooms, objects } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
@@ -96,6 +103,11 @@ export function TestRunHud({ buildingId }) {
   )
   const { target, placed, areaSqft } = bedTally(model, run)
   const over = target !== null && placed > target
+
+  const plot = siteAreas(siteGeojson)
+  const fsi = optionSettingsOf(run).fsi
+  const fsiSqft = plot && fsi > 0 ? plot.sqft * fsi : null
+  const overFsi = fsiSqft !== null && areaSqft > fsiSqft
 
   return (
     <div
@@ -109,7 +121,9 @@ export function TestRunHud({ buildingId }) {
         minWidth: 0,
       }}
     >
-      <div style={{ fontSize: 11, color: '#8a8a8a', marginBottom: 6 }}>Nothing on this tab is saved</div>
+      <div style={{ fontSize: 11, color: '#8a8a8a', marginBottom: 6 }}>
+        {projectName ?? 'Nothing on this tab is saved'}
+      </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', minWidth: 0 }}>
         <Figure
@@ -120,7 +134,23 @@ export function TestRunHud({ buildingId }) {
           muted={placed === 0}
           tone={over ? '#b3261e' : null}
         />
-        <Figure label="Area" value={formatArea(toDisplay(areaSqft))} unit={AREA_UNIT} muted={areaSqft === 0} />
+        <Figure
+          label={fsiSqft === null ? 'Area' : 'Area / FSI area'}
+          value={
+            fsiSqft === null
+              ? formatArea(toDisplay(areaSqft))
+              : `${formatArea(toDisplay(areaSqft))} / ${formatArea(toDisplay(fsiSqft))}`
+          }
+          unit={AREA_UNIT}
+          muted={areaSqft === 0}
+          tone={overFsi ? '#b3261e' : null}
+        />
+        <Figure
+          label="Plot"
+          value={plot ? formatArea(toDisplay(plot.sqft)) : '—'}
+          unit={plot ? AREA_UNIT : undefined}
+          muted={!plot}
+        />
       </div>
     </div>
   )
