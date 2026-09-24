@@ -37,6 +37,7 @@ import {
   ROOM_GROUP,
   DERIVED_GENERAL,
   PLOT_AREA_VAR,
+  VENT_VAR,
 } from '../../data/questionnaire.js'
 import { compileFormula, FORMULA_FUNCTIONS } from '../../data/formula.js'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
@@ -374,7 +375,7 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
   const members = department.members ?? []
   const usableMembers = members.filter((m) => !m.duplicate)
   const clashes = members.filter((m) => m.duplicate)
-  const names = [...variables.map((v) => v.name), ...usableMembers.map((m) => m.name), ...general.map((g) => g.name)]
+  const names = [...variables.map((v) => v.name), ...usableMembers.map((m) => m.name), ...general.map((g) => g.name), VENT_VAR]
   const groupVar = variables.find((v) => v.kind === 'group') ?? null
   const departmentVars = variables.filter((v) => v.kind !== 'group')
 
@@ -401,6 +402,7 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
       departmentVars.map((v) => [v.name, departmentVars.length === 0 ? 0 : tryArea / departmentVars.length])
     ),
     ...(groupVar ? { [groupVar.name]: tryArea } : {}),
+    [VENT_VAR]: tryArea,
     // A COUNT PREVIEWS AT 1, the identity — the same call the General answers
     // make, and for the same reason: `ceil(a/750) * patient_care.operating_room`
     // should preview as the part being written rather than as 0 and looking
@@ -445,6 +447,14 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
             detail={departmentVars.length === 0 ? 'Nothing in it yet, so this is 0' : null}
           />
         )}
+
+        {/* The whole group less its AHU Rooms — for an AHU Room's rule only. See
+            pass 3 in useTestRun.jsx. */}
+        <VariableRow
+          name="Area to ventilate"
+          variable={VENT_VAR}
+          detail="Whole group less its AHU Rooms — read only by an AHU Room's rule"
+        />
 
         {departmentVars.map((variable) => (
           <VariableRow

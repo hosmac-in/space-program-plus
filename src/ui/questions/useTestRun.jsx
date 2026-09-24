@@ -18,7 +18,14 @@ import { createContext, useCallback, useContext, useMemo, useState } from 'react
 import { sqftToSqm } from '../../data/units.js'
 import { SUPPORTING } from './questionModel.js'
 import { BUILT_AREA, buildingFactorValue, FLOOR_AREA } from '../../data/factors.js'
-import { deriveGeneral, DMG_ANSWER, generalNumber, PLOT_AREA_VAR } from '../../data/questionnaire.js'
+import {
+  deriveGeneral,
+  DMG_ANSWER,
+  generalNumber,
+  isAhuRoom,
+  PLOT_AREA_VAR,
+  VENT_VAR,
+} from '../../data/questionnaire.js'
 
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
@@ -125,6 +132,8 @@ export function useTestRun() {
 //      scope, so this pass needs nothing but the answers.
 //   2  SUPPORTING departments. Each variable is the NET AREA of the department
 //      it names, in m², as pass 1 built it — so this pass needs all of pass 1.
+//   3  AHU ROOMS, re-read with `area_to_ventilate` — the whole group less its
+//      AHU Rooms — so this pass needs all of pass 2.
 //
 // >>> PASS 1 IS WHOLE-MODEL, NEVER PER CARD. Variables name departments anywhere
 // >>> in the building and the deck is one card per SECTION, so computing lazily
@@ -392,6 +401,7 @@ export function evaluateRun(model, run) {
               if (node.dummy) {
                 return node.connections.map((connection) => ({
                   questionId: node.id,
+                  scope: general,
                   ...evaluateConnection(connection, general),
                 }))
               }
@@ -400,9 +410,12 @@ export function evaluateRun(model, run) {
               // The question is carried on each result so the beds a single
               // question placed can be told from its neighbours' — a department
               // holds many questions and the rows come back as one list.
+              // The scope is kept so pass 3 can re-read an AHU Room against it.
+              const scope = { ...general, x }
               return node.connections.map((connection) => ({
                 questionId: node.id,
-                ...evaluateConnection(connection, { ...general, x }),
+                scope,
+                ...evaluateConnection(connection, scope),
               }))
             })
           : []
@@ -412,8 +425,9 @@ export function evaluateRun(model, run) {
   )
 
   const areaSqm = new Map()
+  // AHU Rooms are left out: they are pass 3's, and `a` is the area they serve.
   answered.forEach((entry, deptId) => {
-    areaSqm.set(deptId, sqftToSqm(netAreaOf(entry.results.flatMap((r) => r.rooms))))
+    areaSqm.set(deptId, sqftToSqm(netAreaOf(ventilatedRows(entry.results))))
   })
 
   // WHAT A RULE COUNTS ONE LEVEL IN — per functioning department, a count for
@@ -521,13 +535,42 @@ export function evaluateRun(model, run) {
             group.departments.some(
             (d) => d.role !== SUPPORTING && d.questions.some((node) => Number.isFinite(run.xOf(node.id)))
           )
-        const results = asked ? department.connections.map((c) => evaluateConnection(c, scope)) : []
+        const results = asked ? department.connections.map((c) => ({ scope, ...evaluateConnection(c, scope) })) : []
         answered.set(department.id, { open, results, scope })
       })
     })
   )
 
+  // --- Pass 3: AHU ROOMS ----------------------------------------------------
+  //
+  // `area_to_ventilate` is the whole group — functioning AND supporting — less
+  // its AHU Rooms, so it is known only once pass 2 is done. Every connection
+  // bringing an AHU Room is re-read with it in scope; before this it named
+  // nothing and came out unresolved. No cycle: the AHU Rooms are the only rooms
+  // that read it and the only rooms it leaves out.
+  //
+  // >>> Pass 2's counts of an AHU Room (a rule naming `…ahu_room`) are read
+  // >>> before this pass and so see none — do not write a rule that needs one.
+  model.forEach((section) =>
+    section.groups.forEach((group) => {
+      const entries = group.departments.map((d) => answered.get(d.id)).filter(Boolean)
+      const vent = sqftToSqm(netAreaOf(entries.flatMap((entry) => ventilatedRows(entry.results))))
+      entries.forEach((entry) => {
+        entry.results = entry.results.map((result) => {
+          if (!result.connection.rooms.some((room) => isAhuRoom(room.label))) return result
+          const scope = { ...result.scope, [VENT_VAR]: vent }
+          return { ...result, scope, ...evaluateConnection(result.connection, scope) }
+        })
+      })
+    })
+  )
+
   return answered
+}
+
+// Every built room row that is NOT an AHU Room — what `area_to_ventilate` sums.
+function ventilatedRows(results) {
+  return results.flatMap((r) => r.rooms).filter((room) => !isAhuRoom(room.label))
 }
 
 // WHAT THE RUN ADDS UP TO: its beds against the bed count it was told, and its

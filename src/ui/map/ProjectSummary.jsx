@@ -10,7 +10,7 @@
 // what you picked first, and go on to the program when you choose to — that's
 // what the Space Program button is for.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../../data/supabase.js'
 import OptionStats from '../option/OptionStats.jsx'
 import { Stat, StatCard } from '../primitives/Stat.jsx'
@@ -27,7 +27,18 @@ export default function ProjectSummary({
   // format carries no areas (see data/optionData.js).
   option,
   onOpenProgram,
+  // Editing the site's GeoJSON — admin only, and the map's draw mode is shared
+  // with New Project, so a drawn shape lands in whichever form is open.
+  canEdit = false,
+  isDrawingSite,
+  onStartDrawSite,
+  onStopDrawSite,
+  drawnSiteGeometry,
+  onSiteSaved,
 }) {
+  const [editing, setEditing] = useState(false)
+  // A different project closes the editor rather than carrying it across.
+  useEffect(() => setEditing(false), [selectedProjectId])
   // How many options each project has. Only the selected project's count is
   // shown, but the query is one round trip either way, and this panel is the
   // only thing that needs it.
@@ -71,7 +82,41 @@ export default function ProjectSummary({
 
   return (
     <>
-      <StatCard title={selected.name}>
+      {editing && (
+        <SiteEditor
+          key={selected.id}
+          project={selected}
+          isDrawingSite={isDrawingSite}
+          onStartDrawSite={onStartDrawSite}
+          onStopDrawSite={onStopDrawSite}
+          drawnSiteGeometry={drawnSiteGeometry}
+          onClose={() => {
+            onStopDrawSite?.()
+            setEditing(false)
+          }}
+          onSaved={() => {
+            onStopDrawSite?.()
+            setEditing(false)
+            onSiteSaved?.()
+          }}
+        />
+      )}
+      <StatCard
+        title={
+          <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ flex: 1, minWidth: 0 }}>{selected.name}</span>
+            {canEdit && !editing && (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                style={{ fontSize: 11, fontWeight: 400, padding: '2px 8px', cursor: 'pointer' }}
+              >
+                Edit site
+              </button>
+            )}
+          </span>
+        }
+      >
         {areas ? (
           <>
             <Stat label="Site area" value={formatArea(areas.sqft)} unit={AREA_UNIT} />
@@ -120,5 +165,79 @@ export default function ProjectSummary({
         Space Program →
       </button>
     </>
+  )
+}
+
+function extractGeometry(parsed) {
+  if (parsed?.type === 'Feature') return parsed.geometry
+  if (parsed?.type === 'FeatureCollection') return parsed.features[0]?.geometry
+  return parsed
+}
+
+// The site's GeoJSON as text, editable by hand or redrawn on the map. Context is
+// optional: left blank it is kept as it is, never cleared.
+function SiteEditor({ project, isDrawingSite, onStartDrawSite, onStopDrawSite, drawnSiteGeometry, onClose, onSaved }) {
+  const [siteText, setSiteText] = useState(() =>
+    project.site_geojson ? JSON.stringify(project.site_geojson, null, 2) : ''
+  )
+  const [contextText, setContextText] = useState(() =>
+    project.context_geojson ? JSON.stringify(project.context_geojson, null, 2) : ''
+  )
+  const [error, setError] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
+
+  useEffect(() => {
+    if (drawnSiteGeometry) setSiteText(JSON.stringify(drawnSiteGeometry, null, 2))
+  }, [drawnSiteGeometry])
+
+  async function save() {
+    setError(null)
+    let site, context
+    try {
+      site = extractGeometry(JSON.parse(siteText))
+      context = contextText.trim() === '' ? null : extractGeometry(JSON.parse(contextText))
+    } catch {
+      setError('Site and context (if provided) must be valid GeoJSON.')
+      return
+    }
+    if (!site?.type || !site?.coordinates) {
+      setError('Could not find a geometry in the Site input.')
+      return
+    }
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+    const { error } = await supabase.rpc('update_project_site', {
+      project_id: project.id,
+      site_geojson: site,
+      context_geojson: context,
+    })
+    savingRef.current = false
+    setSaving(false)
+    if (error) setError(error.message)
+    else onSaved()
+  }
+
+  const box = { width: '100%', fontFamily: 'monospace', fontSize: 11, boxSizing: 'border-box' }
+  return (
+    <StatCard title={`Edit site — ${project.name}`}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+        <span>Site (GeoJSON)</span>
+        {isDrawingSite ? (
+          <button type="button" onClick={onStopDrawSite}>Done drawing</button>
+        ) : (
+          <button type="button" onClick={onStartDrawSite}>Redraw on map</button>
+        )}
+      </div>
+      <textarea value={siteText} onChange={(e) => setSiteText(e.target.value)} rows={8} style={box} />
+      <span style={{ fontSize: 12 }}>Context (GeoJSON, optional)</span>
+      <textarea value={contextText} onChange={(e) => setContextText(e.target.value)} rows={4} style={box} />
+      {error && <span style={{ fontSize: 12, color: '#c5221f' }}>{error}</span>}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button type="button" onClick={onClose} disabled={saving}>Cancel</button>
+        <button type="button" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save site'}</button>
+      </div>
+    </StatCard>
   )
 }

@@ -468,6 +468,15 @@ function SignedInApp({ session }) {
                   phaseCount: builderState.phaseCount,
                 }}
                 onOpenProgram={() => navigate({ view: 'project' })}
+                canEdit={isAdmin && !readOnly}
+                isDrawingSite={isDrawingSite}
+                onStartDrawSite={() => {
+                  setDrawnSiteGeometry(null)
+                  setIsDrawingSite(true)
+                }}
+                onStopDrawSite={() => setIsDrawingSite(false)}
+                drawnSiteGeometry={drawnSiteGeometry}
+                onSiteSaved={() => setMapRefreshKey((k) => k + 1)}
               />
             </div>
           )}

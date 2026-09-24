@@ -263,6 +263,16 @@ export const QUESTION_VAR = 'x'
 // makes the rename safe to see and fix.
 export const GROUP_VAR = 'a'
 
+// THE GROUP'S NET AREA LESS ITS AHU ROOMS, in m² — every department in it,
+// functioning and supporting. Only an AHU Room's rule may read it, and those are
+// evaluated in a THIRD pass after the whole group is built (evaluateRun). An AHU
+// Room is matched by its NAME for now; a flag on sp_room would survive a rename.
+export const VENT_VAR = 'area_to_ventilate'
+export const AHU_ROOM_NAME = 'ahu room'
+export function isAhuRoom(label) {
+  return (label ?? '').trim().toLowerCase() === AHU_ROOM_NAME
+}
+
 // A department name into something the language can read: lower case, words
 // joined by _, anything else dropped, and never starting with a digit. "24×7
 // Pharmacy" -> `n24_7_pharmacy`, which is ugly and editable, where `24×7` is a
@@ -619,6 +629,7 @@ export function generalVariableNames() {
     ...GENERAL_QUESTIONS.map((q) => q.variable).filter(Boolean),
     PLOT_AREA_VAR,
     ...DERIVED_GENERAL.map((d) => d.variable),
+    VENT_VAR,
   ]
 }
 
