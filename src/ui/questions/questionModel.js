@@ -46,6 +46,7 @@ import {
   SUPPORTING,
 } from '../../data/questionnaire.js'
 import { compileFormula } from '../../data/formula.js'
+import { factorValue, GROSSING } from '../../data/factors.js'
 import { DMG_COLUMN, tagInScope } from '../../data/dmg.js'
 
 export { FUNCTIONING, SUPPORTING }
@@ -300,6 +301,9 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
       id: section.id,
       sectionId: section.id,
       name: section.name || 'Untitled section',
+      // sp_section.is_core — the building's core, which the run hands the
+      // floor-area factor's share to (grossedAreas in useTestRun.jsx).
+      isCore: !!section.is_core,
       // Carried, never resolved here: a colour comes from functionColours() and
       // a null function_id is normal — see data/functions.js.
       functionId: section.function_id ?? null,
@@ -529,6 +533,9 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
               name: nameOf(departments, deptNode.department_def_id, 'Untitled department'),
               functionId: defOf(departments, deptNode.department_def_id)?.function_id ?? null,
               role: departmentRole(definition, section.id, groupId, deptId),
+              // The catalog node's grossing factor, for the run's DISPLAYED areas
+              // only — the rules still read net (see netAreaOf in useTestRun.jsx).
+              grossingFactor: factorValue(GROSSING, deptNode),
               // What the run heads its chips with; null means `name`.
               title: departmentTitle(definition, section.id, groupId, deptId),
               catalogRooms,

@@ -476,21 +476,30 @@ export const OPTION_ANSWERS = {
 // Adding one here is the whole of adding a general question. Removing one leaves
 // any wording written for it in the document, unread, which is this file's rule
 // for everything else too.
+//
+// >>> THE NAME AND THE PHASES ARE NOT ASKED HERE ANY MORE. The name is typed in
+// >>> the Create dialog at the end of the run; an option starts in one phase and
+// >>> its phases are set on the option. Their ids stay in OPTION_ANSWERS, so
+// >>> optionSettingsOf reads them as unanswered and falls back.
 export const GENERAL_QUESTIONS = [
-  { id: OPTION_ANSWERS.name, variable: null, kind: 'text', unit: '', prompt: 'What is this option called?' },
+  // FSI IS NEVER BELOW 1 AND IS 1 UNTIL ANSWERED — `default` is what every
+  // reader falls back to (generalNumber), and it steps in tenths.
   {
-    id: OPTION_ANSWERS.phases,
-    variable: 'phase',
+    id: OPTION_ANSWERS.fsi,
+    variable: 'fsi',
     kind: 'number',
-    unit: 'phases',
-    prompt: 'How many phases is it built in?',
+    unit: 'FSI',
+    prompt: 'What FSI does the site allow?',
+    min: 1,
+    step: 0.1,
+    default: 1,
   },
-  { id: OPTION_ANSWERS.fsi, variable: 'fsi', kind: 'number', unit: 'FSI', prompt: 'What FSI does the site allow?' },
   {
     id: OPTION_ANSWERS.groundCover,
     variable: 'gc',
     kind: 'number',
-    unit: '',
+    // A PERCENTAGE of the plot — 40, not 0.4. The run's floorplate reads it so.
+    unit: '%',
     prompt: 'What ground cover does the site allow?',
   },
   {
@@ -531,6 +540,15 @@ export const GENERAL_QUESTIONS = [
     prompt: 'Which disease management groups does the facility target?',
   },
 ]
+
+// A General number as every reader must take it: the answer, else the
+// question's `default`, else null — and never below its `min`.
+export function generalNumber(id, given) {
+  const q = GENERAL_QUESTIONS.find((g) => g.id === id)
+  const n = Number.isFinite(given) ? given : q?.default
+  if (!Number.isFinite(n)) return null
+  return Number.isFinite(q?.min) ? Math.max(q.min, n) : n
+}
 
 export function isNumericKind(kind) {
   return kind === 'number' || kind === 'yesno' || kind === 'multiplier'

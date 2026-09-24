@@ -706,11 +706,33 @@ export function findCirculationDef(objectDefs = []) {
 // value every time it was recomputed. It is an sp_object id, so it is never
 // tested against equipment — no equivalent row exists in sp_equipment.
 export function circulationSqft(room, circulationDefId = null) {
+  // Against the room's EFFECTIVE area: a blank room is measured by its objects,
+  // so it has no circulation rather than a negative one.
+  return roomAreaSqftOf(room, circulationDefId) - standingSqft(room, circulationDefId)
+}
+
+// Σ count × area of everything standing in one room, objects and equipment.
+function standingSqft(room, circulationDefId = null) {
   const objects = (room?.objects ?? [])
     .filter((o) => !circulationDefId || o.defId !== circulationDefId)
     .reduce((sum, o) => sum + o.count * (o.areaSqft ?? 0), 0)
   const equipment = (room?.equipment ?? []).reduce((sum, e) => sum + e.count * (e.areaSqft ?? 0), 0)
-  return (room?.areaSqft ?? DEFAULT_ROOM_AREA_SQFT) - objects - equipment
+  return objects + equipment
+}
+
+// THE AREA OF ONE OF THIS ROOM, and the one definition of it. A room with a
+// stated area is that area. A BLANK room — nothing typed, or 0 — is measured by
+// what stands in it, the Test run's rule (roomAreaSqft in useTestRun.jsx).
+// Derived, never stored: typing an area replaces it, clearing one brings it back.
+export function roomAreaSqftOf(room, circulationDefId = null) {
+  const stated = room?.areaSqft ?? DEFAULT_ROOM_AREA_SQFT
+  return stated > 0 ? stated : standingSqft(room, circulationDefId)
+}
+
+// True when the room's area is its objects' rather than a typed figure — the
+// panel draws that muted, as every borrowed figure is.
+export function roomAreaIsDerived(room) {
+  return !((room?.areaSqft ?? DEFAULT_ROOM_AREA_SQFT) > 0)
 }
 
 // What one department comes to — the `dept` step of the chain at the top of
@@ -742,7 +764,7 @@ export function buildingAreaSqft(departmentTotal, buildingRow = null, buildingOv
 // rather than inlined so the panel can show both without writing the sum twice.
 export function departmentNetAreaSqft(dept) {
   return (dept?.rooms ?? []).reduce(
-    (sum, r) => sum + roomCountIn(dept, r) * (r.areaSqft ?? DEFAULT_ROOM_AREA_SQFT),
+    (sum, r) => sum + roomCountIn(dept, r) * roomAreaSqftOf(r),
     0
   )
 }

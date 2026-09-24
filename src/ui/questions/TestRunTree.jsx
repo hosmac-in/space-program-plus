@@ -12,12 +12,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
-import { Branch, TreeLayer } from '../panel/PanelTree.jsx'
+import { functionColours } from '../../data/functions.js'
+import { Branch, TreeLayer, useTreeMeasure } from '../panel/PanelTree.jsx'
 import { PanelNote } from '../panel/panelParts.jsx'
-import Presence from '../primitives/Presence.jsx'
+import Presence, { LeavingCtx, PRESENCE_MS } from '../primitives/Presence.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, roomLabel, scopeToDmgs } from './questionModel.js'
-import { bedTally, buildProgram, useTestRun } from './useTestRun.jsx'
+import { bedTally, buildProgram, evaluateRun, grossedAreas, useTestRun } from './useTestRun.jsx'
 import { useAreaUnit } from '../AreaUnitContext.jsx'
 import { formatArea, SQM_PER_SQFT } from '../map/area.js'
 import { optionSettingsOf } from './createOption.js'
@@ -55,7 +56,9 @@ export const COUNT_FLASH_STYLE = `
   @media (prefers-reduced-motion: reduce) { .tr-flash-up, .tr-flash-up *, .tr-flash-down, .tr-flash-down * { animation: none; } }
 `
 
-function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', right, track }) {
+// `beside` sits right after the name rather than on the panel's right edge —
+// the group and department areas, read with the name they belong to.
+function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', right, beside, track }) {
   const flash = useChangeFlash(track)
   return (
     <div
@@ -66,7 +69,7 @@ function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', ri
       <span
         title={label}
         style={{
-          flex: 1,
+          flex: beside ? '0 1 auto' : 1,
           minWidth: 0,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -80,6 +83,8 @@ function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', ri
       >
         {label}
       </span>
+      {beside}
+      {beside && <span style={{ flex: 1 }} />}
       {right}
     </div>
   )
@@ -129,7 +134,7 @@ function sized(room) {
 // run's area is tallied against it the way beds are against theirs: "a / b",
 // red when over.
 export function TestRunHud({ buildingId, projectName = null, siteGeojson = null }) {
-  const { sections, groups, departments, rooms, objects } = useCatalog()
+  const { buildings, sections, groups, departments, rooms, objects } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
   const { label: AREA_UNIT, toDisplay } = useAreaUnit()
@@ -138,7 +143,15 @@ export function TestRunHud({ buildingId, projectName = null, siteGeojson = null 
     buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects }),
     run.dmgIds
   )
-  const { target, placed, areaSqft } = bedTally(model, run)
+  const answered = evaluateRun(model, run)
+  const { target, placed } = bedTally(model, run, answered)
+  // GROSSED, as an option's HUD is: the floor area the building's factors and
+  // each department's grossing come to, not the net rooms.
+  const areaSqft = grossedAreas(
+    buildProgram(model, run, answered),
+    buildings.find((b) => b.id === buildingId),
+    model
+  ).building
   const over = target !== null && placed > target
 
   const plot = Number.isFinite(run.plotAreaSqm)
@@ -222,8 +235,51 @@ function Figure({ label, value, unit, muted = false, tone = null }) {
   )
 }
 
+// A SECTION OPENS AND SHUTS AS ONE BLOCK. Sliding each group on its own timer
+// read as a stutter; one grid row moving the whole body is smooth. A shut body
+// stays mounted and counts as leaving, so its tree lines drop out with it.
+// Air above and below a section's title, inside its strip.
+const HEAD_PAD = 6
+
+function Collapse({ open, children }) {
+  // THE LINES FOLLOW THE SLIDE. The layer measures rows once, when they
+  // register — at the start, with the body still shut — so it is asked again
+  // every frame until the slide has finished.
+  const measure = useTreeMeasure()
+  useEffect(() => {
+    if (!measure) return undefined
+    const end = performance.now() + PRESENCE_MS + 50
+    let frame
+    const tick = () => {
+      measure()
+      if (performance.now() < end) frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [open, measure])
+
+  return (
+    <LeavingCtx.Provider value={!open}>
+      <div
+        className="spp-slide"
+        style={{
+          gridTemplateRows: open ? '1fr' : '0fr',
+          opacity: open ? 1 : 0,
+          transition: `grid-template-rows ${PRESENCE_MS}ms ease-in-out, opacity ${PRESENCE_MS}ms ease-in-out`,
+        }}
+      >
+        {/* The air goes on a box INSIDE the clipped one: padding on the grid
+            item itself cannot shrink to 0fr, and a shut section would keep it. */}
+        <div style={{ minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ paddingTop: 8 }}>{children}</div>
+        </div>
+      </div>
+    </LeavingCtx.Provider>
+  )
+}
+
 export default function TestRunTree({ buildingId }) {
-  const { buildings, sections, groups, departments, rooms, objects } = useCatalog()
+  const { buildings, sections, groups, departments, rooms, objects, functions } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
 
@@ -232,6 +288,15 @@ export default function TestRunTree({ buildingId }) {
     run.dmgIds
   )
   const whole = buildProgram(model, run)
+  // Grossed totals for the group and department rows — see grossedAreas.
+  const { byId: areas } = grossedAreas(whole, buildings.find((b) => b.id === buildingId), model)
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
+  const areaOf = (id) => (
+    <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#555' }}>
+      – {formatArea(toDisplay(areas.get(id) ?? 0))}
+      <span style={{ fontSize: 10, color: '#8a8a8a', marginLeft: 3 }}>{AREA_UNIT}</span>
+    </span>
+  )
 
   // ONLY THE SECTION THE CARD IS ON. The tree beside the carousel reports on
   // what is being asked, and the whole building's worth of it pushed the section
@@ -244,6 +309,22 @@ export default function TestRunTree({ buildingId }) {
   // sets it — rather than drawing nothing, which would read as "you have built
   // nothing" instead of "nobody has said which section".
   const program = run.sectionId ? whole.filter((s) => s.id === run.sectionId) : whole
+
+  // EVERY SECTION IS LISTED, and only the one the card is on is open — so the
+  // building's shape stays on screen while you answer one part of it. On the
+  // General card nothing is open.
+  const allSections = model
+    .filter((s) => s.kind !== 'general')
+    .map((s) => {
+      const built = whole.find((b) => b.id === s.id)
+      return {
+        id: s.id,
+        name: s.name,
+        open: s.id === run.sectionId,
+        groups: built?.groups ?? [],
+        colours: functionColours(functions, s.functionId),
+      }
+    })
   // From the MODEL, not from the program: a section that has built nothing yet
   // is not in the program, and it is exactly then that the empty note needs to
   // say which section is empty.
@@ -271,7 +352,7 @@ export default function TestRunTree({ buildingId }) {
         {totalRooms === 0 ? 'Nothing yet' : `${totalRooms} room${totalRooms === 1 ? '' : 's'} so far`}
       </div>
 
-      {program.length === 0 && (
+      {allSections.length === 0 && (
         <PanelNote>
           {shownSection
             ? `Answer yes to a group in ${shownSection.name} and count something, and it appears here.`
@@ -289,21 +370,60 @@ export default function TestRunTree({ buildingId }) {
         // flashed. KEYED BY THE SECTION: moving to another card is not the tree
         // changing, and without a fresh mount it read as a whole section going
         // red and another arriving green.
-        <TreeLayer key={run.sectionId ?? 'all'}>
-          <Presence flash items={program} keyOf={(s) => s.id}>
+        // NOT KEYED BY THE SECTION any more: every section is always listed, so
+        // switching card opens one and shuts another in place, and Presence
+        // slides both (Collapse). Every section's groups stay mounted, so a switch
+        // changes no list and nothing flashes red or green.
+        <TreeLayer>
+          <Presence items={allSections} keyOf={(s) => s.id}>
           {(section) => (
-            <Branch endpoint="caret" expanded head={ROW / 2}>
-              <Row label={section.name} weight={700} caps />
+            // A SECTION IS A CARD: its title a header strip, what it has built
+            // the body. The strip's rule shows only when open — shut, the card is
+            // the header alone and a rule would double its border.
+            <div
+              style={{
+                position: 'relative',
+                // THE SECTION'S OWN HUE on the title strip and the outline; the
+                // body stays white.
+                border: `1px solid ${section.colours.border}`,
+                background: '#fff',
+                borderRadius: 8,
+                marginBottom: 8,
+                paddingBottom: section.open ? 6 : 0,
+                transition: `padding-bottom ${PRESENCE_MS}ms ease-in-out`,
+                overflow: 'hidden',
+              }}
+            >
+            <div
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                top: 0,
+                height: ROW + 2 * HEAD_PAD,
+                // The rail's wash: deeper for the section you are on, as there.
+                background: section.colours.wash(section.open ? 0.66 : 0.88),
+                borderBottom: `1px solid ${section.colours.border}`,
+                transition: `background-color ${PRESENCE_MS}ms ease-in-out, border-color ${PRESENCE_MS}ms ease-in-out`,
+              }}
+            />
+            <Branch endpoint="caret" expanded={section.open} head={HEAD_PAD + ROW / 2} padTop={HEAD_PAD}>
+              <div style={{ paddingBottom: HEAD_PAD }}>
+                <Row label={section.name} weight={700} caps
+                  colour={section.colours.inverted.color}
+                />
+              </div>
 
+              <Collapse open={section.open}>
               <Presence flash items={section.groups} keyOf={(g) => g.id}>
               {(group) => (
                 <Branch endpoint="caret" expanded head={ROW / 2}>
-                  <Row label={group.name} weight={600} />
+                  <Row label={group.name} weight={700} beside={areaOf(group.id)} />
 
                   <Presence flash items={group.departments} keyOf={(d) => d.id}>
                   {(department) => (
                     <Branch endpoint="caret" expanded head={ROW / 2}>
-                      <Row label={department.name} weight={500} />
+                      <Row label={department.name} weight={700} beside={areaOf(department.id)} />
 
                       {/* Keyed by placement: the once-per-department rule means
                           no room id repeats inside one department. */}
@@ -318,7 +438,7 @@ export default function TestRunTree({ buildingId }) {
                             label={roomLabel(room, department)}
                             size={12}
                             colour="#444"
-                            right={<Count n={room.count} />}
+                            beside={<Count n={room.count} />}
                             track={room.count}
                           />
                           {/* WHAT STANDS IN IT, for the objects a rule sized.
@@ -328,7 +448,7 @@ export default function TestRunTree({ buildingId }) {
                           <Presence flash items={sized(room)} keyOf={(o) => o.instance_id}>
                           {(object) => (
                             <Branch endpoint="dot" head={ROW / 2}>
-                              <Row label={object.name} size={11} colour="#777" right={<Count n={object.count} />} track={object.count} />
+                              <Row label={object.name} size={11} colour="#777" beside={<Count n={object.count} />} track={object.count} />
                             </Branch>
                           )}
                           </Presence>
@@ -341,7 +461,9 @@ export default function TestRunTree({ buildingId }) {
                 </Branch>
               )}
               </Presence>
+              </Collapse>
             </Branch>
+            </div>
           )}
           </Presence>
         </TreeLayer>

@@ -182,6 +182,12 @@ function Drawing({ nodes }) {
 
 // Everything a branch has to be measured by, and the one place it is drawn.
 // Wraps a whole panel — see PanelShell, which is the only caller.
+// The layer's re-measure, for a caller animating a block the tree runs through:
+// a slide moves every row under it, and nothing else tells the layer so.
+export function useTreeMeasure() {
+  return useContext(LayerCtx)?.measure ?? null
+}
+
 export function TreeLayer({ children }) {
   const hostRef = useRef(null)
   // The registry. A ref, not state: registering must not re-render, or every

@@ -30,6 +30,8 @@ import {
 } from '../../data/tree.js'
 import {
   circulationSqft,
+  roomAreaIsDerived,
+  roomAreaSqftOf,
   DEFAULT_OBJECT_COUNT,
   departmentAreaSqft,
   departmentBuiltAreaSqft,
@@ -277,7 +279,7 @@ export default function DepartmentBlock({
             count={room.count}
             // What this many of it comes to. The area of ONE is typed on the
             // RoomAreaRow below, beside the objects it has to hold.
-            totalAreaSqft={(room.areaSqft ?? 0) * room.count}
+            totalAreaSqft={roomAreaSqftOf(room) * room.count}
             canEdit={!readOnly}
             onCountChange={(count) =>
               onRoomChange(
@@ -363,14 +365,21 @@ export default function DepartmentBlock({
                 coalesced, so Save Data answers while you type and the whole
                 number is still one undo step. */}
             <RoomAreaRow
-              value={room.areaSqft ?? 0}
+              // A blank room shows its objects' area, muted — typing replaces it.
+              value={roomAreaSqftOf(room)}
+              isDefault={roomAreaIsDerived(room)}
               canEdit={!readOnly}
               title={`Area of one ${shown.name}`}
-              onChange={(areaSqft) =>
+              onChange={(areaSqft) => {
+                // THE SHOWN FIGURE HANDED BACK UNCHANGED IS NOT AN EDIT. On a
+                // blank room it is the objects' area, and storing it would pin
+                // that figure against the objects changing later — and dirty
+                // Save Data for a click in and out.
+                if (roomAreaIsDerived(room) && areaSqft === roomAreaSqftOf(room)) return
                 onRoomChange(room.instanceId, (r) => ({ ...r, areaSqft }), {
                   coalesce: `roomArea:${room.instanceId}`,
                 })
-              }
+              }}
             />
 
             {/* One list, both arrays — see itemsOf. `instanceId` keys it: it is
@@ -545,7 +554,7 @@ export default function DepartmentBlock({
         // own count is in it once and each room's count is in it once.
         totalAreaSqft={held.reduce((sum, n) => {
           const room = byAnchor.get(n.instance_id)
-          return sum + (room.areaSqft ?? 0) * roomCountIn(dept, room)
+          return sum + roomAreaSqftOf(room) * roomCountIn(dept, room)
         }, 0)}
       >
         {entry.rooms.map((n) => renderEntry({ kind: 'room', room: n }, GROUP_ROOM_INSET))}

@@ -17,7 +17,8 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { sqftToSqm } from '../../data/units.js'
 import { SUPPORTING } from './questionModel.js'
-import { deriveGeneral, DMG_ANSWER, PLOT_AREA_VAR } from '../../data/questionnaire.js'
+import { BUILT_AREA, buildingFactorValue, FLOOR_AREA } from '../../data/factors.js'
+import { deriveGeneral, DMG_ANSWER, generalNumber, PLOT_AREA_VAR } from '../../data/questionnaire.js'
 
 // answers = {
 //   gates:     { [groupInstanceId]:    { yes, number } },
@@ -333,7 +334,9 @@ export function evaluateRun(model, run) {
       general[node.variable] = Number.isFinite(given) ? given : node.question.default ?? 1
       return
     }
-    if (Number.isFinite(given)) general[node.variable] = given
+    // With its default and its floor — FSI is 1 until answered, never below.
+    const n = generalNumber(node.id, given)
+    if (n != null) general[node.variable] = n
   })
   // The plot, measured off the project site — see PLOT_AREA_VAR — then fsi_area
   // and plinth from it and the answers above (DERIVED_GENERAL).
@@ -341,17 +344,21 @@ export function evaluateRun(model, run) {
   deriveGeneral(general)
 
   // A QUESTION'S NAMED x, for every other rule in the building. Typed, not
-  // computed, so it belongs to this pass. An answered 0 is a real 0 a rule may
-  // divide by; unanswered, or behind a gate that is not yes, is out of scope and
-  // reads as unresolved. A clashing name was never compiled in — see buildModel.
+  // computed, so it belongs to this pass.
+  //
+  // >>> UNANSWERED, OR BEHIND A GATE THAT IS NOT YES, READS AS 0 — it used to be
+  // >>> out of scope, and a rule naming it came out unresolved and built
+  // >>> nothing. A question nobody answered is "none of them" to every rule that
+  // >>> counts off it. A clashing name was never compiled in — see buildModel.
   model.forEach((section) =>
     section.groups.forEach((group) => {
-      if (!run.gateYes(group.id)) return
+      const open = run.gateYes(group.id)
       group.departments.forEach((department) => {
         if (department.role === SUPPORTING) return
         department.questions.forEach((node) => {
-          const x = run.xOf(node.id)
-          if (node.variable && !node.variableClash && Number.isFinite(x)) general[node.variable] = x
+          if (!node.variable || node.variableClash) return
+          const x = open ? run.xOf(node.id) : undefined
+          general[node.variable] = Number.isFinite(x) ? x : 0
         })
       })
     })
@@ -452,9 +459,29 @@ export function evaluateRun(model, run) {
   )
 
   // --- Pass 2 ---------------------------------------------------------------
+  //
+  // ANY QUESTION ANSWERED ANYWHERE, General aside — what a section of only
+  // supporting departments waits for. That section has no card to open, so its
+  // gates can never be said yes to and are not read; it serves the building,
+  // and starts once the building has been asked something.
+  const anyAnswered = model.some(
+    (section) =>
+      section.kind !== 'general' &&
+      section.groups.some(
+        (group) =>
+          run.gateYes(group.id) &&
+          group.departments.some(
+            (d) => d.role !== SUPPORTING && d.questions.some((node) => Number.isFinite(run.xOf(node.id)))
+          )
+      )
+  )
   model.forEach((section) =>
     section.groups.forEach((group) => {
-      const open = run.gateYes(group.id)
+      const supportOnly =
+        section.kind !== 'general' &&
+        section.groups.length > 0 &&
+        section.groups.every((g) => g.departments.every((d) => d.role === SUPPORTING))
+      const open = supportOnly || run.gateYes(group.id)
       group.departments.forEach((department) => {
         if (department.role !== SUPPORTING) return
         // A name with no number in scope evaluates as UNRESOLVED, which is what
@@ -463,9 +490,8 @@ export function evaluateRun(model, run) {
         const scope = { ...general }
         department.variables.forEach((variable) => {
           // `a` is the whole group: every functioning department beside this
-          // one, summed. It is always a number — an unanswered group is 0 m²,
-          // which is a real answer — where a department's name resolves to
-          // nothing when that department has gone.
+          // one, summed. A department's own name resolves to nothing when it
+          // has gone.
           if (variable.kind === 'group') {
             scope[variable.name] = group.departments
               .filter((d) => d.role !== SUPPORTING)
@@ -484,7 +510,18 @@ export function evaluateRun(model, run) {
           const count = memberCounts.get(member.deptInstanceId)?.get(member.targetId)
           if (Number.isFinite(count)) scope[member.name] = count
         })
-        const results = open ? department.connections.map((c) => evaluateConnection(c, scope)) : []
+        // >>> A SUPPORTING DEPARTMENT BUILDS NOTHING UNTIL ITS GROUP IS ASKED —
+        // >>> at least one question of a functioning department in it answered.
+        // >>> Some of its rooms are constants that name no variable at all, and
+        // >>> those would otherwise appear in a group nobody has said anything
+        // >>> about.
+        const asked = supportOnly
+          ? anyAnswered
+          : open &&
+            group.departments.some(
+            (d) => d.role !== SUPPORTING && d.questions.some((node) => Number.isFinite(run.xOf(node.id)))
+          )
+        const results = asked ? department.connections.map((c) => evaluateConnection(c, scope)) : []
         answered.set(department.id, { open, results, scope })
       })
     })
@@ -551,12 +588,57 @@ function asked(room) {
   return room.count > 0 || room.objects.some((o) => o.state === 'ok' && o.count > 0)
 }
 
+// THE PROGRAM'S AREAS, GROSSED: net × the building's built-area factor × the
+// department's grossing factor, summed up through group and section.
+//
+// THE FLOOR-AREA FACTOR IS NOT A MULTIPLIER ON THE TOTAL HERE. What it adds —
+// total × (factor − 1) — is handed to the CORE section (sp_section.is_core), so
+// the building's extra is a place on the rail rather than a figure nowhere
+// drawn. No core section: the share is dropped. Display only — every RULE still
+// reads net, for netAreaOf's reason. Takes the MODEL too, because the core
+// section usually builds nothing and so is absent from the program.
+// Returns sqft keyed by department, group and section id, plus `building`.
+export function grossedAreas(program, buildingRow, model = program) {
+  const built = buildingFactorValue(BUILT_AREA, buildingRow)
+  const floor = buildingFactorValue(FLOOR_AREA, buildingRow)
+  const byId = new Map()
+  let total = 0
+  program.forEach((section) => {
+    let sectionSqft = 0
+    section.groups.forEach((group) => {
+      let groupSqft = 0
+      group.departments.forEach((department) => {
+        const sqft = netAreaOf(department.rooms) * built * (department.grossingFactor ?? 1)
+        byId.set(department.id, sqft)
+        groupSqft += sqft
+      })
+      byId.set(group.id, groupSqft)
+      sectionSqft += groupSqft
+    })
+    byId.set(section.id, sectionSqft)
+    total += sectionSqft
+  })
+  const core = model.find((section) => section.isCore)
+  if (core) {
+    const share = total * (floor - 1)
+    byId.set(core.id, (byId.get(core.id) ?? 0) + share)
+    total += share
+  }
+  return { byId, building: total }
+}
+
 export function buildProgram(model, run, answered = evaluateRun(model, run)) {
   return model
     .map((section) => ({
       ...section,
       groups: section.groups
-        .filter((group) => run.gateYes(group.id))
+        // A supporting-only section has no gates anyone can answer — see pass 2.
+        .filter(
+          (group) =>
+            run.gateYes(group.id) ||
+            (section.kind !== 'general' &&
+              section.groups.every((g) => g.departments.every((d) => d.role === SUPPORTING)))
+        )
         .map((group) => ({
           ...group,
           departments: group.departments

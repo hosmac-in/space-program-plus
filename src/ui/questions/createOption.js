@@ -28,7 +28,8 @@ import {
   findCirculationDef,
   SCHEMA_VERSION,
 } from '../../data/optionData.js'
-import { OPTION_ANSWERS } from '../../data/questionnaire.js'
+import { generalNumber, OPTION_ANSWERS } from '../../data/questionnaire.js'
+import { SQM_PER_ACRE, SQM_PER_SQFT } from '../map/area.js'
 import { buildProgram } from './useTestRun.jsx'
 
 const PHASE = 1
@@ -43,7 +44,8 @@ export function optionSettingsOf(run) {
   return {
     name: typeof name === 'string' && name.trim() ? name.trim() : '',
     phaseCount: number(OPTION_ANSWERS.phases) != null ? clampPhaseCount(Math.round(number(OPTION_ANSWERS.phases))) : DEFAULT_PHASE_COUNT,
-    fsi: number(OPTION_ANSWERS.fsi),
+    // 1 until answered, never below — see generalNumber.
+    fsi: generalNumber(OPTION_ANSWERS.fsi, run.generalOf(OPTION_ANSWERS.fsi)),
     groundCover: number(OPTION_ANSWERS.groundCover),
     dmgIds: [...run.dmgIds],
   }
@@ -142,6 +144,17 @@ export function optionDataFromRun({ model, run, buildingId, catalog }) {
     )
   )
 
+  // THE PLOT, in the three units a save writes (InstanceBuilder's toPlotArea) —
+  // so an option created and never touched carries it too, not only after its
+  // first save. The run's plot is the project site's, measured by App.
+  const plot = Number.isFinite(run.plotAreaSqm)
+    ? {
+        plot_area_sqft: run.plotAreaSqm / SQM_PER_SQFT,
+        plot_area_sqm: run.plotAreaSqm,
+        plot_area_acre: run.plotAreaSqm / SQM_PER_ACRE,
+      }
+    : null
+
   return {
     name: settings.name,
     data: {
@@ -149,9 +162,10 @@ export function optionDataFromRun({ model, run, buildingId, catalog }) {
       dmgs: settings.dmgIds,
       buildings: [buildingId],
       sections: sectionIds,
-      ...(settings.fsi != null || settings.groundCover != null
+      ...(settings.fsi != null || settings.groundCover != null || plot
         ? {
             area_metrics: {
+              ...(plot ?? {}),
               ...(settings.fsi != null ? { fsi: settings.fsi } : {}),
               ...(settings.groundCover != null ? { ground_cover: settings.groundCover } : {}),
             },
@@ -163,8 +177,11 @@ export function optionDataFromRun({ model, run, buildingId, catalog }) {
 }
 
 // Insert it. Returns the new id, or throws with the database's message.
-export async function createOptionFromRun({ projectId, model, run, buildingId, catalog }) {
-  const { name, data } = optionDataFromRun({ model, run, buildingId, catalog })
+// `optionName` is what the Create dialog was given; it wins over any answer.
+export async function createOptionFromRun({ projectId, model, run, buildingId, catalog, optionName = '' }) {
+  const built = optionDataFromRun({ model, run, buildingId, catalog })
+  const { data } = built
+  const name = optionName.trim() || built.name
   const { data: inserted, error } = await supabase
     .from('sp_option')
     .insert({

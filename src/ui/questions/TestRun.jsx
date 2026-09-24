@@ -20,14 +20,21 @@ import { Children, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useCatalog } from '../../data/catalog.jsx'
 import { functionColours } from '../../data/functions.js'
 import Toggle from '../primitives/Toggle.jsx'
+import ConfirmModal from '../primitives/ConfirmModal.jsx'
 import useHoldRepeat from '../primitives/useHoldRepeat.js'
 import { CountField, PanelNote } from '../panel/panelParts.jsx'
 import { useQuestionnaireEditorContext } from './useQuestionnaireEditor.jsx'
 import { buildModel, scopeToDmgs, SUPPORTING } from './questionModel.js'
-import { bedTally, useTestRun } from './useTestRun.jsx'
+import { bedTally, buildProgram, grossedAreas, useTestRun } from './useTestRun.jsx'
+import { useAreaUnit } from '../AreaUnitContext.jsx'
+import { formatArea } from '../map/area.js'
+import { sqmToSqft } from '../../data/units.js'
+import { BED_VAR, generalNumber, OPTION_ANSWERS } from '../../data/questionnaire.js'
 import { createOptionFromRun } from './createOption.js'
 
 const RAIL_WIDTH = 240
+// Floor-to-floor height the run assumes, for the height beside ground cover.
+const FLOOR_HEIGHT_M = 4.5
 const CARD_MAX = 860
 
 // THE DECK: ONE CARD PER SECTION, and that is the whole of it.
@@ -45,6 +52,18 @@ const CARD_MAX = 860
 //
 // The deck therefore never changes as answers are given, which is also what
 // makes an index into it safe to hold.
+// A SECTION OF ONLY SUPPORTING DEPARTMENTS ASKS NOTHING — a supporting
+// department carries no questions — so it is on the rail for its AREA alone:
+// never jumped to, and visited from the start, so it neither hatches nor holds
+// Create back.
+function supportOnly(section) {
+  return (
+    section.kind !== 'general' &&
+    section.groups.length > 0 &&
+    section.groups.every((g) => g.departments.every((d) => d.role === SUPPORTING))
+  )
+}
+
 function deckOf(model) {
   return (
     model
@@ -118,6 +137,8 @@ function railSections(deck) {
       start: i,
       end: i,
       groups: step.section.groups,
+      section: step.section,
+      inert: supportOnly(step.section),
     })
   })
   return out
@@ -153,8 +174,9 @@ function stepAt(list, fraction) {
   return list[Math.floor(clamped * list.length)].start
 }
 
-function Rail({ deck, at, onJump, functions, run }) {
+function Rail({ deck, at, onJump, functions, run, seen, areas }) {
   const list = railSections(deck)
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   const trackRef = useRef(null)
 
   // The pane's height, measured — the one number the browser cannot give us in
@@ -191,11 +213,12 @@ function Rail({ deck, at, onJump, functions, run }) {
   // Measured against the DRAWING's height, not the pane's: a short deck leaves
   // empty pane below it, and dividing by the pane would put every tick above
   // where the pointer says it is.
-  const drag = (e) => {
-    const box = trackRef.current?.getBoundingClientRect()
-    if (!box || total === 0) return
-    onJump(stepAt(list, (e.clientY - box.top) / total))
-  }
+  // Unused while the knub is commented out below.
+  // const drag = (e) => {
+  //   const box = trackRef.current?.getBoundingClientRect()
+  //   if (!box || total === 0) return
+  //   onJump(stepAt(list, (e.clientY - box.top) / total))
+  // }
 
   return (
     <div
@@ -215,7 +238,7 @@ function Rail({ deck, at, onJump, functions, run }) {
           height. */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '8px 8px 8px 0' }}>
         <div ref={trackRef} style={{ position: 'relative', height: '100%', minWidth: 0 }}>
-          {/* The bar, and the run behind the knub. */}
+          {/* Commented out — the bar and its fill are off for now.
           <div
             style={{
               position: 'absolute',
@@ -238,11 +261,13 @@ function Rail({ deck, at, onJump, functions, run }) {
               background: '#888',
             }}
           />
+          */}
 
           {/* THE KNUB. Fixed size and position only, as CanvasFrame's is: a
               proportional thumb would grow and shrink as gates opened and
               closed the deck under it. Clicking the bar itself jumps, so the
               whole scale is a target and not just the 15px on it. */}
+          {/* Commented out — the knub is off for now; the section boxes still jump.
           <div
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId)
@@ -276,6 +301,7 @@ function Rail({ deck, at, onJump, functions, run }) {
               }}
             />
           </div>
+          */}
 
           {list.map((section, i) => {
             const top = i * rowH
@@ -286,12 +312,18 @@ function Rail({ deck, at, onJump, functions, run }) {
             // whether anything was actually decided there.
             const passed = at > section.end
             const colours = functionColours(functions, section.functionId)
+            // General builds no area of its own — it is the facility's answers —
+            // so it always reads as done.
+            const built =
+              section.section.kind === 'general' ||
+              (seen(section.section) && (areas.get(section.id) ?? 0) > 0)
 
             return (
               <button
                 key={section.id}
                 type="button"
-                onClick={() => onJump(section.start)}
+                onClick={section.inert ? undefined : () => onJump(section.start)}
+                disabled={section.inert}
                 title={section.label}
                 style={{
                   position: 'absolute',
@@ -305,7 +337,10 @@ function Rail({ deck, at, onJump, functions, run }) {
                   padding: 0,
                   border: 'none',
                   background: 'transparent',
-                  cursor: 'pointer',
+                  cursor: section.inert ? 'default' : 'pointer',
+                  // A disabled button greys its text by default; this one is
+                  // read for its area, so it keeps its ink.
+                  color: 'inherit',
                   minWidth: 0,
                 }}
               >
@@ -313,6 +348,7 @@ function Rail({ deck, at, onJump, functions, run }) {
                     on a scale. IT CARRIES THE FUNCTION HUE once reached; grey
                     until then, because a colour that meant both "what this is"
                     and "where you are" would mean neither. */}
+                {/* Commented out with the bar — only the section boxes remain.
                 <span
                   style={{
                     position: 'absolute',
@@ -325,6 +361,7 @@ function Rail({ deck, at, onJump, functions, run }) {
                     background: here || passed ? colours.border : '#d0d0d0',
                   }}
                 />
+                */}
 
                 {/* THE BOX: the section's whole share of the scale, painted in
                     its own hue. The title is CENTRED in it because the box is
@@ -335,7 +372,9 @@ function Rail({ deck, at, onJump, functions, run }) {
                 <span
                   style={{
                     position: 'absolute',
-                    left: BOX_LEFT,
+                    // Was BOX_LEFT, clearing the bar; with the bar gone the boxes
+                    // take the rail's full width.
+                    left: 8,
                     right: 0,
                     top: 2,
                     bottom: 2,
@@ -346,7 +385,15 @@ function Rail({ deck, at, onJump, functions, run }) {
                     flexDirection: 'column',
                     gap: 6,
                     padding: '0 10px',
-                    background: colours.wash(here ? 0.66 : 0.88),
+                    // Hatched until visited — a section nobody has opened yet.
+                    // A visited box is a shade deeper than an unvisited one.
+                    // >>> A SECTION WITH NO AREA LOOKS UNVISITED, visited or not:
+                    // >>> entered and left empty, it is not in the design, and the
+                    // >>> hatch is what says so. Visiting still counts for Create.
+                    backgroundColor: colours.wash(here ? 0.66 : built ? 0.8 : 0.88),
+                    backgroundImage: built
+                      ? 'none'
+                      : 'repeating-linear-gradient(135deg, rgba(0,0,0,0.09) 0 2px, transparent 2px 10px)',
                     // A black stroke on every box; the one you are on keeps its
                     // hue ring inside it.
                     border: '1px solid #000',
@@ -355,25 +402,56 @@ function Rail({ deck, at, onJump, functions, run }) {
                     overflow: 'hidden',
                   }}
                 >
+                  {/* TWO LINES, ALWAYS RESERVED: a long name wraps rather than
+                      ellipsing, a short one is centred in the same box, so the
+                      area below sits at one height on every card. */}
+                  <span style={{ height: 30, maxWidth: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <span
                     style={{
                       maxWidth: '100%',
                       overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      lineHeight: '15px',
+                      maxHeight: 30,
                       textAlign: 'center',
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 700,
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
                       // The hue's own dark ink, which is legible on a wash of
                       // it whatever the function — a fixed grey is not.
                       color: colours.inverted.color,
-                      opacity: here || touchedCount > 0 ? 1 : 0.5,
+                      // A supporting-only section has nothing to touch, so its
+                      // area is what lights it.
+                      opacity: here || (section.inert ? built : touchedCount > 0) ? 1 : 0.5,
                     }}
                   >
                     {section.label}
                   </span>
+                  </span>
+
+                  {/* WHAT THIS SECTION HAS BUILT, grossed, once it has built
+                      anything. The line is reserved even while empty, so the
+                      title does not jump when an area arrives. */}
+                  {/* Not on General: it builds no area, and a reserved empty line
+                      would push its title off centre. */}
+                  {section.section.kind !== 'general' && (
+                  <span
+                    style={{
+                      height: 16,
+                      lineHeight: '16px',
+                      marginTop: 4,
+                      fontSize: 13,
+                      fontVariantNumeric: 'tabular-nums',
+                      color: colours.inverted.color,
+                    }}
+                  >
+                    {(areas.get(section.id) ?? 0) > 0 &&
+                      `${formatArea(toDisplay(areas.get(section.id)))} ${AREA_UNIT}`}
+                  </span>
+                  )}
 
                   {/* ONE PIP PER GROUP, FILLED ONCE ANSWERED. What the knub
                       cannot say: it only marks where you ARE, so walking back
@@ -381,6 +459,7 @@ function Rail({ deck, at, onJump, functions, run }) {
                       looking untouched however much had been answered in them.
                       This is the group level back on the scale in the only form
                       that costs no room — see the note on why the labels went. */}
+                  {/* Pips removed from the rail for now.
                   {section.groups.length > 0 && (
                     <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
                       {section.groups.map((group) => {
@@ -402,6 +481,7 @@ function Rail({ deck, at, onJump, functions, run }) {
                       })}
                     </span>
                   )}
+                  */}
                 </span>
               </button>
             )
@@ -492,12 +572,14 @@ const unitStyle = {
 //
 // It nudges the answer directly rather than through the field, so the two agree:
 // the field redraws from `value` whenever nobody is typing in it.
-function Stepper({ value, onChange }) {
-  const from = Number.isFinite(value) ? value : 0
+// `step` and `min` default to whole numbers from 0; a General question may state
+// its own (FSI: 0.1 from 1).
+function Stepper({ value, onChange, step = 1, min = 0 }) {
+  const from = Number.isFinite(value) ? value : min
   return (
     <span style={{ display: 'inline-flex', gap: 2 }}>
-      <StepKey label="−" by={-1} from={from} onChange={onChange} />
-      <StepKey label="+" by={1} from={from} onChange={onChange} />
+      <StepKey label="−" by={-step} min={min} from={from} onChange={onChange} />
+      <StepKey label="+" by={step} min={min} from={from} onChange={onChange} />
     </span>
   )
 }
@@ -509,16 +591,18 @@ function Stepper({ value, onChange }) {
 // It steps from a ref rather than from `from`, because at the fast end of a hold
 // two ticks can land inside one render and the second would otherwise read the
 // value the first had already replaced.
-function StepKey({ label, by, from, onChange }) {
+function StepKey({ label, by, min = 0, from, onChange }) {
   const at = useRef(from)
   at.current = from
   const step = () => {
-    const next = Math.max(0, at.current + by)
+    // Rounded to the step's own places, or 0.1 + 0.2 walks off into 0.30000004.
+    const places = String(Math.abs(by)).split('.')[1]?.length ?? 0
+    const next = Math.max(min, Number((at.current + by).toFixed(places)))
     at.current = next
     onChange(next)
   }
 
-  const disabled = by < 0 && from === 0
+  const disabled = by < 0 && from <= min
 
   return (
     <button
@@ -664,7 +748,7 @@ function GateRow({ group, gate, yes, run, tint, ink = '#222' }) {
 //
 // It is answered FIRST because everything after it may read the answers: see
 // GENERAL in data/questionnaire.js.
-function GeneralCard({ section, run, beds }) {
+function GeneralCard({ section, run, beds, siteFigures }) {
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 38, lineHeight: 1.15, fontWeight: 600 }}>{section.name}</div>
@@ -681,13 +765,14 @@ function GeneralCard({ section, run, beds }) {
             minWidth: 0,
           }}
         >
-          <div style={{ maxWidth: ANSWER_COLUMN, minWidth: 0 }}>
-            <RuledList>
-              {section.questions.map((node) => (
-                <GeneralRow key={node.id} node={node} run={run} beds={beds} />
-              ))}
-            </RuledList>
-          </div>
+          {/* THE CARD'S FULL WIDTH: each row keeps its answers in the
+              ANSWER_COLUMN and uses the space right of it for what that answer
+              comes to, and the DMG cards span it as the question chips do. */}
+          <RuledList>
+            {section.questions.map((node) => (
+              <GeneralRow key={node.id} node={node} run={run} beds={beds} figure={siteFigures?.[node.id] ?? null} />
+            ))}
+          </RuledList>
         </div>
       </div>
     </div>
@@ -697,9 +782,11 @@ function GeneralCard({ section, run, beds }) {
 // ONE GENERAL QUESTION. Three kinds, one row shape: the prompt, then the answer
 // in the same three slots every other row on this tab ends with, so a column of
 // mixed kinds still reads as one column.
-function GeneralRow({ node, run, beds }) {
+function GeneralRow({ node, run, beds, figure = null }) {
   const kind = node.question.kind ?? 'number'
   const given = run.generalOf(node.id)
+  // A question with a default shows it until answered — the value rules read.
+  const shown = Number.isFinite(given) ? given : node.question.default
   // THE FIGURE IT IS CHECKED AGAINST, on the row that states it. The bed count
   // is the one answer the run measures itself by, and its own row is where the
   // running total belongs — the bars beside the questions each say how one
@@ -708,6 +795,10 @@ function GeneralRow({ node, run, beds }) {
 
   return (
     <div style={{ minWidth: 0 }}>
+      {/* The question in the answer column, and WHAT IT COMES TO in the space to
+          its right — on the question's own line. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 32, minWidth: 0 }}>
+      <div style={{ flex: `0 1 ${ANSWER_COLUMN}px`, minWidth: 0 }}>
       <div style={{ minHeight: QUESTION_ROW, display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
         <span style={{ flex: 1, minWidth: 0, fontSize: QUESTION_TYPE, lineHeight: 1.35 }}>
           {node.question.prompt || 'Untitled question'}
@@ -716,15 +807,21 @@ function GeneralRow({ node, run, beds }) {
         <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: ANSWER_GAP }}>
           <span style={{ width: STEP_COL, display: 'flex', justifyContent: 'flex-start' }}>
             {kind === 'number' && (
-              <Stepper value={given} onChange={(n) => run.setGeneral(node.id, n)} />
+              <Stepper
+                value={shown}
+                step={node.question.step ?? 1}
+                min={node.question.min ?? 0}
+                onChange={(n) => run.setGeneral(node.id, n)}
+              />
             )}
           </span>
           <span style={{ width: FIELD_COL, display: 'flex', justifyContent: 'flex-start' }}>
             {kind === 'number' && (
               <CountField
-                value={Number.isFinite(given) ? given : ''}
-                min={0}
-                step={1}
+                value={Number.isFinite(shown) ? shown : ''}
+                min={node.question.min ?? 0}
+                step={node.question.step ?? 1}
+                {...(node.question.step != null && node.question.step < 1 ? { decimals: 1 } : {})}
                 prefix=""
                 boxed
                 digits={4}
@@ -776,8 +873,6 @@ function GeneralRow({ node, run, beds }) {
         <MultiplierSlider question={node.question} given={given} onChange={(n) => run.setGeneral(node.id, n)} />
       )}
 
-      {kind === 'dmgs' && <DmgChoices given={given} onChange={(ids) => run.setGeneral(node.id, ids)} />}
-
       {tally && <BedBar mine={tally.placed} placed={tally.placed} target={tally.target} />}
 
       {/* BLACK, AT READING SIZE: a caption is what the person answering is told,
@@ -787,6 +882,36 @@ function GeneralRow({ node, run, beds }) {
           {node.question.comment}
         </div>
       )}
+      </div>
+
+      {figure && <SiteFigure {...figure} />}
+      </div>
+
+      {/* The DMG cards span the whole card — the question chips' own grid. */}
+      {kind === 'dmgs' && <DmgChoices given={given} onChange={(ids) => run.setGeneral(node.id, ids)} />}
+    </div>
+  )
+}
+
+// WHAT A SITE ANSWER COMES TO — FSI area, floorplate, area per bed — beside the
+// question that gives it. A reading, not an answer: no box round it.
+// `extra` are further readings on the same line — the floors and height a
+// floorplate comes to.
+function SiteFigure({ label, sqft, extra = [] }) {
+  const { label: unit, toDisplay } = useAreaUnit()
+  const reading = (key, heading, value, suffix) => (
+    <div key={key} style={{ minHeight: QUESTION_ROW, display: 'flex', flexDirection: 'column', justifyContent: 'center', flexShrink: 0 }}>
+      <div style={{ fontSize: 13, color: '#777' }}>{heading}</div>
+      <div style={{ fontSize: QUESTION_TYPE, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: '#222' }}>
+        {value}
+        {suffix && <span style={{ fontSize: 13, fontWeight: 400, color: '#777', marginLeft: 4 }}>{suffix}</span>}
+      </div>
+    </div>
+  )
+  return (
+    <div style={{ display: 'flex', gap: 24, flexShrink: 0 }}>
+      {reading('area', label, formatArea(toDisplay(sqft)), unit)}
+      {extra.map((e) => reading(e.label, e.label, e.text))}
     </div>
   )
 }
@@ -852,16 +977,17 @@ function DmgChoices({ given, onChange }) {
     return <div style={{ fontSize: 13, color: '#999', marginTop: 4 }}>No disease management groups in sp_dmg yet.</div>
   }
   // CARDS, NOT SWITCHES: a DMG is picked from a set, and a grid of them reads as
-  // one choice where a column of switches read as four questions. THREE TO A
-  // ROW, every card the same fixed rectangle, so the grid is one picture however
-  // long a name is. The card is the whole target; chosen is filled.
+  // one choice where a column of switches read as four questions. The card is
+  // the whole target; chosen is filled.
   // At least one is required to go on — see needsDmg in TestRun.
   return (
     <>
     {on.length === 0 && (
       <div style={{ fontSize: 13, color: '#c5221f', marginTop: 4 }}>Pick at least one to continue.</div>
     )}
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 12 }}>
+    {/* THE QUESTION CHIPS' MATRIX, exactly — same column rule, same gap — so a
+        DMG card and a question chip are one size on every card of the run. */}
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${CHIP_MIN}px, 1fr))`, gap: 12, marginTop: 12 }}>
       {dmgs.map((d) => {
         const chosen = on.includes(d.id)
         return <DmgCard key={d.id} d={d} chosen={chosen} on={on} onChange={onChange} />
@@ -882,9 +1008,12 @@ function DmgCard({ d, chosen, on, onChange }) {
             title={d.name ?? ''}
             onClick={() => onChange(chosen ? on.filter((id) => id !== d.id) : [...on, d.id])}
             style={{
-              height: 72,
+              // The question chip's shape: 4:3, its padding.
+              aspectRatio: '4 / 3',
+              boxSizing: 'border-box',
               minWidth: 0,
-              padding: '0 14px',
+              padding: '10px 10px 12px',
+              overflowWrap: 'anywhere',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -914,9 +1043,9 @@ function DmgCard({ d, chosen, on, onChange }) {
   )
 }
 
-function SectionCard({ step, run, functions, beds }) {
+function SectionCard({ step, run, functions, beds, siteFigures }) {
   const { section } = step
-  if (section.kind === 'general') return <GeneralCard section={section} run={run} beds={beds} />
+  if (section.kind === 'general') return <GeneralCard section={section} run={run} beds={beds} siteFigures={siteFigures} />
   // EVERY GROUP IS ALWAYS VISIBLE. The gates are what the section asks, and a
   // section that showed one at a time would hide the question it exists to put.
   const groups = section.groups
@@ -1198,14 +1327,19 @@ function CreatorBar({ creator, blocked, create }) {
   const busyRef = useRef(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [confirming, setConfirming] = useState(false)
+  // THE OPTION'S NAME IS ASKED HERE, not as a General question: it is what the
+  // option is called, not something about the facility.
+  const [name, setName] = useState('')
 
   const go = async () => {
+    setConfirming(false)
     if (busyRef.current || blocked) return
     busyRef.current = true
     setBusy(true)
     setError(null)
     try {
-      const id = await create()
+      const id = await create(name)
       creator.onCreated(id)
     } catch (e) {
       setError(e.message)
@@ -1236,7 +1370,7 @@ function CreatorBar({ creator, blocked, create }) {
       </button>
       <button
         type="button"
-        onClick={go}
+        onClick={() => setConfirming(true)}
         disabled={busy || !!blocked}
         style={{
           fontSize: 15,
@@ -1251,6 +1385,35 @@ function CreatorBar({ creator, blocked, create }) {
       >
         {busy ? 'Creating…' : 'Create option'}
       </button>
+      {confirming && (
+        <ConfirmModal
+          title="Create the option?"
+          confirmLabel="Create option"
+          tone="primary"
+          onConfirm={go}
+          confirmDisabled={!name.trim()}
+          onCancel={() => setConfirming(false)}
+        >
+          <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Option name</label>
+          <input
+            type="text"
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && name.trim() && go()}
+            placeholder="What is this option called?"
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '6px 8px',
+              fontSize: 14,
+              fontFamily: 'inherit',
+              marginBottom: 12,
+            }}
+          />
+          This will exit the questionnaire. The option is made from your answers as they stand.
+        </ConfirmModal>
+      )}
     </div>
   )
 }
@@ -1287,6 +1450,49 @@ export default function TestRun({ buildingId, creator = null }) {
   // whole-model for evaluateRun's reason — a bed placed in the last section
   // counts towards a bar in the first.
   const beds = bedTally(model, run)
+  // Each section's grossed area, for the rail — see grossedAreas.
+  const { byId: sectionAreas, building: buildingSqft } = grossedAreas(
+    buildProgram(model, run),
+    catalog.buildings.find((b) => b.id === buildingId),
+    model
+  )
+
+  // THE FIGURES THE SITE ANSWERS COME TO, shown beside the General questions
+  // that give them — in sqft, like every area, and drawn in the reader's unit.
+  // Each is null until what it needs is known, and then draws nothing.
+  const plotSqft = Number.isFinite(run.plotAreaSqm) ? sqmToSqft(run.plotAreaSqm) : null
+  const fsi = generalNumber(OPTION_ANSWERS.fsi, run.generalOf(OPTION_ANSWERS.fsi))
+  const gc = run.generalOf(OPTION_ANSWERS.groundCover)
+  const bedCount = run.generalOf(BED_VAR)
+  const siteFigures = {
+    // What FSI allows on the plot.
+    [OPTION_ANSWERS.fsi]:
+      plotSqft != null && Number.isFinite(fsi) ? { label: 'FSI area', sqft: plotSqft * fsi } : null,
+    // FLOORPLATE: ground cover is a PERCENTAGE of the plot (40, not 0.4). Then
+    // how many floors the designed area needs on it — the grossed building over
+    // the floorplate, to one decimal — and the height that is at FLOOR_HEIGHT_M.
+    [OPTION_ANSWERS.groundCover]: (() => {
+      if (plotSqft == null || !Number.isFinite(gc) || gc <= 0) return null
+      const floorplate = (plotSqft * gc) / 100
+      const floors = buildingSqft > 0 ? Math.round((buildingSqft / floorplate) * 10) / 10 : null
+      return {
+        label: 'Floorplate',
+        sqft: floorplate,
+        extra:
+          floors == null
+            ? []
+            : [
+                { label: 'Floors', text: floors.toFixed(1) },
+                { label: 'Height', text: `${(floors * FLOOR_HEIGHT_M).toFixed(1)} m` },
+              ],
+      }
+    })(),
+    // The run's grossed building area, spread over the beds it was told.
+    [BED_VAR]:
+      Number.isFinite(bedCount) && bedCount > 0 && buildingSqft > 0
+        ? { label: 'Area / bed', sqft: buildingSqft / bedCount }
+        : null,
+  }
 
   const [at, setAt] = useState(0)
 
@@ -1298,6 +1504,7 @@ export default function TestRun({ buildingId, creator = null }) {
   const needsDmg = dmgs.length > 0 && run.dmgIds.length === 0
   const jump = (i) => {
     if (needsDmg && deck[i]?.section.kind !== 'general') return
+    if (deck[i] && supportOnly(deck[i].section)) return
     setAt(i)
   }
 
@@ -1319,6 +1526,23 @@ export default function TestRun({ buildingId, creator = null }) {
     run.setSectionId(shownSection)
   }, [shownSection, run])
 
+  // VISITED SECTIONS: hatched on the rail until reached, ticked after. Create is
+  // held until every card has been seen, so no section is skipped unread.
+  const [visited, setVisited] = useState(() => new Set())
+  useEffect(() => {
+    setVisited(new Set())
+  }, [buildingId, isCreator])
+  // MARKED ON ARRIVING — so General, the card the run opens on, is visited from
+  // the start.
+  useEffect(() => {
+    if (shownSection == null) return
+    setVisited((prev) => (prev.has(shownSection) ? prev : new Set(prev).add(shownSection)))
+    // buildingId and isCreator too: the reset above empties the set, and the card
+    // you are on must be put back even when its id has not changed.
+  }, [shownSection, buildingId, isCreator])
+  const seen = (section) => visited.has(section.id) || supportOnly(section)
+  const unvisited = deck.filter((s) => !seen(s.section)).length
+
   // THE CANVAS TAKES THE SECTION'S COLOUR. A PALE WASH, not the solid: the rows
   // on it are white and their text is black, and the heading is read at 38px.
   // 0.9 is far enough toward white to carry both and still be a hue rather than
@@ -1334,7 +1558,7 @@ export default function TestRun({ buildingId, creator = null }) {
           on the Questions tab; the footer's own Test run button is the way out.
           App drops its band for this view too. */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', minWidth: 0 }}>
-        <Rail deck={deck} at={here} onJump={jump} functions={functions} run={run} />
+        <Rail deck={deck} at={here} onJump={jump} functions={functions} run={run} seen={seen} areas={sectionAreas} />
 
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           {!step ? (
@@ -1361,16 +1585,23 @@ export default function TestRun({ buildingId, creator = null }) {
               }}
             >
               <div style={{ maxWidth: CARD_MAX, margin: '0 auto', minWidth: 0, color: '#1a1a1a' }}>
-                <SectionCard step={step} run={run} functions={functions} beds={beds} />
+                <SectionCard step={step} run={run} functions={functions} beds={beds} siteFigures={siteFigures} />
               </div>
             </div>
           )}
           {creator && (
             <CreatorBar
               creator={creator}
-              blocked={needsDmg ? 'Pick the disease management groups first.' : null}
-              create={() =>
+              blocked={
+                needsDmg
+                  ? 'Pick the disease management groups first.'
+                  : unvisited > 0
+                    ? `Visit every section first — ${unvisited} still to go.`
+                    : null
+              }
+              create={(optionName) =>
                 createOptionFromRun({
+                  optionName,
                   projectId: creator.projectId,
                   model,
                   run,
