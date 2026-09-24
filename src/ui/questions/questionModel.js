@@ -83,13 +83,22 @@ function resolveRoom(connection, room, allowedVars, own) {
   }
 }
 
-// IS ANYTHING SIZED ON THIS ROW? For a single room it is its own rule; for a
-// GROUP it is whether any room inside it carries one, since the group has none.
-// Every reader that counts "how much is still unwritten" asks this rather than
-// `compiled.authored`, or a fully ruled group reads as an outstanding job.
+// A ROOM IS COMPLETE when its own rule is written, OR when it has objects and
+// every one of them is ruled — either level fully states what it builds. Only a
+// blank room with even one blank object is still outstanding.
+function roomComplete(room, own) {
+  if (own.authored) return true
+  const objects = room.objects ?? []
+  return objects.length > 0 && objects.every((object) => object.compiled.authored)
+}
+
+// IS THIS ROW FINISHED? A single room is its own rule and its objects; a GROUP
+// is finished when every room in it is. Every reader that counts "how much is
+// still unwritten" asks this rather than `compiled.authored`.
 export function connectionRuled(connection) {
-  if (connection.grouped) return connection.rooms.some((room) => room.compiled.authored)
-  return connection.compiled.authored
+  if (connection.grouped) return connection.rooms.every((room) => roomComplete(room, room.compiled))
+  const room = connection.rooms?.[0] ?? connection
+  return roomComplete(room, connection.compiled)
 }
 
 // A BLANK RULE IS NO COUNT, NEVER A NUMBER — for a room and for an object

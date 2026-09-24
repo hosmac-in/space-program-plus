@@ -519,6 +519,7 @@ function SupportingFace({ department, group, canEdit, editor, general }) {
               label={`Try ${groupVar?.name ?? 'a'} =`}
               value={tryArea}
               onChange={setTryArea}
+              step={100}
               suffix={departmentVars.length > 1 ? 'm², shared evenly' : 'm²'}
               // THE AREA NAMES ONLY. The counts one level in are hundreds of
               // names and listing them here would bury the handful of lines this
@@ -1374,7 +1375,8 @@ function RootCaption({ children }) {
 // formula authorable at all. The `i` beside it is where the language is written
 // down: shut by default, because it is read once and then never again, and a
 // permanent paragraph above every rule is a paragraph nobody reads at all.
-function TryBar({ label, value, onChange, suffix, vars, subject }) {
+// `step` puts − / + on the sample; an area is swept in hundreds, x is typed.
+function TryBar({ label, value, onChange, step, suffix, vars, subject }) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -1423,7 +1425,16 @@ function TryBar({ label, value, onChange, suffix, vars, subject }) {
             numbers that came OUT of it. And it is typed, never nudged: a sample
             is picked, not arrived at a step at a time. */}
         <span style={{ flexShrink: 0, fontSize: 12, color: '#777' }}>{label}</span>
-        <CountField value={value} min={0} step={1} prefix="" boxed digits={5} steppers={false} onChange={onChange} />
+        <CountField
+          value={value}
+          min={0}
+          step={step ?? 1}
+          prefix=""
+          boxed
+          digits={5}
+          steppers={step != null}
+          onChange={onChange}
+        />
         {suffix && <span style={{ flexShrink: 0, fontSize: 11, color: '#999' }}>{suffix}</span>}
         <span style={{ flex: 1, minWidth: 0 }} />
       </div>

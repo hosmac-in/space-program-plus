@@ -58,6 +58,8 @@ export default function MapPanel({
   projectId,
   onSelectProject,
   drawMode,
+  // An existing site to edit in draw mode; null draws a new one.
+  drawSeed,
   onSiteDrawn,
   optionId,
   onSelectDepartment,
@@ -172,7 +174,9 @@ export default function MapPanel({
           <div
             style={{
               position: 'absolute',
-              top: 8,
+              // Bottom right, clear of Leaflet's attribution line; the top right
+              // is the draw toolbar's.
+              bottom: 24,
               right: 8,
               zIndex: Z.mapControls,
               display: 'flex',
@@ -258,9 +262,13 @@ export default function MapPanel({
 
         {projects
           .filter((p) => p.site_geojson)
+          // The site being edited is drawn by DrawControl instead, handles and all.
+          .filter((p) => !(drawMode && drawSeed && p.id === projectId))
           .map((p) => (
             <GeoJSON
-              key={`site-${p.id}`}
+              // Keyed by the geometry too: react-leaflet's GeoJSON ignores new
+              // `data` after mount, so an edited site would draw stale until reload.
+              key={`site-${p.id}-${JSON.stringify(p.site_geojson)}`}
               data={p.site_geojson}
               style={{
                 color: p.id === projectId ? '#1a73e8' : '#c0392b',
@@ -282,7 +290,7 @@ export default function MapPanel({
 
         {selectedProject?.context_geojson && (
           <GeoJSON
-            key={`context-${selectedProject.id}`}
+            key={`context-${selectedProject.id}-${JSON.stringify(selectedProject.context_geojson)}`}
             data={selectedProject.context_geojson}
             style={{ color: '#888', weight: 1, dashArray: '4', fillOpacity: 0 }}
           />
@@ -298,7 +306,7 @@ export default function MapPanel({
 
         <FlyToSelected selectedProjectId={projectId} projects={projects} skipNextFlyRef={skipNextFlyRef} />
 
-        {drawMode && <DrawControl onChange={onSiteDrawn} />}
+        {drawMode && <DrawControl onChange={onSiteDrawn} initial={drawSeed} />}
       </MapContainer>
           </>
           )}

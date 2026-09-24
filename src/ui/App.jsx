@@ -69,6 +69,7 @@ function SignedInApp({ session }) {
   const [mapRefreshKey, setMapRefreshKey] = useState(0)
   const [isDrawingSite, setIsDrawingSite] = useState(false)
   const [drawnSiteGeometry, setDrawnSiteGeometry] = useState(null)
+  const [drawSeed, setDrawSeed] = useState(null)
 
   // Which building's band is selected on the TREE tab. Never set at the same
   // time as a department: the two are the pane's two faces there, and holding
@@ -340,6 +341,7 @@ function SignedInApp({ session }) {
           projectId={selectedProjectId}
           onSelectProject={handleSelectProject}
           drawMode={isDrawingSite}
+          drawSeed={drawSeed}
           onSiteDrawn={setDrawnSiteGeometry}
           optionId={selectedOptionId}
           onSelectDepartment={handleSelectDepartment}
@@ -394,6 +396,7 @@ function SignedInApp({ session }) {
                 isDrawingSite={isDrawingSite}
                 onStartDrawSite={() => {
                   setDrawnSiteGeometry(null)
+                  setDrawSeed(null)
                   setIsDrawingSite(true)
                 }}
                 onStopDrawSite={() => setIsDrawingSite(false)}
@@ -470,11 +473,15 @@ function SignedInApp({ session }) {
                 onOpenProgram={() => navigate({ view: 'project' })}
                 canEdit={isAdmin && !readOnly}
                 isDrawingSite={isDrawingSite}
-                onStartDrawSite={() => {
+                onStartDrawSite={(seed) => {
                   setDrawnSiteGeometry(null)
+                  setDrawSeed(seed ?? null)
                   setIsDrawingSite(true)
                 }}
-                onStopDrawSite={() => setIsDrawingSite(false)}
+                onStopDrawSite={() => {
+                  setIsDrawingSite(false)
+                  setDrawSeed(null)
+                }}
                 drawnSiteGeometry={drawnSiteGeometry}
                 onSiteSaved={() => setMapRefreshKey((k) => k + 1)}
               />

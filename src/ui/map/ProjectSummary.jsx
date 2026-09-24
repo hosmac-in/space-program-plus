@@ -191,11 +191,13 @@ function SiteEditor({ project, isDrawingSite, onStartDrawSite, onStopDrawSite, d
     if (drawnSiteGeometry) setSiteText(JSON.stringify(drawnSiteGeometry, null, 2))
   }, [drawnSiteGeometry])
 
-  async function save() {
+  // `drawn`: the shape straight off the map, so Done drawing saves what is on
+  // screen rather than whatever the text box last rendered.
+  async function save(drawn) {
     setError(null)
     let site, context
     try {
-      site = extractGeometry(JSON.parse(siteText))
+      site = drawn ?? extractGeometry(JSON.parse(siteText))
       context = contextText.trim() === '' ? null : extractGeometry(JSON.parse(contextText))
     } catch {
       setError('Site and context (if provided) must be valid GeoJSON.')
@@ -225,9 +227,32 @@ function SiteEditor({ project, isDrawingSite, onStartDrawSite, onStopDrawSite, d
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
         <span>Site (GeoJSON)</span>
         {isDrawingSite ? (
-          <button type="button" onClick={onStopDrawSite}>Done drawing</button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              onStopDrawSite()
+              save(drawnSiteGeometry ?? undefined)
+            }}
+          >
+            {saving ? 'Saving…' : 'Done — save shape'}
+          </button>
         ) : (
-          <button type="button" onClick={onStartDrawSite}>Redraw on map</button>
+          <button
+            type="button"
+            onClick={() => {
+              // Edit whatever the box holds now, falling back to the stored site.
+              let seed = project.site_geojson
+              try {
+                seed = extractGeometry(JSON.parse(siteText)) ?? seed
+              } catch {
+                // unparseable text: edit the stored shape instead
+              }
+              onStartDrawSite(seed)
+            }}
+          >
+            Edit shape on map
+          </button>
         )}
       </div>
       <textarea value={siteText} onChange={(e) => setSiteText(e.target.value)} rows={8} style={box} />
@@ -236,7 +261,7 @@ function SiteEditor({ project, isDrawingSite, onStartDrawSite, onStopDrawSite, d
       {error && <span style={{ fontSize: 12, color: '#c5221f' }}>{error}</span>}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <button type="button" onClick={onClose} disabled={saving}>Cancel</button>
-        <button type="button" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save site'}</button>
+        <button type="button" onClick={() => save()} disabled={saving}>{saving ? 'Saving…' : 'Save site'}</button>
       </div>
     </StatCard>
   )
