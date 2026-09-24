@@ -18,12 +18,13 @@
 //       "site_geojson": { ... },       <- Grasshopper reads these, same reason
 //       "context_geojson": { ... }     <- as weather: it has no client for sp_project
 //     },
-//     "area_metrics": {                <- fsi and ground_cover are typed on this
-//       "fsi": 1.5,                    <- option's settings dialog; the three
-//       "ground_cover": 0.4,           <- plot_area_* figures are measured from
-//       "plot_area_sqft": 43560,       <- site.site_geojson and copied in the
-//       "plot_area_sqm": 4047.0,       <- same way site itself is
-//       "plot_area_acre": 1.0
+//     "area_metrics": {                <- ALL m². fsi and ground_cover typed;
+//       "fsi": 1.5,                    <- plot measured from site.site_geojson;
+//       "ground_cover": 40,            <- the other three derived on every save
+//       "plot_area_sqm": 4047.0,
+//       "fsi_area_sqm": 6070.5,
+//       "floorplate_area_sqm": 1618.8,
+//       "designed_area_sqm": 5200.0
 //     },
 //     "departments": [{
 //       "instance_id": "...",
@@ -165,7 +166,12 @@
 //     Tree tab leaves a dangling key that is simply never read. See ROOM GROUPS
 //     in data/tree.js.
 //
-// 18  `area_metrics`: `fsi` and `ground_cover`, typed by the person setting up
+// 21  `area_metrics` is m² only: `plot_area_sqft` / `plot_area_acre` are no
+//     longer written, and `fsi_area_sqm`, `floorplate_area_sqm` (plot × ground
+//     cover) and `designed_area_sqm` (the grossed total, as the HUD prints it)
+//     are — derived on every save, never read. A v18–20 row loads its plot from
+//     whichever unit it has; see areaMetricsWire.
+// 18  `area_metrics`:`fsi` and `ground_cover`, typed by the person setting up
 //     the option, plus `plot_area_sqft` / `plot_area_sqm` / `plot_area_acre` —
 //     COPIED in from `site.site_geojson` on every save, the same discipline as
 //     `site` and `weather` themselves, since these are a measurement of that
@@ -254,10 +260,10 @@ import {
   GROSSING,
 } from './factors.js'
 import { catalogRoomsForNode, deptNodeIndex, roomGroupId } from './tree.js'
-import { sqmToSqft } from './units.js'
+import { sqmToSqft, sqftToSqm } from './units.js'
 import { readDmgIds } from './dmg.js'
 
-export const SCHEMA_VERSION = 20
+export const SCHEMA_VERSION = 21
 
 // HOW MANY OF A ROOM GROUP THIS OPTION TAKES — 1 unless it says otherwise, and
 // the ONE definition of that fallback. An absent map, an absent key and a
@@ -318,6 +324,28 @@ export function clampPhaseCount(n) {
   return Math.min(MAX_PHASE_COUNT, Math.max(DEFAULT_PHASE_COUNT, n))
 }
 
+// `area_metrics` on the wire — v21, every area in m² and nothing else. The two
+// typed settings, the plot, and three figures derived from them: what FSI allows,
+// what ground cover allows on one floor, and the grossed area designed. The one
+// definition, so a save and the option creator cannot write two shapes.
+// Ground cover is a PERCENTAGE (40) as the questionnaire asks it; a value <= 1
+// is read as the fraction older dialogs took (0.4). Null when nothing is known.
+export function areaMetricsWire({ fsi, groundCover, plotAreaSqm, designedAreaSqft }) {
+  const num = (n) => (Number.isFinite(n) ? n : null)
+  const plot = num(plotAreaSqm)
+  const gc = num(groundCover)
+  const gcFraction = gc === null || gc <= 0 ? null : gc > 1 ? gc / 100 : gc
+  const out = {
+    ...(num(fsi) !== null ? { fsi } : {}),
+    ...(gc !== null ? { ground_cover: gc } : {}),
+    ...(plot !== null ? { plot_area_sqm: plot } : {}),
+    ...(plot !== null && num(fsi) > 0 ? { fsi_area_sqm: plot * fsi } : {}),
+    ...(plot !== null && gcFraction !== null ? { floorplate_area_sqm: plot * gcFraction } : {}),
+    ...(num(designedAreaSqft) !== null ? { designed_area_sqm: sqftToSqm(designedAreaSqft) } : {}),
+  }
+  return Object.keys(out).length ? out : null
+}
+
 // In-memory (camelCase, names/areas resolved) -> wire format (ids only).
 export function buildInstanceData(
   departments,
@@ -340,30 +368,8 @@ export function buildInstanceData(
     // Same discipline: copied in, never resolved live, and absent when the
     // project has none.
     ...(site?.site_geojson ? { site } : {}),
-    // `fsi` and `groundCover` are typed here; the three `plotArea*` figures are
-    // a measurement of `site.site_geojson`, copied in the same way `site`
-    // itself is — all three units, not one converted on read, since Grasshopper
-    // reads this document alone. Written only when there is something to say,
-    // and each figure only when it is finite — absence of one must not blank
-    // out the others.
-    ...(areaMetrics &&
-    (Number.isFinite(areaMetrics.fsi) ||
-      Number.isFinite(areaMetrics.groundCover) ||
-      Number.isFinite(areaMetrics.plotAreaSqft) ||
-      Number.isFinite(areaMetrics.plotAreaSqm) ||
-      Number.isFinite(areaMetrics.plotAreaAcre))
-      ? {
-          area_metrics: {
-            ...(Number.isFinite(areaMetrics.plotAreaSqft)
-              ? { plot_area_sqft: areaMetrics.plotAreaSqft }
-              : {}),
-            ...(Number.isFinite(areaMetrics.plotAreaSqm) ? { plot_area_sqm: areaMetrics.plotAreaSqm } : {}),
-            ...(Number.isFinite(areaMetrics.plotAreaAcre) ? { plot_area_acre: areaMetrics.plotAreaAcre } : {}),
-            ...(Number.isFinite(areaMetrics.fsi) ? { fsi: areaMetrics.fsi } : {}),
-            ...(Number.isFinite(areaMetrics.groundCover) ? { ground_cover: areaMetrics.groundCover } : {}),
-          },
-        }
-      : {}),
+    // See areaMetricsWire. Written only when there is something to say.
+    ...(areaMetrics && areaMetricsWire(areaMetrics) ? { area_metrics: areaMetricsWire(areaMetrics) } : {}),
     // Written as given, not clamped: the builder already holds a valid count,
     // and a legacy option using more phases than the input offers must keep them.
     phase_count: Number.isInteger(phaseCount) && phaseCount > 0 ? phaseCount : DEFAULT_PHASE_COUNT,
@@ -668,16 +674,18 @@ export function loadInstanceData(data, departmentDefs, roomDefs, objectDefs, cat
     // already stored rather than dropping it. The project is the source.
     weather: data?.weather ?? null,
     site: data?.site ?? null,
-    // Read back the same way: `fsi` and `groundCover` so the settings dialog
-    // opens on what was last typed, the `plotArea*` figures so a save that
-    // cannot recompute them (no site on the project) keeps the last known
-    // values rather than dropping them.
+    // Read back so the settings dialog opens on what was typed, and the plot so
+    // a save that cannot re-measure the site keeps the last known figure. A v18
+    // row with only `plot_area_sqft` still yields its plot. The derived figures
+    // are never read — every save recomputes them.
     areaMetrics: {
       fsi: Number.isFinite(data?.area_metrics?.fsi) ? data.area_metrics.fsi : null,
       groundCover: Number.isFinite(data?.area_metrics?.ground_cover) ? data.area_metrics.ground_cover : null,
-      plotAreaSqft: Number.isFinite(data?.area_metrics?.plot_area_sqft) ? data.area_metrics.plot_area_sqft : null,
-      plotAreaSqm: Number.isFinite(data?.area_metrics?.plot_area_sqm) ? data.area_metrics.plot_area_sqm : null,
-      plotAreaAcre: Number.isFinite(data?.area_metrics?.plot_area_acre) ? data.area_metrics.plot_area_acre : null,
+      plotAreaSqm: Number.isFinite(data?.area_metrics?.plot_area_sqm)
+        ? data.area_metrics.plot_area_sqm
+        : Number.isFinite(data?.area_metrics?.plot_area_sqft)
+          ? sqftToSqm(data.area_metrics.plot_area_sqft)
+          : null,
     },
     // Null for a row saved before v20 — no filter — never [], which is a choice.
     dmgIds: readDmgIds(data?.dmgs),

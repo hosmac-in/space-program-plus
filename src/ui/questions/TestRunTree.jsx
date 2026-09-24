@@ -21,6 +21,7 @@ import { buildModel, roomLabel, scopeToDmgs } from './questionModel.js'
 import { bedTally, buildProgram, evaluateRun, grossedAreas, useTestRun } from './useTestRun.jsx'
 import { useAreaUnit } from '../AreaUnitContext.jsx'
 import { formatArea, SQM_PER_SQFT } from '../map/area.js'
+import { coolingTons } from '../../data/units.js'
 import { optionSettingsOf } from './createOption.js'
 import { RULE } from '../layout.js'
 
@@ -199,6 +200,7 @@ export function TestRunHud({ buildingId, projectName = null, siteGeojson = null 
           muted={areaSqft === 0}
           tone={overFsi ? '#b3261e' : null}
         />
+        <Figure label="Cooling" value={formatArea(coolingTons(areaSqft))} unit="TR" muted={areaSqft === 0} />
         <Figure
           label={assumed ? 'Plot (assumed)' : 'Plot'}
           value={plot ? formatArea(toDisplay(plot.sqft)) : '—'}

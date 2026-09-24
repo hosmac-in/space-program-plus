@@ -19,3 +19,11 @@ export function sqmToSqft(sqm) {
 export function sqftToSqm(sqft) {
   return sqft == null ? null : sqft * SQM_PER_SQFT
 }
+
+// Cooling tonnage, a rule of thumb: one ton of refrigeration per 200 sqft. Read
+// off the same grossed area each HUD prints, so the two figures cannot disagree.
+export const SQFT_PER_TON = 200
+
+export function coolingTons(sqft) {
+  return sqft / SQFT_PER_TON
+}

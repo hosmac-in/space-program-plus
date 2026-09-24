@@ -19,6 +19,7 @@ import { useCatalog } from '../data/catalog.jsx'
 import { siteAreas, formatArea } from './map/area.js'
 import { useAreaUnit } from './AreaUnitContext.jsx'
 import { RULE } from './layout.js'
+import { coolingTons } from '../data/units.js'
 
 function Figure({ label, value, unit, muted = false }) {
   return (
@@ -106,6 +107,7 @@ export default function Hud({
           off the edge is worse than one on a second row. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', minWidth: 0 }}>
         <Figure label="Programmed" value={formatArea(toDisplay(areaSqft))} unit={AREA_UNIT} muted={areaSqft === 0} />
+        <Figure label="Cooling" value={formatArea(coolingTons(areaSqft))} unit="TR" muted={areaSqft === 0} />
         <Figure
           label="Site"
           value={site ? formatArea(toDisplay(site.sqft)) : '—'}

@@ -22,6 +22,7 @@
 import { supabase } from '../../data/supabase.js'
 import { catalogObjectCount, catalogRoomAreaSqft, resolveNodePlacement } from '../../data/tree.js'
 import {
+  areaMetricsWire,
   clampPhaseCount,
   DEFAULT_PHASE_COUNT,
   DEFAULT_ROOM_COUNT,
@@ -29,8 +30,7 @@ import {
   SCHEMA_VERSION,
 } from '../../data/optionData.js'
 import { generalNumber, OPTION_ANSWERS } from '../../data/questionnaire.js'
-import { SQM_PER_ACRE, SQM_PER_SQFT } from '../map/area.js'
-import { buildProgram } from './useTestRun.jsx'
+import { buildProgram, grossedAreas } from './useTestRun.jsx'
 
 const PHASE = 1
 
@@ -144,16 +144,19 @@ export function optionDataFromRun({ model, run, buildingId, catalog }) {
     )
   )
 
-  // THE PLOT, in the three units a save writes (InstanceBuilder's toPlotArea) —
-  // so an option created and never touched carries it too, not only after its
-  // first save. The run's plot is the project site's, measured by App.
-  const plot = Number.isFinite(run.plotAreaSqm)
-    ? {
-        plot_area_sqft: run.plotAreaSqm / SQM_PER_SQFT,
-        plot_area_sqm: run.plotAreaSqm,
-        plot_area_acre: run.plotAreaSqm / SQM_PER_ACRE,
-      }
-    : null
+  // The same area_metrics a save writes, so an option created and never touched
+  // carries them too. Designed area is the HUD's grossed figure; the plot is the
+  // project site's, measured by App.
+  const areaMetrics = areaMetricsWire({
+    fsi: settings.fsi,
+    groundCover: settings.groundCover,
+    plotAreaSqm: run.plotAreaSqm,
+    designedAreaSqft: grossedAreas(
+      buildProgram(model, run),
+      catalog.buildings.find((b) => b.id === buildingId),
+      model
+    ).building,
+  })
 
   return {
     name: settings.name,
@@ -162,15 +165,7 @@ export function optionDataFromRun({ model, run, buildingId, catalog }) {
       dmgs: settings.dmgIds,
       buildings: [buildingId],
       sections: sectionIds,
-      ...(settings.fsi != null || settings.groundCover != null || plot
-        ? {
-            area_metrics: {
-              ...(plot ?? {}),
-              ...(settings.fsi != null ? { fsi: settings.fsi } : {}),
-              ...(settings.groundCover != null ? { ground_cover: settings.groundCover } : {}),
-            },
-          }
-        : {}),
+      ...(areaMetrics ? { area_metrics: areaMetrics } : {}),
       departments,
     },
   }
