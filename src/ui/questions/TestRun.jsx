@@ -29,7 +29,8 @@ import { bedTally, buildProgram, grossedAreas, useTestRun } from './useTestRun.j
 import { useAreaUnit } from '../AreaUnitContext.jsx'
 import { formatArea } from '../map/area.js'
 import { sqmToSqft } from '../../data/units.js'
-import { BED_VAR, generalNumber, OPTION_ANSWERS } from '../../data/questionnaire.js'
+import { BED_VAR, generalNumber, isAhuRoom, OPTION_ANSWERS } from '../../data/questionnaire.js'
+import { AreaTreemap } from '../diagram/OptionAnalysis.jsx'
 import { createOptionFromRun } from './createOption.js'
 import { RULE } from '../layout.js'
 
@@ -1488,10 +1489,30 @@ export default function TestRun({ buildingId, creator = null }) {
   // counts towards a bar in the first.
   const beds = bedTally(model, run)
   // Each section's grossed area, for the rail — see grossedAreas.
+  const program = buildProgram(model, run)
   const { byId: sectionAreas, building: buildingSqft } = grossedAreas(
-    buildProgram(model, run),
+    program,
     catalog.buildings.find((b) => b.id === buildingId),
     model
+  )
+
+  // THE TREEMAP, of what the answers have built — the Project tab's own view,
+  // fed the run's program instead of an option's. Grossed per department as the
+  // option's tiles are; AHU area is net, as there. Local state, like the option's.
+  const [showAnalysis, setShowAnalysis] = useState(false)
+  const treemapRows = program.flatMap((section) =>
+    section.groups.flatMap((group) =>
+      group.departments.map((d) => ({
+        key: d.id,
+        name: d.name,
+        phase: 1,
+        groupKey: group.id,
+        groupName: group.name,
+        functionId: group.functionId,
+        areaSqft: sectionAreas.get(d.id) ?? 0,
+        ahuSqft: d.rooms.filter((r) => isAhuRoom(r.label)).reduce((s, r) => s + r.areaSqft, 0),
+      }))
+    )
   )
 
   // THE FIGURES THE SITE ANSWERS COME TO, shown beside the General questions
@@ -1608,8 +1629,32 @@ export default function TestRun({ buildingId, creator = null }) {
       <div style={{ flex: 1, minHeight: 0, display: 'flex', minWidth: 0 }}>
         <Rail deck={deck} at={here} onJump={jump} functions={functions} run={run} seen={seen} areas={sectionAreas} />
 
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          {!step ? (
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {/* Top-right, as on the Project tab. */}
+          <button
+            type="button"
+            onClick={() => setShowAnalysis((v) => !v)}
+            style={{
+              position: 'absolute',
+              top: 8,
+              right: 8,
+              zIndex: 2,
+              padding: '5px 10px',
+              fontSize: 12,
+              background: '#fff',
+              border: '1px solid #ccc',
+              borderRadius: 6,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+              cursor: 'pointer',
+            }}
+          >
+            {showAnalysis ? 'View Questionnaire' : 'View Treemap'}
+          </button>
+          {showAnalysis ? (
+            <div style={{ flex: 1, minHeight: 0, background: '#fff' }}>
+              <AreaTreemap rows={treemapRows} emptyText="Nothing to chart yet — answer some questions." />
+            </div>
+          ) : !step ? (
             <PanelNote pad>
               Nothing to ask for this building yet. Author its questions on the Questions tab.
             </PanelNote>

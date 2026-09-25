@@ -1,4 +1,5 @@
-// The option's area as a treemap: one tile per department GROUP, its
+// A program's area as a treemap — an option's, or a Test run's (TestRun.jsx
+// builds its own rows for AreaTreemap below): one tile per department GROUP, its
 // departments tiled inside it, every tile sized by area. A placeholder: the
 // real analysis view is whatever the EnergyPlus export ends up producing.
 //
@@ -70,14 +71,11 @@ function squarify(items, x, y, w, h) {
   return out
 }
 
+// The option's departments as treemap rows — see AreaTreemap.
 export default function OptionAnalysis({ departments, buildingFactors }) {
-  const { sections, buildings, groups: groupDefs, functions } = useCatalog()
-  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
-  const boxRef = useRef(null)
-  const [size, setSize] = useState({ w: 0, h: 0 })
-  const [ahuOnly, setAhuOnly] = useState(false)
+  const { sections, buildings, groups: groupDefs } = useCatalog()
 
-  const { groups, total } = useMemo(() => {
+  const rows = useMemo(() => {
     const { perDepartment } = summarize(departments, { sections, buildings, buildingFactors })
     // department placement instance_id -> its group placement
     const groupOf = new Map()
@@ -86,34 +84,54 @@ export default function OptionAnalysis({ departments, buildingFactors }) {
         ;(g.departments ?? []).forEach((d) => d.instance_id && groupOf.set(d.instance_id, g))
       })
     })
-
     const deptById = new Map(departments.map((d) => [d.instanceId, d]))
-    const byGroup = new Map()
-    perDepartment.forEach((summary) => {
-      const d = ahuOnly ? { ...summary, areaSqft: ahuAreaSqft(deptById.get(summary.instanceId)) } : summary
-      if (!(d.areaSqft > 0)) return
+    return perDepartment.map((d) => {
       const g = groupOf.get(d.treeNodeId) ?? null
-      const key = g?.instance_id ?? 'none'
-      if (!byGroup.has(key)) {
-        const def = g ? groupDefs.find((x) => x.id === g.group_def_id) : null
-        byGroup.set(key, {
-          key,
-          name: def?.name ?? (g ? 'Unnamed group' : 'Not in the tree'),
-          functionId: def?.function_id ?? null,
-          value: 0,
-          departments: [],
-        })
+      const def = g ? groupDefs.find((x) => x.id === g.group_def_id) : null
+      return {
+        key: d.instanceId,
+        name: d.name,
+        phase: d.phase,
+        groupKey: g?.instance_id ?? 'none',
+        groupName: def?.name ?? (g ? 'Unnamed group' : 'Not in the tree'),
+        functionId: def?.function_id ?? null,
+        areaSqft: d.areaSqft,
+        ahuSqft: ahuAreaSqft(deptById.get(d.instanceId)),
       }
-      const bucket = byGroup.get(key)
-      bucket.value += d.areaSqft
-      // One tile per phase entry: a department in two phases is two figures.
-      bucket.departments.push({ key: d.instanceId, name: d.name, phase: d.phase, value: d.areaSqft })
     })
+  }, [departments, sections, buildings, buildingFactors, groupDefs])
 
+  return <AreaTreemap rows={rows} emptyText="Nothing to chart yet — add rooms and areas to this option's departments." />
+}
+
+// THE DRAWING, for any program: the option's, or what a Test run has built.
+// `rows` is one per department (per phase entry): { key, name, phase, groupKey,
+// groupName, functionId, areaSqft, ahuSqft }. Grouping, the AHU toggle and the
+// layout are all here, so the two tabs cannot draw it differently.
+export function AreaTreemap({ rows, emptyText }) {
+  const { functions } = useCatalog()
+  const { label: AREA_UNIT, toDisplay } = useAreaUnit()
+  const boxRef = useRef(null)
+  const [size, setSize] = useState({ w: 0, h: 0 })
+  const [ahuOnly, setAhuOnly] = useState(false)
+
+  const { groups, total } = useMemo(() => {
+    const byGroup = new Map()
+    rows.forEach((row) => {
+      const value = ahuOnly ? row.ahuSqft : row.areaSqft
+      if (!(value > 0)) return
+      if (!byGroup.has(row.groupKey)) {
+        byGroup.set(row.groupKey, { key: row.groupKey, name: row.groupName, functionId: row.functionId, value: 0, departments: [] })
+      }
+      const bucket = byGroup.get(row.groupKey)
+      bucket.value += value
+      // One tile per phase entry: a department in two phases is two figures.
+      bucket.departments.push({ key: row.key, name: row.name, phase: row.phase, value })
+    })
     const list = [...byGroup.values()].sort((a, b) => b.value - a.value)
     list.forEach((g) => g.departments.sort((a, b) => b.value - a.value))
     return { groups: list, total: list.reduce((s, g) => s + g.value, 0) }
-  }, [departments, sections, buildings, buildingFactors, groupDefs, ahuOnly])
+  }, [rows, ahuOnly])
 
   const hasData = groups.length > 0
 
@@ -125,7 +143,7 @@ export default function OptionAnalysis({ departments, buildingFactors }) {
     return () => ro.disconnect()
   }, [])
 
-  const phased = departments.some((d) => (d.phase ?? 1) > 1)
+  const phased = rows.some((d) => (d.phase ?? 1) > 1)
   const area = (sqft) => `${formatArea(toDisplay(sqft))} ${AREA_UNIT}`
 
   const tiles = squarify(groups, 0, 0, size.w, size.h)
@@ -143,9 +161,7 @@ export default function OptionAnalysis({ departments, buildingFactors }) {
       </div>
       {!hasData && (
         <div style={{ padding: 8, fontSize: 13, color: '#999' }}>
-          {ahuOnly
-            ? 'No AHU rooms with an area in this option.'
-            : "Nothing to chart yet — add rooms and areas to this option's departments."}
+          {ahuOnly ? 'No AHU rooms with an area yet.' : emptyText}
         </div>
       )}
       <div ref={boxRef} style={{ position: 'relative', flex: 1, minHeight: 0 }}>
