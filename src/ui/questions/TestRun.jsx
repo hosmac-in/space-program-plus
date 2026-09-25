@@ -14,9 +14,12 @@
 // talks — so it is set at presentation size rather than at the panel sizes the
 // rest of the app uses.
 //
-// Nothing here is saved. See useTestRun.jsx.
+// Nothing here is saved — see useTestRun.jsx — except on THE TRIAL PROGRAM tab,
+// the same deck loaded from and saved to sp_trial_run (`trial`, TrialBar).
 
 import { Children, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { readTrialRun, writeTrialRun } from '../../data/trialRun.js'
+import { useReadOnly } from '../../readOnly.jsx'
 import { useCatalog } from '../../data/catalog.jsx'
 import { functionColours } from '../../data/functions.js'
 import Toggle from '../primitives/Toggle.jsx'
@@ -29,7 +32,7 @@ import { bedTally, buildProgram, grossedAreas, useTestRun } from './useTestRun.j
 import { useAreaUnit } from '../AreaUnitContext.jsx'
 import { formatArea } from '../map/area.js'
 import { sqmToSqft } from '../../data/units.js'
-import { BED_VAR, generalNumber, isAhuRoom, OPTION_ANSWERS } from '../../data/questionnaire.js'
+import { generalNumber, isAhuRoom, OPTION_ANSWERS } from '../../data/questionnaire.js'
 import { AreaTreemap } from '../diagram/OptionAnalysis.jsx'
 import { createOptionFromRun } from './createOption.js'
 import { RULE } from '../layout.js'
@@ -316,10 +319,10 @@ function Rail({ deck, at, onJump, functions, run, seen, areas }) {
             const passed = at > section.end
             const colours = functionColours(functions, section.functionId)
             // General builds no area of its own — it is the facility's answers —
-            // so it always reads as done.
-            const built =
-              section.section.kind === 'general' ||
-              (seen(section.section) && (areas.get(section.id) ?? 0) > 0)
+            // so it always reads as done. ANY AREA IS BUILT, visited or not: a
+            // section filled by rules elsewhere (a supporting-only one, the core's
+            // floor-area share) is in the design without anyone opening it.
+            const built = section.section.kind === 'general' || (areas.get(section.id) ?? 0) > 0
 
             return (
               <button
@@ -388,11 +391,10 @@ function Rail({ deck, at, onJump, functions, run, seen, areas }) {
                     flexDirection: 'column',
                     gap: 6,
                     padding: '0 10px',
-                    // Hatched until visited — a section nobody has opened yet.
-                    // A visited box is a shade deeper than an unvisited one.
-                    // >>> A SECTION WITH NO AREA LOOKS UNVISITED, visited or not:
-                    // >>> entered and left empty, it is not in the design, and the
-                    // >>> hatch is what says so. Visiting still counts for Create.
+                    // >>> HATCHED WHILE IT HAS NO AREA, visited or not: an empty
+                    // >>> section is not in the design, and the hatch is what says
+                    // >>> so. A box with area is a shade deeper. Visiting still
+                    // >>> counts for Create.
                     backgroundColor: colours.wash(here ? 0.66 : built ? 0.8 : 0.88),
                     backgroundImage: built
                       ? 'none'
@@ -751,7 +753,7 @@ function GateRow({ group, gate, yes, run, tint, ink = '#222' }) {
 //
 // It is answered FIRST because everything after it may read the answers: see
 // GENERAL in data/questionnaire.js.
-function GeneralCard({ section, run, beds, siteFigures }) {
+function GeneralCard({ section, run, siteFigures }) {
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 38, lineHeight: 1.15, fontWeight: 600 }}>{section.name}</div>
@@ -773,7 +775,7 @@ function GeneralCard({ section, run, beds, siteFigures }) {
               comes to, and the DMG cards span it as the question chips do. */}
           <RuledList>
             {section.questions.map((node) => (
-              <GeneralRow key={node.id} node={node} run={run} beds={beds} figure={siteFigures?.[node.id] ?? null} />
+              <GeneralRow key={node.id} node={node} run={run} figure={siteFigures?.[node.id] ?? null} />
             ))}
           </RuledList>
         </div>
@@ -785,16 +787,13 @@ function GeneralCard({ section, run, beds, siteFigures }) {
 // ONE GENERAL QUESTION. Three kinds, one row shape: the prompt, then the answer
 // in the same three slots every other row on this tab ends with, so a column of
 // mixed kinds still reads as one column.
-function GeneralRow({ node, run, beds, figure = null }) {
+function GeneralRow({ node, run, figure = null }) {
   const kind = node.question.kind ?? 'number'
   const given = run.generalOf(node.id)
   // A question with a default shows it until answered — the value rules read.
   const shown = Number.isFinite(given) ? given : node.question.default
-  // THE FIGURE IT IS CHECKED AGAINST, on the row that states it. The bed count
-  // is the one answer the run measures itself by, and its own row is where the
-  // running total belongs — the bars beside the questions each say how one
-  // answer contributed, and nothing else says how the building stands.
-  const tally = node.tally === 'beds' && beds?.target ? beds : null
+  // No bed bar under the bed count: the HUD's Total Beds already reads placed
+  // against it.
 
   return (
     <div style={{ minWidth: 0 }}>
@@ -876,12 +875,21 @@ function GeneralRow({ node, run, beds, figure = null }) {
         <MultiplierSlider question={node.question} given={given} onChange={(n) => run.setGeneral(node.id, n)} />
       )}
 
-      {tally && <BedBar mine={tally.placed} placed={tally.placed} target={tally.target} />}
-
       {/* BLACK, AT READING SIZE: a caption is what the person answering is told,
-          from across a desk — grey 13px was a footnote nobody read. */}
+          from across a desk — grey 13px was a footnote nobody read. Except under
+          a SLIDER, where it glosses the scale rather than asking anything: small,
+          grey and italic, so it does not compete with the figure. */}
       {node.question.comment && (
-        <div style={{ fontSize: 17, color: '#222', marginTop: 6, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
+        <div
+          style={{
+            marginTop: 6,
+            lineHeight: 1.45,
+            whiteSpace: 'pre-wrap',
+            ...(kind === 'multiplier'
+              ? { fontSize: 13, color: '#888', fontStyle: 'italic' }
+              : { fontSize: 17, color: '#222' }),
+          }}
+        >
           {node.question.comment}
         </div>
       )}
@@ -896,7 +904,7 @@ function GeneralRow({ node, run, beds, figure = null }) {
   )
 }
 
-// WHAT A SITE ANSWER COMES TO — FSI area, floorplate, area per bed — beside the
+// WHAT A SITE ANSWER COMES TO — FSI area, floorplate — beside the
 // question that gives it. A reading, not an answer: no box round it.
 // `extra` are further readings on the same line — the floors and height a
 // floorplate comes to.
@@ -1097,7 +1105,7 @@ function DmgCard({ d, chosen, on, onChange }) {
 
 function SectionCard({ step, run, functions, beds, siteFigures }) {
   const { section } = step
-  if (section.kind === 'general') return <GeneralCard section={section} run={run} beds={beds} siteFigures={siteFigures} />
+  if (section.kind === 'general') return <GeneralCard section={section} run={run} siteFigures={siteFigures} />
   // EVERY GROUP IS ALWAYS VISIBLE. The gates are what the section asks, and a
   // section that showed one at a time would hide the question it exists to put.
   const groups = section.groups
@@ -1159,9 +1167,9 @@ function SectionCard({ step, run, functions, beds, siteFigures }) {
                 />
               </div>
 
-              {yes && (
-                <div style={{ padding: opened ? '14px 18px' : '4px 18px 12px' }}>
-                  {!opened && <PanelNote>Nothing is asked about this yet.</PanelNote>}
+              {/* A group with nothing to ask opens onto nothing: its header alone. */}
+              {opened && (
+                <div style={{ padding: '14px 18px' }}>
                   {/* A MATRIX OF CHIPS, the DMG cards' idiom, across the card's
                       whole width — a question asks one count, and a full row per
                       count spent most of the card on air. */}
@@ -1170,11 +1178,10 @@ function SectionCard({ step, run, functions, beds, siteFigures }) {
                       questions as chips, a heading costs one line where a whole
                       column of rows used to, and it tells apart runs of chips
                       that otherwise read as one grid. */}
-                  {opened && (
-                    // More air BETWEEN departments than between chips (12), so a
-                    // heading reads as starting a new run, not captioning the
-                    // row above it.
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+                  {/* More air BETWEEN departments than between chips (12), so a
+                      heading reads as starting a new run, not captioning the
+                      row above it. */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
                       {group.departments
                         .filter((d) => d.role !== SUPPORTING)
                         .map((d) => ({ d, asked: d.questions.filter((node) => !node.dummy) }))
@@ -1192,60 +1199,12 @@ function SectionCard({ step, run, functions, beds, siteFigures }) {
                           </div>
                         ))}
                     </div>
-                  )}
                 </div>
               )}
             </div>
           )
         })}
       </div>
-    </div>
-  )
-}
-
-// HOW MANY OF THE FACILITY'S BEDS THIS ANSWER HAS PLACED.
-//
-// It hangs off a question exactly when that question's rooms hold beds — which
-// nothing declares and nothing should: it is a fact about the catalog (an
-// is_bed object with a rule), and it changes the day a bed is placed somewhere
-// else. See bedTally.
-//
-// THE BAR IS THE WHOLE TALLY, NOT THIS ANSWER'S SHARE: the filled part is every
-// bed the run has placed so far and this question's own beds are the darker head
-// of it, so a bar beside one question says both "how far the building has got"
-// and "how much of that is this". Two separate readings would be two bars.
-//
-// OVER IS A COLOUR, NOT A LONGER BAR — the Companion's ring reached the same
-// answer. Past full there is no bar left, and the fault is not "more" but
-// "wrong".
-const BAR_H = 6
-
-function BedBar({ mine, placed, target }) {
-  const over = placed > target
-  const width = (n) => `${Math.min(100, (n / target) * 100)}%`
-  const ink = over ? '#b3261e' : '#1a73e8'
-
-  return (
-    <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          height: BAR_H,
-          borderRadius: BAR_H / 2,
-          background: '#eee',
-          overflow: 'hidden',
-          position: 'relative',
-        }}
-      >
-        <div style={{ position: 'absolute', inset: 0, width: width(placed), background: over ? '#f3c7c2' : '#cfe0fb' }} />
-        <div style={{ position: 'absolute', inset: 0, width: width(mine), background: ink }} />
-      </div>
-      <span style={{ flexShrink: 0, fontSize: 11, color: over ? '#b3261e' : '#888', fontVariantNumeric: 'tabular-nums' }}>
-        {/* On the bed count's own row the head IS the whole, so the two-part
-            reading would say the same number twice. */}
-        {mine === placed ? `${placed} of ${target} beds placed` : `${mine} here, ${placed} of ${target} beds`}
-      </span>
     </div>
   )
 }
@@ -1456,22 +1415,130 @@ function CreatorBar({ creator, blocked, create }) {
   )
 }
 
+// THE TRIAL PROGRAM'S BAR: whether what is on screen is what is recorded, and the
+// one button that records it. A save is a person's act — no autosave, here as
+// everywhere. A ref guards it, since a fast second click beats a disabled button.
+function TrialBar({ record, dirty, canSave, onSave }) {
+  const busyRef = useRef(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const save = async () => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
+    setError(null)
+    try {
+      const message = await onSave()
+      if (message) setError(message)
+    } finally {
+      busyRef.current = false
+      setBusy(false)
+    }
+  }
+
+  const status = error
+    ? error
+    : !record
+      ? 'Loading the recorded trial…'
+      : record.error
+        ? `Couldn't read the recorded trial: ${record.error}`
+        : dirty
+          ? 'Unsaved changes — leaving this tab discards them.'
+          : record.id
+            ? 'Saved.'
+            : 'Nothing recorded yet for this building.'
+  const disabled = busy || !dirty || !record || !!record.error
+
+  return (
+    <div
+      style={{
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '12px 24px',
+        borderTop: '1px solid #ddd',
+        background: '#fff',
+        fontSize: 15,
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 0, color: error || record?.error ? '#c0392b' : '#777' }}>{status}</span>
+      {canSave && (
+        <button
+          type="button"
+          onClick={save}
+          disabled={disabled}
+          style={{
+            fontSize: 15,
+            padding: '8px 16px',
+            background: '#1a73e8',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 4,
+            cursor: disabled ? 'default' : 'pointer',
+            opacity: disabled ? 0.5 : 1,
+          }}
+        >
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // `creator` turns the preview into THE OPTION CREATOR: the same deck, started
 // fresh, with a bar under it that writes the option — { projectId, onCreated,
-// onCancel }. Absent, this is the Test run tab and saves nothing.
-export default function TestRun({ buildingId, creator = null }) {
+// onCancel }. `trial` makes it THE TRIAL PROGRAM, loaded from and saved to
+// sp_trial_run — by an admin only, as the table's policy says. Neither, this is
+// the Test run tab and saves nothing.
+export default function TestRun({ buildingId, creator = null, trial = false, isAdmin = false }) {
   const catalog = useCatalog()
   const { sections, groups, departments, rooms, objects, equipment, functions } = catalog
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
+  const readOnly = useReadOnly()
 
   // A NEW OPTION STARTS FROM NOTHING. The answers are shared with the preview
   // tab, and a half-answered preview must not become somebody's program.
-  const { reset } = run
+  const { reset, load } = run
   const isCreator = !!creator
   useEffect(() => {
     if (isCreator) reset()
   }, [isCreator, buildingId, reset])
+
+  // THE TRIAL LOADS WHAT WAS RECORDED, and leaving it empties the answers again
+  // so a recorded trial never turns up in the Test run's mock. `record` is null
+  // while reading, { error } if the read failed — then nothing may be saved, or
+  // an empty run would go over a real one — else { id, version, saved }, `saved`
+  // being the answers as last written, which is what dirty is measured against.
+  const [record, setRecord] = useState(null)
+  useEffect(() => {
+    if (!trial || !buildingId) return
+    let cancelled = false
+    setRecord(null)
+    reset()
+    readTrialRun(buildingId).then(
+      (r) => {
+        if (cancelled) return
+        load(r.answers)
+        setRecord({ id: r.id, version: r.version, saved: JSON.stringify(r.answers) })
+      },
+      (e) => !cancelled && setRecord({ error: e.message })
+    )
+    return () => {
+      cancelled = true
+      reset()
+    }
+  }, [trial, buildingId, reset, load])
+  const trialDirty = !!record && !record.error && JSON.stringify(run.answers) !== record.saved
+  const saveTrial = async () => {
+    const answers = run.answers
+    const result = await writeTrialRun({ id: record.id, buildingId, answers, atVersion: record.version })
+    if (result.error) return result.error
+    setRecord({ id: result.id, version: result.version, saved: JSON.stringify(answers) })
+    return null
+  }
 
   // Scoped to the DMGs answered on the General card — see scopeToDmgs.
   const model = scopeToDmgs(
@@ -1511,6 +1578,7 @@ export default function TestRun({ buildingId, creator = null }) {
         functionId: group.functionId,
         areaSqft: sectionAreas.get(d.id) ?? 0,
         ahuSqft: d.rooms.filter((r) => isAhuRoom(r.label)).reduce((s, r) => s + r.areaSqft, 0),
+        ahuCount: d.rooms.filter((r) => isAhuRoom(r.label)).reduce((s, r) => s + (r.count ?? 0), 0),
       }))
     )
   )
@@ -1521,7 +1589,6 @@ export default function TestRun({ buildingId, creator = null }) {
   const plotSqft = Number.isFinite(run.plotAreaSqm) ? sqmToSqft(run.plotAreaSqm) : null
   const fsi = generalNumber(OPTION_ANSWERS.fsi, run.generalOf(OPTION_ANSWERS.fsi))
   const gc = run.generalOf(OPTION_ANSWERS.groundCover)
-  const bedCount = run.generalOf(BED_VAR)
   const siteFigures = {
     // What FSI allows on the plot.
     [OPTION_ANSWERS.fsi]:
@@ -1545,11 +1612,6 @@ export default function TestRun({ buildingId, creator = null }) {
               ],
       }
     })(),
-    // The run's grossed building area, spread over the beds it was told.
-    [BED_VAR]:
-      Number.isFinite(bedCount) && bedCount > 0 && buildingSqft > 0
-        ? { label: 'Area / bed', sqft: buildingSqft / bedCount }
-        : null,
   }
 
   const [at, setAt] = useState(0)
@@ -1705,6 +1767,9 @@ export default function TestRun({ buildingId, creator = null }) {
                 })
               }
             />
+          )}
+          {trial && (
+            <TrialBar record={record} dirty={trialDirty} canSave={isAdmin && !readOnly} onSave={saveTrial} />
           )}
         </div>
       </div>

@@ -88,6 +88,8 @@ export function TestRunProvider({ children, plotAreaSqm = null }) {
   }, [])
 
   const reset = useCallback(() => setAnswers(EMPTY), [])
+  // A recorded run replacing whatever is held — the Trial program's load.
+  const load = useCallback((next) => setAnswers(next ?? EMPTY), [])
 
   const value = useMemo(
     () => ({
@@ -96,6 +98,7 @@ export function TestRunProvider({ children, plotAreaSqm = null }) {
       setQuestion,
       setGeneral,
       reset,
+      load,
       sectionId,
       setSectionId,
       sectionRequest,
@@ -118,7 +121,7 @@ export function TestRunProvider({ children, plotAreaSqm = null }) {
       dmgIds: Array.isArray(answers.general?.[DMG_ANSWER]) ? answers.general[DMG_ANSWER] : [],
       plotAreaSqm,
     }),
-    [answers, setGate, setQuestion, setGeneral, reset, sectionId, sectionRequest, requestSection, plotAreaSqm]
+    [answers, setGate, setQuestion, setGeneral, reset, load, sectionId, sectionRequest, requestSection, plotAreaSqm]
   )
 
   return <TestRunContext.Provider value={value}>{children}</TestRunContext.Provider>
@@ -593,12 +596,15 @@ function evaluateSections(model, sections, run, general, answered) {
         // >>> Some of its rooms are constants that name no variable at all, and
         // >>> those would otherwise appear in a group nobody has said anything
         // >>> about.
+        // >>>
+        // >>> A GROUP WITH NO FUNCTIONING DEPARTMENT has no question to wait for,
+        // >>> so its gate is the whole of what it asks: yes builds it.
+        const functioning = group.departments.filter((d) => d.role !== SUPPORTING)
         const asked = supportOnly
           ? anyAnswered
           : open &&
-            group.departments.some(
-            (d) => d.role !== SUPPORTING && d.questions.some((node) => Number.isFinite(run.xOf(node.id)))
-          )
+            (functioning.length === 0 ||
+              functioning.some((d) => d.questions.some((node) => Number.isFinite(run.xOf(node.id)))))
         const results = asked ? department.connections.map((c) => ({ scope, ...evaluateConnection(c, scope) })) : []
         answered.set(department.id, { open, results, scope })
       })
@@ -620,6 +626,8 @@ function evaluateSections(model, sections, run, general, answered) {
       const entries = group.departments.map((d) => answered.get(d.id)).filter(Boolean)
       const vent = sqftToSqm(netAreaOf(entries.flatMap((entry) => ventilatedRows(entry.results))))
       entries.forEach((entry) => {
+        // Kept for the Trial program's side, which prints it — m², the group's.
+        entry.vent = vent
         entry.results = entry.results.map((result) => {
           if (!result.connection.rooms.some((room) => isAhuRoom(room.label))) return result
           const scope = { ...result.scope, [VENT_VAR]: vent }
@@ -746,6 +754,9 @@ export function buildProgram(model, run, answered = evaluateRun(model, run)) {
         )
         .map((group) => ({
           ...group,
+          // The group's area_to_ventilate, m² — one figure per group, stamped on
+          // each of its entries by pass 3.
+          vent: group.departments.map((d) => answered.get(d.id)?.vent).find(Number.isFinite),
           departments: group.departments
             .map((department) => ({
               ...department,

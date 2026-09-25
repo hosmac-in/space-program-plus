@@ -276,7 +276,7 @@ function SignedInApp({ session }) {
   const creatorPlotSqm =
     view === 'creator'
       ? (siteAreas(projects.find((p) => p.id === selectedProjectId)?.site_geojson)?.sqm ?? null)
-      : view === 'testrun'
+      : view === 'testrun' || view === 'trial'
         ? TEST_RUN_PLOT_ACRES * SQM_PER_ACRE
         : null
 
@@ -526,9 +526,9 @@ function SignedInApp({ session }) {
 
           {/* Side reports on main here too: the carousel asks, this shows what
               the answers have built. Nothing on that tab is saved. */}
-          {(view === 'testrun' || view === 'creator') && (
+          {(view === 'testrun' || view === 'trial' || view === 'creator') && (
             <div style={{ padding: 16, minWidth: 0 }}>
-              <TestRunTree buildingId={questionBuildingId} />
+              <TestRunTree buildingId={questionBuildingId} showVent={view === 'trial'} />
             </div>
           )}
         </div>
@@ -546,9 +546,9 @@ function SignedInApp({ session }) {
             screen. */}
         {/* The creator's plot is its project's site, handed to the run as
             plotAreaSqm (TestRunProvider above), so both views mount it alike. */}
-        {(view === 'testrun' || view === 'creator') && <TestRunHud buildingId={questionBuildingId} />}
+        {(view === 'testrun' || view === 'trial' || view === 'creator') && <TestRunHud buildingId={questionBuildingId} />}
 
-        {optionOpen && view !== 'testrun' && view !== 'creator' && (
+        {optionOpen && view !== 'testrun' && view !== 'trial' && view !== 'creator' && (
         <Hud
           projectName={projects.find((p) => p.id === selectedProjectId)?.name}
           siteGeojson={projects.find((p) => p.id === selectedProjectId)?.site_geojson}

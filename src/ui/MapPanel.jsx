@@ -161,6 +161,12 @@ export default function MapPanel({
             </div>
           )}
 
+          {view === 'trial' && (
+            <div style={{ position: 'absolute', inset: 0 }}>
+              <TestRun buildingId={questionBuildingId} trial isAdmin={isAdmin} />
+            </div>
+          )}
+
           {view === 'creator' && (
             <div style={{ position: 'absolute', inset: 0 }}>
               <TestRun buildingId={questionBuildingId} creator={creator} />

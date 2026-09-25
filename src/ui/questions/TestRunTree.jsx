@@ -22,6 +22,7 @@ import { bedTally, buildProgram, evaluateRun, grossedAreas, useTestRun } from '.
 import { useAreaUnit } from '../AreaUnitContext.jsx'
 import { formatArea, SQM_PER_SQFT } from '../map/area.js'
 import { coolingTons } from '../../data/units.js'
+import { VENT_VAR } from '../../data/questionnaire.js'
 import { optionSettingsOf } from './createOption.js'
 import { RULE } from '../layout.js'
 
@@ -376,7 +377,9 @@ function Collapse({ open, children }) {
   )
 }
 
-export default function TestRunTree({ buildingId }) {
+// `showVent`: TEMPORARY, the Trial program's — each group's area_to_ventilate,
+// in m², on the group's row.
+export default function TestRunTree({ buildingId, showVent = false }) {
   const { buildings, sections, groups, departments, rooms, objects, equipment, functions } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
@@ -496,7 +499,21 @@ export default function TestRunTree({ buildingId }) {
               <Presence flash items={section.groups} keyOf={(g) => g.id}>
               {(group) => (
                 <Branch endpoint="caret" expanded head={ROW / 2}>
-                  <Row label={group.name} weight={700} beside={areaOf(group.id)} />
+                  <Row
+                    label={group.name}
+                    weight={700}
+                    beside={areaOf(group.id)}
+                    right={
+                      showVent && Number.isFinite(group.vent) && (
+                        <span
+                          title={VENT_VAR}
+                          style={{ flexShrink: 0, fontSize: TREE_SMALL, color: '#1a73e8', fontVariantNumeric: 'tabular-nums' }}
+                        >
+                          vent {formatArea(group.vent)} m²
+                        </span>
+                      )
+                    }
+                  />
 
                   <Presence flash items={group.departments} keyOf={(d) => d.id}>
                   {(department) => (

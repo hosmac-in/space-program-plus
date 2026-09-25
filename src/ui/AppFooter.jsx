@@ -44,7 +44,13 @@ export default function AppFooter({ view, canEdit, builder, onViewChange }) {
       <div style={{ flex: 1 }} />
       {/* Left to right is furthest-back step first: Test run answers the
           questionnaire, Questions authors it, Tree holds the catalog both draw
-          from. */}
+          from. Trial program, a Test run that is recorded, is further back
+          still. */}
+      <TabButton
+        label="Trial program"
+        active={view === 'trial'}
+        onClick={() => onViewChange(view === 'trial' ? 'project' : 'trial')}
+      />
       <TabButton
         label="Test run"
         active={view === 'testrun'}
