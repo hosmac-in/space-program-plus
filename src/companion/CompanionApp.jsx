@@ -137,6 +137,7 @@ function SignedIn() {
                 departments={workspace.builderState.departments}
                 buildingFactors={workspace.builderState.buildingFactors}
                 phaseCount={workspace.builderState.phaseCount}
+                dmgIds={workspace.builderState.dmgIds}
               />
             </div>
           </div>

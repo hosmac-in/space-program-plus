@@ -44,6 +44,7 @@ import {
   setDepartmentTitle,
   setDepartmentVariables,
   setGate,
+  setSectionClinical,
   updateQuestion,
   writeQuestionnaire,
 } from '../../data/questionnaire.js'
@@ -121,6 +122,15 @@ export function useQuestionnaireEditor(buildingId) {
   const setRole = useCallback(
     serialise(async (sectionId, groupId, deptId, role) => {
       await apply(setDepartmentRole(currentDefinition(), sectionId, groupId, deptId, role))
+    }),
+    []
+  )
+
+  // --- A section marked clinical — see CLINICAL_VAR ---------------------------
+
+  const setClinical = useCallback(
+    serialise(async (sectionId, clinical) => {
+      await apply(setSectionClinical(currentDefinition(), sectionId, clinical))
     }),
     []
   )
@@ -223,6 +233,7 @@ export function useQuestionnaireEditor(buildingId) {
     ready: !!row,
     setGroupGate,
     setRole,
+    setClinical,
     setTitle,
     setVariables,
     setSupportingConnections,

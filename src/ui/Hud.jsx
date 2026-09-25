@@ -14,7 +14,7 @@
 // The type below is sized for the slot: shrinking the region without shrinking
 // the figures would just have hidden two of them behind a scrollbar.
 
-import { phaseRows, summarize } from '../data/optionData.js'
+import { bedCount, phaseRows, summarize } from '../data/optionData.js'
 import { useCatalog } from '../data/catalog.jsx'
 import { siteAreas, formatArea } from './map/area.js'
 import { useAreaUnit } from './AreaUnitContext.jsx'
@@ -53,13 +53,15 @@ export default function Hud({
   // no area figure is right without them. See data/factors.js.
   buildingFactors,
   phaseCount = 1,
+  // The DMGs the option targets; null is no filter — see data/dmg.js.
+  dmgIds = null,
 }) {
   // The in-memory departments, as summarize() requires — the wire format has no
   // areas in it (see data/optionData.js).
   // The catalog too, not just the option: a department's grossing factor may be
   // the one stated on its tree node rather than one set here, and a total that
   // skipped that would disagree with every panel — see data/factors.js.
-  const { sections, buildings } = useCatalog()
+  const { sections, buildings, objects, dmgs } = useCatalog()
   const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   const { areaSqft, roomCount, objectCount, perPhase } = summarize(departments ?? [], {
     sections,
@@ -74,6 +76,12 @@ export default function Hud({
   // area by phase earns its place when phasing exists and not before. A declared
   // phase with nothing in it still gets a row — a zero there is the point.
   const phases = phaseRows(perPhase, phaseCount)
+
+  // "General - 100 Beds". No DMG picked is the untagged groups alone, which is
+  // the general hospital; null (an option from before DMGs) filters nothing.
+  const picked = Array.isArray(dmgIds) ? dmgs.filter((d) => dmgIds.includes(d.id)).map((d) => d.name) : null
+  const dmgLabel = picked == null ? 'All DMGs' : picked.length ? picked.join(', ') : 'General'
+  const beds = bedCount(departments ?? [], objects)
 
   return (
     <div
@@ -90,6 +98,23 @@ export default function Hud({
         minWidth: 0,
       }}
     >
+      {/* Half a figure cell's height (10px label + 15px value, ~32px). */}
+      <div
+        style={{
+          height: 16,
+          lineHeight: '16px',
+          fontSize: 12,
+          fontWeight: 700,
+          color: '#222',
+          marginBottom: 2,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {dmgLabel} - {formatArea(beds, 0)} {beds === 1 ? 'Bed' : 'Beds'}
+      </div>
+
       <div
         style={{
           fontSize: 11,

@@ -556,6 +556,7 @@ function SignedInApp({ session }) {
           departments={builderState.departments}
           buildingFactors={builderState.buildingFactors}
           phaseCount={builderState.phaseCount}
+          dmgIds={builderState.dmgIds}
         />
         )}
         </div>

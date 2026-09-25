@@ -38,6 +38,8 @@ import {
   questionConnections,
   slugVariable,
   uniqueVariableName,
+  sectionClinical,
+  CLINICAL_VAR,
   GROUP_VAR,
   QUESTION_VAR,
   ROOM,
@@ -241,16 +243,23 @@ export function buildModel({ buildingId, definition, sections, groups, departmen
   // question is a name that compiles and reads as unresolved, not a syntax
   // error that zeroes the department around it.
   const reserved = generalVariableNames()
-  const clashes = questionVariableClashes({ buildingId, definition, sections, reserved })
+  const clashes = questionVariableClashes({ buildingId, definition, sections, reserved: [...reserved, CLINICAL_VAR] })
   // A QUESTION'S NAMED x IS IN SCOPE EVERYWHERE TOO, beside the general names —
   // except a clashing one, which is left out so a rule naming it reads as
   // unresolved rather than as whichever question came first.
   const named = [...clashes.names].filter((name) => !clashes.reasons.has(name))
-  const general = [...reserved, ...named]
+  // A CLINICAL SECTION SEES ONLY CLINICAL NAMES: no total_clinical_area, and no
+  // other section's x — see CLINICAL_VAR. Everything else sees all of it, and
+  // total_clinical_area only once some section is marked.
+  const anyClinical = sections.some((s) => s.building_id === buildingId && sectionClinical(definition, s.id))
+  const generalFor = (clinical) =>
+    clinical
+      ? [...reserved, ...named.filter((name) => clashes.clinical.has(name))]
+      : [...reserved, ...named, ...(anyClinical ? [CLINICAL_VAR] : [])]
   return [
     generalSection(definition),
     ...resolveVariables(
-      walk({ buildingId, definition, sections, groups, departments, rooms, objects, equipment, general, clashes })
+      walk({ buildingId, definition, sections, groups, departments, rooms, objects, equipment, generalFor, clashes })
     ),
   ]
 }
@@ -261,6 +270,8 @@ export function buildModel({ buildingId, definition, sections, groups, departmen
 // departments that are functioning count — a supporting one asks nothing.
 function questionVariableClashes({ buildingId, definition, sections, reserved }) {
   const times = new Map()
+  // The names asked in a clinical section — the only ones a clinical rule reads.
+  const clinical = new Set()
   sections
     .filter((s) => s.building_id === buildingId)
     .forEach((section) =>
@@ -271,6 +282,7 @@ function questionVariableClashes({ buildingId, definition, sections, reserved })
           departmentQuestions(...args).forEach((q) => {
             const name = questionVariable(q)
             if (name) times.set(name, (times.get(name) ?? 0) + 1)
+            if (name && sectionClinical(definition, section.id)) clinical.add(name)
           })
         })
       )
@@ -281,7 +293,7 @@ function questionVariableClashes({ buildingId, definition, sections, reserved })
     if (taken.has(name)) reasons.set(name, `“${name}” is reserved`)
     else if (n > 1) reasons.set(name, `“${name}” is used by ${n} questions`)
   })
-  return { names: new Set(times.keys()), reasons }
+  return { names: new Set(times.keys()), reasons, clinical }
 }
 
 // GENERAL IS A SECTION, AND THE FIRST ONE. It hangs off no catalog node — see
@@ -313,15 +325,20 @@ function generalSection(definition) {
   }
 }
 
-function walk({ buildingId, definition, sections, groups, departments, rooms, objects, equipment, general, clashes }) {
+function walk({ buildingId, definition, sections, groups, departments, rooms, objects, equipment, generalFor, clashes }) {
   return sections
     .filter((s) => s.building_id === buildingId)
     .sort(compareSections)
-    .map((section) => ({
+    .map((section) => {
+      const clinical = sectionClinical(definition, section.id)
+      const general = generalFor(clinical)
+      return {
       kind: 'section',
       id: section.id,
       sectionId: section.id,
       name: section.name || 'Untitled section',
+      // Evaluated before every other section — see CLINICAL_VAR.
+      clinical,
       // sp_section.is_core — the building's core, which the run hands the
       // floor-area factor's share to (grossedAreas in useTestRun.jsx).
       isCore: !!section.is_core,
@@ -583,7 +600,8 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
           }),
         }
       }),
-    }))
+      }
+    })
 }
 
 // THE MODEL AS ONE RUN ASKS IT: groups outside the DMGs answered are gone, and

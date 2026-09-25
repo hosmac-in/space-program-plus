@@ -25,6 +25,7 @@ import {
   isAhuRoom,
   PLOT_AREA_VAR,
   VENT_VAR,
+  CLINICAL_VAR,
 } from '../../data/questionnaire.js'
 
 // answers = {
@@ -142,6 +143,10 @@ export function useTestRun() {
 //      it names, in m², as pass 1 built it — so this pass needs all of pass 1.
 //   3  AHU ROOMS, re-read with `area_to_ventilate` — the whole group less its
 //      AHU Rooms — so this pass needs all of pass 2.
+//
+// Those three run over the CLINICAL sections first; `total_clinical_area` is
+// summed from what they built (4); then the same three run over every other
+// section with it in scope (5–7). See CLINICAL_VAR in data/questionnaire.js.
 //
 // >>> PASS 1 IS WHOLE-MODEL, NEVER PER CARD. Variables name departments anywhere
 // >>> in the building and the deck is one card per SECTION, so computing lazily
@@ -367,6 +372,8 @@ export function evaluateRun(model, run) {
   // >>> out of scope, and a rule naming it came out unresolved and built
   // >>> nothing. A question nobody answered is "none of them" to every rule that
   // >>> counts off it. A clashing name was never compiled in — see buildModel.
+  // A clinical section's scope holds only the clinical ones — see CLINICAL_VAR.
+  const clinicalGeneral = { ...general }
   model.forEach((section) =>
     section.groups.forEach((group) => {
       const open = run.gateYes(group.id)
@@ -376,15 +383,64 @@ export function evaluateRun(model, run) {
           if (!node.variable || node.variableClash) return
           const x = open ? run.xOf(node.id) : undefined
           general[node.variable] = Number.isFinite(x) ? x : 0
+          if (section.clinical) clinicalGeneral[node.variable] = general[node.variable]
         })
       })
     })
   )
 
-  // --- Pass 1 ---------------------------------------------------------------
   const answered = new Map()
+  const clinical = model.filter((section) => section.clinical)
 
-  model.forEach((section) =>
+  // --- Passes 1–3, CLINICAL sections ----------------------------------------
+  evaluateSections(model, clinical, run, clinicalGeneral, answered)
+
+  // --- Pass 4: TOTAL CLINICAL AREA -------------------------------------------
+  //
+  // Everything the clinical sections built — supporting and AHU Rooms included —
+  // counted as buildProgram and bedTally count it. Absent when no section is
+  // marked, so a rule naming it reads as unresolved rather than as 0.
+  if (clinical.length > 0) {
+    general[CLINICAL_VAR] = sqftToSqm(
+      clinical.reduce(
+        (sum, section) =>
+          sum +
+          section.groups.reduce(
+            (s, group) =>
+              s +
+              group.departments.reduce(
+                (n, d) =>
+                  n +
+                  (answered.get(d.id)?.results ?? [])
+                    .filter((r) => r.state === 'ok' || r.state === 'unauthored')
+                    .reduce((m, r) => m + netAreaOf(r.rooms), 0),
+                0
+              ),
+            0
+          ),
+        0
+      )
+    )
+  }
+
+  // --- Passes 5–7, every OTHER section, with total_clinical_area in scope -----
+  evaluateSections(
+    model,
+    model.filter((section) => !section.clinical),
+    run,
+    general,
+    answered
+  )
+
+  return answered
+}
+
+// PASSES 1–3 over `sections`, into `answered`. Run once for the clinical
+// sections and once for the rest — see CLINICAL_VAR. `model` is the whole
+// building, read only for whether anything anywhere has been answered.
+function evaluateSections(model, sections, run, general, answered) {
+  // --- Pass 1 ---------------------------------------------------------------
+  sections.forEach((section) =>
     section.groups.forEach((group) => {
       const open = run.gateYes(group.id)
       group.departments.forEach((department) => {
@@ -448,7 +504,7 @@ export function evaluateRun(model, run) {
   // >>> second is unresolved. It is the same line `a` and a department's own name
   // >>> already draw.
   const memberCounts = new Map()
-  model.forEach((section) =>
+  sections.forEach((section) =>
     section.groups.forEach((group) =>
       group.departments.forEach((department) => {
         const entry = answered.get(department.id)
@@ -497,7 +553,7 @@ export function evaluateRun(model, run) {
           )
       )
   )
-  model.forEach((section) =>
+  sections.forEach((section) =>
     section.groups.forEach((group) => {
       const supportOnly =
         section.kind !== 'general' &&
@@ -559,7 +615,7 @@ export function evaluateRun(model, run) {
   //
   // >>> Pass 2's counts of an AHU Room (a rule naming `…ahu_room`) are read
   // >>> before this pass and so see none — do not write a rule that needs one.
-  model.forEach((section) =>
+  sections.forEach((section) =>
     section.groups.forEach((group) => {
       const entries = group.departments.map((d) => answered.get(d.id)).filter(Boolean)
       const vent = sqftToSqm(netAreaOf(entries.flatMap((entry) => ventilatedRows(entry.results))))
@@ -572,8 +628,6 @@ export function evaluateRun(model, run) {
       })
     })
   )
-
-  return answered
 }
 
 // Every built room row that is NOT an AHU Room — what `area_to_ventilate` sums.

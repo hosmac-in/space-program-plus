@@ -140,7 +140,7 @@ function sized(room) {
 // site's area in the creator, an ASSUMED 3 acres on the Test run tab. Footprint
 // and achieved FSI are both read off it.
 export function TestRunHud({ buildingId }) {
-  const { buildings, sections, groups, departments, rooms, objects, equipment } = useCatalog()
+  const { buildings, sections, groups, departments, rooms, objects, equipment, dmgs } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
   const { label: AREA_UNIT, toDisplay } = useAreaUnit()
@@ -176,6 +176,10 @@ export function TestRunHud({ buildingId }) {
   // BUA AND FOOTPRINT READ TO THE NEAREST 50, in the reader's unit — a brief
   // figure, not a measurement, so no decimal. Display only; nothing reads it.
   const toFifty = (sqft) => formatArea(Math.round(toDisplay(sqft) / 50) * 50, 0)
+  // "General - 100 Beds": the DMGs answered (none is the untagged groups alone,
+  // the general hospital) and the bed count stated — what was placed until then.
+  const dmgNames = dmgs.filter((d) => run.dmgIds.includes(d.id)).map((d) => d.name)
+  const headingBeds = target ?? placed
 
   return (
     <div
@@ -201,9 +205,27 @@ export function TestRunHud({ buildingId }) {
           minHeight: 0,
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
-          gridTemplateRows: 'repeat(3, 1fr)',
+          // The heading row is half a cell.
+          gridTemplateRows: '0.5fr repeat(3, 1fr)',
         }}
       >
+        <div
+          style={{
+            gridColumn: '1 / -1',
+            minHeight: 0,
+            display: 'flex',
+            alignItems: 'center',
+            padding: '0 10px',
+            fontSize: TITLE_SIZE + 2,
+            fontWeight: 700,
+            color: '#000',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {dmgNames.length ? dmgNames.join(', ') : 'General'} - {headingBeds} {headingBeds === 1 ? 'Bed' : 'Beds'}
+        </div>
         {/* A TITLE IS ITS LINES, one per entry; `unit` is its last line. */}
         <Figure cell={0} label={['Built-up', 'area']} unit={AREA_UNIT} value={toFifty(areaSqft)} muted={areaSqft === 0} />
         <Figure
@@ -255,7 +277,7 @@ function Figure({ cell, label, unit, value, muted = false, tone = null }) {
         alignItems: 'stretch',
         gap: 8,
         borderLeft: cell % 2 === 1 ? RULE : undefined,
-        borderTop: cell >= 2 ? RULE : undefined,
+        borderTop: RULE,
       }}
     >
       <div

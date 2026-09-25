@@ -268,6 +268,17 @@ export const GROUP_VAR = 'a'
 // evaluated in a THIRD pass after the whole group is built (evaluateRun). An AHU
 // Room is matched by its NAME for now; a flag on sp_room would survive a rename.
 export const VENT_VAR = 'area_to_ventilate'
+
+// EVERYTHING THE CLINICAL SECTIONS BUILT, in m² net — functioning, supporting
+// and their AHU Rooms. A section is clinical when `sections{<id>}.clinical` is
+// true, absent meaning not. The clinical sections are evaluated FIRST (passes
+// 1–3), this is summed from them, then every other section runs with it in
+// scope. So a clinical rule may name neither this nor any other section's
+// question x: either would be a cycle, or one the day somebody writes it.
+// No section marked clinical leaves it out of scope entirely — unresolved,
+// never a quiet 0. See evaluateRun in useTestRun.jsx.
+export const CLINICAL_VAR = 'total_clinical_area'
+
 export const AHU_ROOM_NAME = 'ahu room'
 export function isAhuRoom(label) {
   return (label ?? '').trim().toLowerCase() === AHU_ROOM_NAME
@@ -358,6 +369,11 @@ export function sectionEntry(definition, sectionId) {
   return definition?.sections?.[sectionId] ?? null
 }
 
+// Strictly true — see CLINICAL_VAR.
+export function sectionClinical(definition, sectionId) {
+  return sectionEntry(definition, sectionId)?.clinical === true
+}
+
 export function groupEntry(definition, sectionId, groupId) {
   return sectionEntry(definition, sectionId)?.groups?.[groupId] ?? null
 }
@@ -439,6 +455,13 @@ export function updateDeptEntry(definition, sectionId, groupId, deptId, updater)
     const current = group.departments?.[deptId] ?? { questions: [] }
     return { ...group, departments: { ...(group.departments ?? {}), [deptId]: updater(current) } }
   })
+}
+
+// Off deletes the key, so an unmarked section stores what it always did.
+export function setSectionClinical(definition, sectionId, clinical) {
+  return updateSectionEntry(definition, sectionId, ({ clinical: _old, ...section }) =>
+    clinical ? { ...section, clinical: true } : section
+  )
 }
 
 // --- The gate ---------------------------------------------------------------

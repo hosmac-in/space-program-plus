@@ -876,6 +876,24 @@ export function summarize(departments = [], { sections, buildings, buildingFacto
   return { departmentCount: departments.length, roomCount, objectCount, areaSqft, perDepartment, perPhase }
 }
 
+// The beds an option places: every object whose sp_object row is `is_bed`, its
+// per-room count times how many of that room (group sets included). In-memory
+// departments, as summarize() takes. An option stores no bed target of its own.
+export function bedCount(departments = [], objectDefs = []) {
+  const beds = new Set(objectDefs.filter((o) => o.is_bed === true).map((o) => o.id))
+  if (beds.size === 0) return 0
+  return departments.reduce(
+    (sum, d) =>
+      sum +
+      (d.rooms ?? []).reduce(
+        (s, r) =>
+          s + roomCountIn(d, r) * (r.objects ?? []).reduce((n, o) => n + (beds.has(o.defId) ? o.count : 0), 0),
+        0
+      ),
+    0
+  )
+}
+
 // One row per phase the option DECLARES, 1..N — including the ones nothing is
 // in yet, which read as zero: a declared empty phase is the one you have not
 // staged. Empty for a one-phase option, so those read as they did before phases

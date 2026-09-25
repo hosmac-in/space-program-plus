@@ -38,6 +38,7 @@ import {
   DERIVED_GENERAL,
   PLOT_AREA_VAR,
   VENT_VAR,
+  CLINICAL_VAR,
 } from '../../data/questionnaire.js'
 import { compileFormula, FORMULA_FUNCTIONS } from '../../data/formula.js'
 import { SearchAddPicker } from '../primitives/SearchAddPicker.jsx'
@@ -1931,16 +1932,21 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
   DERIVED_GENERAL.forEach((d) => general.push({ name: d.variable, numeric: true }))
   // Every question's named x rides along with them, previewing at 1 the same
   // way. A clashing one is left out, exactly as the model left it out of compile.
+  // A CLINICAL section sees only clinical names; every other section sees them
+  // all plus total_clinical_area — see CLINICAL_VAR.
+  const clinicalScope = section?.clinical === true
   model.forEach((s) =>
     s.groups.forEach((g) =>
       g.departments.forEach((d) => {
         if (d.role === SUPPORTING) return
+        if (clinicalScope && !s.clinical) return
         d.questions.forEach((q) => {
           if (q.variable && !q.variableClash) general.push({ name: q.variable, numeric: true })
         })
       })
     )
   )
+  if (!clinicalScope && model.some((s) => s.clinical)) general.push({ name: CLINICAL_VAR, numeric: true })
 
   if (node.kind === 'general') return <GeneralFace section={section} />
 
@@ -1957,6 +1963,13 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
           A divider, straight from the catalog. Nothing is asked about a section — the questions hang off the groups
           under it.
         </PanelNote>
+        <SwitchRow
+          label="Clinical"
+          detail={`Built first; its area is ${CLINICAL_VAR} to every other section, and its rules read no other section's names`}
+          checked={section.clinical === true}
+          disabled={!canEdit}
+          onChange={(on) => editor.setClinical(section.sectionId, on)}
+        />
       </div>
     )
   }
