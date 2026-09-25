@@ -25,7 +25,14 @@ import { coolingTons } from '../../data/units.js'
 import { optionSettingsOf } from './createOption.js'
 import { RULE } from '../layout.js'
 
-const ROW = 24
+// THE TREE'S TEXT SIZE, in px — the one number to change. Every row's type is
+// stepped down from it (group/department, then room, then object), and the row
+// height scales with it so the branch lines still meet each row's middle.
+const TREE_TEXT = 13
+const ROW = Math.round(TREE_TEXT * (24 / 13))
+const ROOM_TEXT = TREE_TEXT - 1
+const OBJECT_TEXT = TREE_TEXT - 2
+const TREE_SMALL = TREE_TEXT - 3
 
 // A COUNT THAT MOVED FLASHES ITS WHOLE ROW — name and figure together — green
 // up, red down, then fades. Only a change flashes: a row arriving is Presence's
@@ -59,7 +66,7 @@ export const COUNT_FLASH_STYLE = `
 
 // `beside` sits right after the name rather than on the panel's right edge —
 // the group and department areas, read with the name they belong to.
-function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', right, beside, track }) {
+function Row({ label, size = TREE_TEXT, weight = 400, caps = false, colour = '#222', right, beside, track }) {
   const flash = useChangeFlash(track)
   return (
     <div
@@ -99,13 +106,13 @@ function Row({ label, size = 13, weight = 400, caps = false, colour = '#222', ri
 function Count({ n }) {
   if (n === null || n === undefined) {
     return (
-      <span title="No rule on the room — only what stands in it is counted" style={{ flexShrink: 0, fontSize: 12, color: '#ccc' }}>
+      <span title="No rule on the room — only what stands in it is counted" style={{ flexShrink: 0, fontSize: ROOM_TEXT, color: '#ccc' }}>
         —
       </span>
     )
   }
   return (
-    <span style={{ flexShrink: 0, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: '#555' }}>×{n}</span>
+    <span style={{ flexShrink: 0, fontSize: ROOM_TEXT, fontVariantNumeric: 'tabular-nums', color: '#555' }}>×{n}</span>
   )
 }
 
@@ -130,18 +137,16 @@ function sized(room) {
 //
 // THE PLOT AND WHAT FSI ALLOWS ON IT. Plot is `run.plotAreaSqm` — the very figure
 // the rules read as plot_area, so the HUD and a rule cannot disagree: the project
-// site's area in the creator, an ASSUMED 3 acres on the Test run tab (labelled
-// so, since it measures nothing). FSI area is plot × the FSI answered on the General card, and the
-// run's area is tallied against it the way beds are against theirs: "a / b",
-// red when over.
-export function TestRunHud({ buildingId, projectName = null, siteGeojson = null }) {
-  const { buildings, sections, groups, departments, rooms, objects } = useCatalog()
+// site's area in the creator, an ASSUMED 3 acres on the Test run tab. Footprint
+// and achieved FSI are both read off it.
+export function TestRunHud({ buildingId }) {
+  const { buildings, sections, groups, departments, rooms, objects, equipment } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
   const { label: AREA_UNIT, toDisplay } = useAreaUnit()
 
   const model = scopeToDmgs(
-    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects }),
+    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects, equipment }),
     run.dmgIds
   )
   const answered = evaluateRun(model, run)
@@ -158,31 +163,61 @@ export function TestRunHud({ buildingId, projectName = null, siteGeojson = null 
   const plot = Number.isFinite(run.plotAreaSqm)
     ? { sqm: run.plotAreaSqm, sqft: run.plotAreaSqm / SQM_PER_SQFT }
     : null
-  // No site to measure means the figure is App's stand-in, not a measurement.
-  const assumed = plot && !siteGeojson
-  const fsi = optionSettingsOf(run).fsi
-  const fsiSqft = plot && fsi > 0 ? plot.sqft * fsi : null
-  const overFsi = fsiSqft !== null && areaSqft > fsiSqft
+  const { fsi, groundCover } = optionSettingsOf(run)
+  // FOOTPRINT is the floorplate the General card shows: ground cover is a
+  // PERCENTAGE of the plot (40, not 0.4). Floors are the built-up area over it,
+  // to one decimal — the same arithmetic, so the card and the HUD agree.
+  const footprintSqft = plot && groundCover > 0 ? (plot.sqft * groundCover) / 100 : null
+  const floors = footprintSqft && areaSqft > 0 ? areaSqft / footprintSqft : null
+  // FSI DESIGNED is the answer; ACHIEVED is what the run built on the plot.
+  const achievedFsi = plot && plot.sqft > 0 ? areaSqft / plot.sqft : null
+  const overFsi = achievedFsi !== null && fsi > 0 && achievedFsi > fsi
+  const dash = '—'
+  // BUA AND FOOTPRINT READ TO THE NEAREST 50, in the reader's unit — a brief
+  // figure, not a measurement, so no decimal. Display only; nothing reads it.
+  const toFifty = (sqft) => formatArea(Math.round(toDisplay(sqft) / 50) * 50, 0)
 
   return (
     <div
       style={{
-        flex: 1,
+        // TWICE THE OPTION HUD'S HEIGHT. Side is split 7:1 (App.jsx); 7:7/3
+        // makes this a quarter of the column where the option's is an eighth.
+        flex: 7 / 3,
         minHeight: 0,
         borderTop: RULE,
         background: '#fff',
-        padding: '8px 16px',
         overflowY: 'auto',
         minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
-      <div style={{ fontSize: 11, color: '#8a8a8a', marginBottom: 6 }}>
-        {projectName ?? 'Nothing on this tab is saved'}
-      </div>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', minWidth: 0 }}>
+      {/* THREE ROWS, TWO COLUMNS, filling the slot edge to edge: area left, the
+          building's shape right, read across in pairs. No border of its own —
+          the slot's rule above is its top edge. */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gridTemplateRows: 'repeat(3, 1fr)',
+        }}
+      >
+        {/* A TITLE IS ITS LINES, one per entry; `unit` is its last line. */}
+        <Figure cell={0} label={['Built-up', 'area']} unit={AREA_UNIT} value={toFifty(areaSqft)} muted={areaSqft === 0} />
         <Figure
-          label="Beds"
+          cell={1}
+          label={['Footprint', 'area']}
+          unit={AREA_UNIT}
+          value={footprintSqft === null ? dash : toFifty(footprintSqft)}
+          muted={footprintSqft === null}
+        />
+        <Figure cell={2} label={['Cooling', 'load']} unit="TR" value={formatArea(coolingTons(areaSqft), 0)} muted={areaSqft === 0} />
+        <Figure cell={3} label={['Number of', 'floors']} value={floors === null ? dash : floors.toFixed(1)} muted={floors === null} />
+        <Figure
+          cell={4}
+          label={['Total','Beds']}
           // Against the target when there is one: the figure alone answers half
           // the question, and the half it leaves out is the one that was asked.
           value={target === null ? placed : `${placed} / ${target}`}
@@ -190,22 +225,12 @@ export function TestRunHud({ buildingId, projectName = null, siteGeojson = null 
           tone={over ? '#b3261e' : null}
         />
         <Figure
-          label={fsiSqft === null ? 'Area' : 'Area / FSI area'}
-          value={
-            fsiSqft === null
-              ? formatArea(toDisplay(areaSqft))
-              : `${formatArea(toDisplay(areaSqft))} / ${formatArea(toDisplay(fsiSqft))}`
-          }
-          unit={AREA_UNIT}
-          muted={areaSqft === 0}
+          cell={5}
+          // Achieved OUT OF designed, the way beds read: what was built / the brief.
+          label={['FSI', 'designed/', 'maximum']}
+          value={`${achievedFsi === null ? dash : achievedFsi.toFixed(1)} / ${fsi > 0 ? fsi.toFixed(1) : dash}`}
+          muted={achievedFsi === null || areaSqft === 0}
           tone={overFsi ? '#b3261e' : null}
-        />
-        <Figure label="Cooling" value={formatArea(coolingTons(areaSqft))} unit="TR" muted={areaSqft === 0} />
-        <Figure
-          label={assumed ? 'Plot (assumed)' : 'Plot'}
-          value={plot ? formatArea(toDisplay(plot.sqft)) : '—'}
-          unit={plot ? AREA_UNIT : undefined}
-          muted={!plot}
         />
       </div>
     </div>
@@ -214,27 +239,76 @@ export function TestRunHud({ buildingId, projectName = null, siteGeojson = null 
 
 // The HUD's own figure. Not Hud.jsx's: that one is bound to an option's totals
 // and this tab has no option, and two components sharing a slot is not the same
-// thing as sharing a definition.
-function Figure({ label, value, unit, muted = false, tone = null }) {
+// thing as sharing a definition. `cell` is its index in the 2×3 table, which
+// decides which inner rules it draws.
+//
+// NAME LEFT AND TOP, FIGURE RIGHT. The name WRAPS in a fixed share of the cell;
+// the figure takes the rest, at FIGURE_SIZE.
+function Figure({ cell, label, unit, value, muted = false, tone = null }) {
   return (
-    <div style={{ minWidth: 0 }}>
+    <div
+      style={{
+        minWidth: 0,
+        minHeight: 0,
+        padding: '6px 10px',
+        display: 'flex',
+        alignItems: 'stretch',
+        gap: 8,
+        borderLeft: cell % 2 === 1 ? RULE : undefined,
+        borderTop: cell >= 2 ? RULE : undefined,
+      }}
+    >
       <div
         style={{
-          fontSize: 10,
-          textTransform: 'uppercase',
+          flex: '0 0 38%',
+          minWidth: 0,
+          alignSelf: 'flex-start',
           letterSpacing: '0.04em',
-          color: '#8a8a8a',
-          whiteSpace: 'nowrap',
+          color: '#000',
+          overflowWrap: 'break-word',
         }}
       >
-        {label}
+        {/* The unit in caps too, like the rest of the title: M², FT², TR. */}
+        {[...label, ...(unit ? [unit] : [])].map((line) => (
+          <div key={line} style={{ ...TITLE_LINE, textTransform: 'uppercase' }}>
+            {line}
+          </div>
+        ))}
       </div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: tone ?? (muted ? '#bbb' : '#222'), whiteSpace: 'nowrap' }}>
-        {value}
-        {unit && <span style={{ fontSize: 10, fontWeight: 400, color: '#8a8a8a', marginLeft: 3 }}>{unit}</span>}
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          fontSize: FIGURE_SIZE,
+          fontWeight: 700,
+          lineHeight: 1.1,
+          whiteSpace: 'nowrap',
+          color: tone ?? (muted ? '#bbb' : '#222'),
+        }}
+      >
+        {/* No unit beside the figure — each cell's title carries its own. */}
+        <span>{value}</span>
       </div>
     </div>
   )
+}
+
+// ONE SIZE FOR EVERY FIGURE IN THE HUD, set by hand. Too large and the widest
+// ("3.00 / 0.03") spills past the cell's right edge.
+const FIGURE_SIZE = 32
+// The cell's title — "BUILT UP AREA" — in px.
+const TITLE_SIZE = 12
+// EVERY TITLE LINE ONE SIZE AND ONE PITCH, the unit's included. A px height
+// rather than a ratio, so a glyph from a fallback font ("²") cannot make its
+// line taller than the others.
+const TITLE_LINE = {
+  fontSize: TITLE_SIZE,
+  lineHeight: `${Math.round(TITLE_SIZE * 1.3)}px`,
+  height: Math.round(TITLE_SIZE * 1.3),
+  whiteSpace: 'nowrap',
 }
 
 // A SECTION OPENS AND SHUTS AS ONE BLOCK. Sliding each group on its own timer
@@ -281,12 +355,12 @@ function Collapse({ open, children }) {
 }
 
 export default function TestRunTree({ buildingId }) {
-  const { buildings, sections, groups, departments, rooms, objects, functions } = useCatalog()
+  const { buildings, sections, groups, departments, rooms, objects, equipment, functions } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
 
   const model = scopeToDmgs(
-    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects }),
+    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects, equipment }),
     run.dmgIds
   )
   const whole = buildProgram(model, run)
@@ -294,23 +368,11 @@ export default function TestRunTree({ buildingId }) {
   const { byId: areas } = grossedAreas(whole, buildings.find((b) => b.id === buildingId), model)
   const { label: AREA_UNIT, toDisplay } = useAreaUnit()
   const areaOf = (id) => (
-    <span style={{ flexShrink: 0, fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#555' }}>
+    <span style={{ flexShrink: 0, fontSize: ROOM_TEXT, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#555' }}>
       – {formatArea(toDisplay(areas.get(id) ?? 0))}
-      <span style={{ fontSize: 10, color: '#8a8a8a', marginLeft: 3 }}>{AREA_UNIT}</span>
+      <span style={{ fontSize: TREE_SMALL, color: '#8a8a8a', marginLeft: 3 }}>{AREA_UNIT}</span>
     </span>
   )
-
-  // ONLY THE SECTION THE CARD IS ON. The tree beside the carousel reports on
-  // what is being asked, and the whole building's worth of it pushed the section
-  // you were answering off the bottom of the column exactly when it started
-  // filling up. The HUD above keeps the whole-building totals, which is where a
-  // figure that spans sections belongs.
-  //
-  // It falls back to the WHOLE program while no card is reported — the frame
-  // before the carousel has said, and the Companion-less case where nothing
-  // sets it — rather than drawing nothing, which would read as "you have built
-  // nothing" instead of "nobody has said which section".
-  const program = run.sectionId ? whole.filter((s) => s.id === run.sectionId) : whole
 
   // EVERY SECTION IS LISTED, and only the one the card is on is open — so the
   // building's shape stays on screen while you answer one part of it. On the
@@ -332,27 +394,10 @@ export default function TestRunTree({ buildingId }) {
   // say which section is empty.
   const shownSection = run.sectionId ? model.find((s) => s.id === run.sectionId) : null
 
-  const buildingName = buildings.find((b) => b.id === buildingId)?.name ?? 'This building'
-  const totalRooms = program
-    .flatMap((s) => s.groups)
-    .flatMap((g) => g.departments)
-    .flatMap((d) => d.rooms)
-    .reduce((sum, r) => sum + (r.count ?? 0), 0)
 
   return (
     <div style={{ minWidth: 0 }}>
       <style>{COUNT_FLASH_STYLE}</style>
-      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#888' }}>
-        What this builds
-      </div>
-      <div style={{ fontSize: 22, marginTop: 2 }}>{buildingName}</div>
-      {/* The count is one SECTION's now. The section is not named here: its own
-          row is the first thing in the tree below, and naming it twice two lines
-          apart is what the department heading already refuses to do. When there
-          is no tree to name it, the note below says which card you are on. */}
-      <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
-        {totalRooms === 0 ? 'Nothing yet' : `${totalRooms} room${totalRooms === 1 ? '' : 's'} so far`}
-      </div>
 
       {allSections.length === 0 && (
         <PanelNote>
@@ -409,7 +454,16 @@ export default function TestRunTree({ buildingId }) {
                 transition: `background-color ${PRESENCE_MS}ms ease-in-out, border-color ${PRESENCE_MS}ms ease-in-out`,
               }}
             />
-            <Branch endpoint="caret" expanded={section.open} head={HEAD_PAD + ROW / 2} padTop={HEAD_PAD}>
+            <Branch
+              endpoint="caret"
+              expanded={section.open}
+              // THE CARET MOVES THE CAROUSEL to this section's card; the tree
+              // then opens it, since the tree always opens the card you are on.
+              onToggle={() => run.requestSection(section.id)}
+              title={`Go to ${section.name}`}
+              head={HEAD_PAD + ROW / 2}
+              padTop={HEAD_PAD}
+            >
               <div style={{ paddingBottom: HEAD_PAD }}>
                 <Row label={section.name} weight={700} caps
                   colour={section.colours.inverted.color}
@@ -438,7 +492,7 @@ export default function TestRunTree({ buildingId }) {
                         >
                           <Row
                             label={roomLabel(room, department)}
-                            size={12}
+                            size={ROOM_TEXT}
                             colour="#444"
                             beside={<Count n={room.count} />}
                             track={room.count}
@@ -450,7 +504,7 @@ export default function TestRunTree({ buildingId }) {
                           <Presence flash items={sized(room)} keyOf={(o) => o.instance_id}>
                           {(object) => (
                             <Branch endpoint="dot" head={ROW / 2}>
-                              <Row label={object.name} size={11} colour="#777" beside={<Count n={object.count} />} track={object.count} />
+                              <Row label={object.name} size={OBJECT_TEXT} colour="#777" beside={<Count n={object.count} />} track={object.count} />
                             </Branch>
                           )}
                           </Presence>

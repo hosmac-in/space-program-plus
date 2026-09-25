@@ -544,16 +544,9 @@ function SignedInApp({ session }) {
             and nothing of it is saved. Same slot, because it answers the same
             question — how big is this — in the one place that is always on
             screen. */}
-        {view === 'testrun' && <TestRunHud buildingId={questionBuildingId} />}
-        {/* The creator belongs to a project, so its HUD has a plot to measure
-            FSI against. */}
-        {view === 'creator' && (
-          <TestRunHud
-            buildingId={questionBuildingId}
-            projectName={projects.find((p) => p.id === selectedProjectId)?.name}
-            siteGeojson={projects.find((p) => p.id === selectedProjectId)?.site_geojson}
-          />
-        )}
+        {/* The creator's plot is its project's site, handed to the run as
+            plotAreaSqm (TestRunProvider above), so both views mount it alike. */}
+        {(view === 'testrun' || view === 'creator') && <TestRunHud buildingId={questionBuildingId} />}
 
         {optionOpen && view !== 'testrun' && view !== 'creator' && (
         <Hud

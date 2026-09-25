@@ -652,10 +652,21 @@ export function normaliseRoomOrder(rooms) {
 //   >>> placement follows; the two somebody named deliberately do not, which is
 //   >>> the whole point of having named them.
 
+// ROOM NAMES ARE DRAWN IN TITLE CASE, stored as typed — sp_room names on read
+// (catalog.jsx) and labels here. First letter of every word up, nothing else
+// touched: "MRI room" → "MRI Room". A word starts after a space, hyphen, slash
+// or bracket, never an apostrophe ("Patient'S"). Safe because every match on a
+// room name (AHU, circulation, slugs) is case-insensitive. Null passes through.
+export function capitaliseName(name) {
+  if (typeof name !== 'string') return name
+  return name.replace(/(^|[\s\-/(])(\p{Ll})/gu, (_, before, first) => before + first.toUpperCase())
+}
+
 // The catalog's label for this placement, or '' — never null, so a field bound
-// to it is always controlled. Same shape as catalogRoomNotes.
+// to it is always controlled. Same shape as catalogRoomNotes. Capitalised, so
+// the Tree tab's "unchanged?" test compares against what the field showed.
 export function catalogRoomLabel(roomNode) {
-  return typeof roomNode?.label === 'string' ? roomNode.label : ''
+  return typeof roomNode?.label === 'string' ? capitaliseName(roomNode.label) : ''
 }
 
 // Set or clear it. Blank and whitespace-only both DELETE the key, so a room
@@ -680,7 +691,7 @@ export function roomWithLabel(room, label) {
 // `treeRoomNode` may be null: an option room whose placement has left the
 // catalog inherits nothing, which is not an error.
 export function resolveRoomLabel(treeRoomNode, optionRoom, defName) {
-  const own = typeof optionRoom?.label === 'string' ? optionRoom.label.trim() : ''
+  const own = typeof optionRoom?.label === 'string' ? capitaliseName(optionRoom.label.trim()) : ''
   const inherited = catalogRoomLabel(treeRoomNode).trim() || null
 
   if (own) return { name: own, source: 'option', inherited }

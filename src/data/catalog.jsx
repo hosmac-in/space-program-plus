@@ -40,6 +40,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { supabase } from './supabase.js'
 import { PLACEHOLDER_SCHEDULES } from './schedules.js'
 import { foldDefaultDmg } from './dmg.js'
+import { capitaliseName } from './tree.js'
 
 // Column lists are always explicit. A shared default was how `type` ended up
 // being requested from sp_group, which has no such column.
@@ -49,7 +50,13 @@ const TABLES = {
   // see data/dmg.js.
   groups: { table: 'sp_group', columns: 'id, name, is_duplicable, function_id, dmg_id', order: 'name' },
   dmgs: { table: 'sp_dmg', columns: 'id, name', order: 'name' },
-  rooms: { table: 'sp_room', columns: 'id, name, type, function_id, area_sqm', order: 'name' },
+  // Names are capitalised on read, display only — see capitaliseName.
+  rooms: {
+    table: 'sp_room',
+    columns: 'id, name, type, function_id, area_sqm',
+    order: 'name',
+    map: (row) => ({ ...row, name: capitaliseName(row.name) }),
+  },
   // `is_bed` is what makes a bed a bed. The questionnaire's General section asks
   // how many the facility has, and the run adds up the beds its own answers
   // placed — see BEDS in data/questionnaire.js. Nothing else reads it.
@@ -83,10 +90,10 @@ const TABLES = {
 }
 
 async function fetchTable(key) {
-  const { table, columns, order } = TABLES[key]
+  const { table, columns, order, map } = TABLES[key]
   const { data, error } = await supabase.from(table).select(columns).order(order, { ascending: true })
   if (error) throw new Error(`${table}: ${error.message}`)
-  return data ?? []
+  return map ? (data ?? []).map(map) : (data ?? [])
 }
 
 const EMPTY = {

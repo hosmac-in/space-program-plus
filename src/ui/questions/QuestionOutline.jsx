@@ -386,13 +386,13 @@ function SectionCard({ section, colours, selected, onSelect, mark = null, childr
 }
 
 export default function QuestionOutline({ buildingId, onSelectBuilding, selectedId, onSelect, canEdit, onLeave }) {
-  const { buildings, sections, groups, departments, rooms, objects, functions } = useCatalog()
+  const { buildings, sections, groups, departments, rooms, objects, equipment, functions } = useCatalog()
   const editor = useQuestionnaireEditorContext()
   // What a right-click on a question's branch is asking to remove. The caller
   // ALWAYS prompts — see Branch's onRemove.
   const [pendingRemove, setPendingRemove] = useState(null)
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
+  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects, equipment })
 
   // The new question is selected as soon as it exists, so authoring is
   // add-then-fill rather than add-then-hunt-for-it.

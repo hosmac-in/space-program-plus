@@ -56,6 +56,12 @@ export function TestRunProvider({ children, plotAreaSqm = null }) {
   // evaluated; it is here because this is already the one thing both columns
   // share.
   const [sectionId, setSectionId] = useState(null)
+  // SIDE ASKING TO GO TO A SECTION — a click on a section's caret in the tree.
+  // A REQUEST, not a setter: the carousel owns the deck and its gates (no DMG,
+  // no further), so it decides whether to honour it. `k` makes a repeat of the
+  // same id a new request.
+  const [sectionRequest, setSectionRequest] = useState(null)
+  const requestSection = useCallback((id) => setSectionRequest((r) => ({ id, k: (r?.k ?? 0) + 1 })), [])
 
   const setGate = useCallback((groupId, patch) => {
     setAnswers((a) => ({ ...a, gates: { ...a.gates, [groupId]: { ...a.gates[groupId], ...patch } } }))
@@ -91,6 +97,8 @@ export function TestRunProvider({ children, plotAreaSqm = null }) {
       reset,
       sectionId,
       setSectionId,
+      sectionRequest,
+      requestSection,
       // A gate unanswered reads as NO. There is no third state: the form is
       // yes/no and an untouched switch is off, which is what the person
       // answering sees.
@@ -109,7 +117,7 @@ export function TestRunProvider({ children, plotAreaSqm = null }) {
       dmgIds: Array.isArray(answers.general?.[DMG_ANSWER]) ? answers.general[DMG_ANSWER] : [],
       plotAreaSqm,
     }),
-    [answers, setGate, setQuestion, setGeneral, reset, sectionId, plotAreaSqm]
+    [answers, setGate, setQuestion, setGeneral, reset, sectionId, sectionRequest, requestSection, plotAreaSqm]
   )
 
   return <TestRunContext.Provider value={value}>{children}</TestRunContext.Provider>

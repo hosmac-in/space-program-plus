@@ -31,6 +31,7 @@ import { formatArea } from '../map/area.js'
 import { sqmToSqft } from '../../data/units.js'
 import { BED_VAR, generalNumber, OPTION_ANSWERS } from '../../data/questionnaire.js'
 import { createOptionFromRun } from './createOption.js'
+import { RULE } from '../layout.js'
 
 const RAIL_WIDTH = 240
 // Floor-to-floor height the run assumes, for the height beside ground cover.
@@ -225,7 +226,8 @@ function Rail({ deck, at, onJump, functions, run, seen, areas }) {
       style={{
         width: RAIL_WIDTH,
         flexShrink: 0,
-        borderRight: '1px solid #ececec',
+        // The rail is a region of its own, so its edge is a region line.
+        borderRight: RULE,
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
@@ -946,6 +948,12 @@ function MultiplierSlider({ question, given, onChange }) {
 // held tight to it. UN-PICKING FLASHES RED — the same pair the side tree's rows
 // use for up and down — so taking an answer away is seen, not just absent.
 const PICK_GREEN = '#138a7a'
+// The face of a picked chip: PICK_GREEN at low alpha, pale enough that the
+// black name on it still reads.
+const PICK_WASH = 'rgba(19, 138, 122, 0.02)'
+const PICK_TRANSITION = ['box-shadow', 'border-color', 'background-color']
+  .map((p) => `${p} 700ms cubic-bezier(0.2, 0.8, 0.2, 1)`)
+  .join(', ')
 export const CHIP_STYLE = `
   @keyframes chipUnpick {
     0% { border-color: #a86a6a; box-shadow: inset 0 0 10px 0 rgba(150, 95, 95, 0.4); }
@@ -954,6 +962,49 @@ export const CHIP_STYLE = `
   .chip-unpick { animation: chipUnpick 700ms ease-out; }
   @media (prefers-reduced-motion: reduce) { .chip-unpick { animation: none; } }
 `
+
+// A CHIP'S NAME SHRINKS TO FIT rather than breaking mid-word — "Orthopantomograp
+// / hy" read as two words. Words wrap only at spaces; from `max` it steps down
+// until no word is wider than the box and the lines fit its height, and re-fits
+// whenever the box resizes (the counter appearing on pick takes height).
+const FIT_MIN = 9
+function FitName({ children, max = 15, style }) {
+  const boxRef = useRef(null)
+  const textRef = useRef(null)
+  useLayoutEffect(() => {
+    const box = boxRef.current
+    const text = textRef.current
+    if (!box || !text) return
+    const fit = () => {
+      let size = max
+      text.style.fontSize = `${size}px`
+      while (
+        size > FIT_MIN &&
+        (text.scrollWidth > text.clientWidth || text.scrollHeight > box.clientHeight)
+      ) {
+        size -= 0.5
+        text.style.fontSize = `${size}px`
+      }
+    }
+    fit()
+    const observer = new ResizeObserver(fit)
+    observer.observe(box)
+    return () => observer.disconnect()
+  }, [children, max])
+  return (
+    <span
+      ref={boxRef}
+      style={{ minHeight: 0, minWidth: 0, display: 'flex', alignItems: 'center', overflow: 'hidden', ...style }}
+    >
+      <span
+        ref={textRef}
+        style={{ display: 'block', width: '100%', textAlign: 'center', fontWeight: 500, lineHeight: 1.25, overflowWrap: 'normal' }}
+      >
+        {children}
+      </span>
+    </span>
+  )
+}
 
 // A class and key that replay the red flash each time `picked` falls to false.
 // The key restarts it when the same chip is un-picked twice in a row.
@@ -1024,21 +1075,21 @@ function DmgCard({ d, chosen, on, onChange }) {
               fontSize: 15,
               fontFamily: 'inherit',
               cursor: 'pointer',
-              // CHOSEN IS A BLUE EDGE BLEEDING INWARD TO WHITE — an inset glow,
-              // not a fill, so the name stays black on white and no tick is
+              // CHOSEN IS A GREEN EDGE, AN INSET GLOW AND A PALE GREEN FACE —
+              // pale enough that the name stays black on it and no tick is
               // needed to say which are on. A shadow rather than a gradient
               // because it follows the rounded corners and it can tween.
               border: `1.5px solid ${chosen ? PICK_GREEN : '#ddd'}`,
-              background: '#fff',
+              backgroundColor: chosen ? PICK_WASH : '#fff',
               boxShadow: chosen ? 'inset 0 0 5px 0 rgba(19, 138, 122, 0.32)' : 'inset 0 0 0 0 rgba(19, 138, 122, 0)',
               color: '#222',
               // ONE WEIGHT FOR BOTH STATES. Bold on select reflowed the name,
               // which cannot tween and was the jolt; the glow alone says chosen.
               fontWeight: 500,
-              transition: 'box-shadow 700ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 700ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+              transition: PICK_TRANSITION,
             }}
           >
-            {d.name ?? 'Unnamed'}
+            <FitName style={{ flex: 1, alignSelf: 'stretch' }}>{d.name ?? 'Unnamed'}</FitName>
           </button>
   )
 }
@@ -1258,29 +1309,15 @@ function QuestionChip({ node, run, beds }) {
         borderRadius: 8,
         overflow: 'hidden',
         cursor: picked ? 'default' : 'pointer',
-        background: '#fff',
         color: '#222',
-        // The DMG card's chosen state, exactly — see DmgChoices.
+        // The DMG card's chosen state, exactly — see DmgCard.
+        backgroundColor: picked ? PICK_WASH : '#fff',
         border: `1.5px solid ${picked ? PICK_GREEN : '#ddd'}`,
         boxShadow: picked ? 'inset 0 0 5px 0 rgba(19, 138, 122, 0.32)' : 'inset 0 0 0 0 rgba(19, 138, 122, 0)',
-        transition: 'box-shadow 700ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 700ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+        transition: PICK_TRANSITION,
       }}
     >
-      <span
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 15,
-          fontWeight: 500,
-          lineHeight: 1.25,
-          overflowWrap: 'anywhere',
-        }}
-      >
-        {prompt}
-      </span>
+      <FitName style={{ flex: 1 }}>{prompt}</FitName>
 
       {picked && (
         <span
@@ -1423,7 +1460,7 @@ function CreatorBar({ creator, blocked, create }) {
 // onCancel }. Absent, this is the Test run tab and saves nothing.
 export default function TestRun({ buildingId, creator = null }) {
   const catalog = useCatalog()
-  const { sections, groups, departments, rooms, objects, functions } = catalog
+  const { sections, groups, departments, rooms, objects, equipment, functions } = catalog
   const editor = useQuestionnaireEditorContext()
   const run = useTestRun()
 
@@ -1437,7 +1474,7 @@ export default function TestRun({ buildingId, creator = null }) {
 
   // Scoped to the DMGs answered on the General card — see scopeToDmgs.
   const model = scopeToDmgs(
-    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects }),
+    buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects, equipment }),
     run.dmgIds
   )
   const deck = deckOf(model)
@@ -1526,6 +1563,17 @@ export default function TestRun({ buildingId, creator = null }) {
     run.setSectionId(shownSection)
   }, [shownSection, run])
 
+  // SIDE'S CARET GOES TO ITS SECTION, through `jump` so the same gates hold as
+  // on the rail. Keyed on the request alone: re-running on a deck change would
+  // replay an old click.
+  useEffect(() => {
+    const request = run.sectionRequest
+    if (!request) return
+    const i = deck.findIndex((s) => s.section.id === request.id)
+    if (i >= 0) jump(i)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.sectionRequest])
+
   // VISITED SECTIONS: hatched on the rail until reached, ticked after. Create is
   // held until every card has been seen, so no section is skipped unread.
   const [visited, setVisited] = useState(() => new Set())
@@ -1574,7 +1622,9 @@ export default function TestRun({ buildingId, creator = null }) {
                >>> through one deck drift apart, and the pair of them read as a
                >>> wizard you had to finish rather than a picture you move about
                >>> in. */
+            // Scrolls with no bar — the wheel is the obvious way down a card.
             <div
+              className="spp-noscrollbar"
               style={{
                 flex: 1,
                 minHeight: 0,

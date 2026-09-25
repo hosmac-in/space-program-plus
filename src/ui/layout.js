@@ -11,8 +11,10 @@
 // The dividers are deliberately heavier than a hairline: the regions are the
 // structure of the screen, and at 1px #e0e0e0 you couldn't see where main ended
 // and side began.
-const RULE_COLOUR = '#9a9a9a'
-export const RULE = `1.33px solid ${RULE_COLOUR}`
+const RULE_COLOUR = '#2e2e2e'
+// THE REGION LINES' THICKNESS, in px — header, footer, main | side, the HUD.
+export const RULE_WIDTH = 2
+export const RULE = `${RULE_WIDTH}px solid ${RULE_COLOUR}`
 
 // A lighter line for divisions *within* a region — one carousel row from the
 // next — so they read as subdivisions rather than as region boundaries.

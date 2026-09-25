@@ -129,7 +129,19 @@ export function connectionRuled(connection) {
 //
 // Read off the CATALOG NODE rather than off the sibling's model entry: the
 // departments of a group are mapped after this and cannot see each other.
-function memberVariables(deptPath, deptNode, roomDefs, objectDefs) {
+// EVERYTHING STANDING IN A ROOM — its objects, then its equipment — each with
+// the definition row it names. Equipment is a second list on the room node only
+// because a def id must say which table it points at (panelParts.jsx); to a rule
+// it is one more thing in the room. Keyed by `instance_id` like an object, which
+// is unique across the tree, so a connection's `objects` map holds both.
+function standingIn(roomNode, objectDefs, equipmentDefs) {
+  return [
+    ...(roomNode.objects ?? []).map((node) => ({ node, def: defOf(objectDefs, node.object_def_id), equipment: false })),
+    ...(roomNode.equipment ?? []).map((node) => ({ node, def: defOf(equipmentDefs, node.equipment_def_id), equipment: true })),
+  ]
+}
+
+function memberVariables(deptPath, deptNode, roomDefs, objectDefs, equipmentDefs) {
   const out = []
   const add = (kind, targetId, path, label) => out.push({ kind, targetId, label, name: path })
 
@@ -137,9 +149,9 @@ function memberVariables(deptPath, deptNode, roomDefs, objectDefs) {
     const label = resolveRoomLabel(roomNode, null, defOf(roomDefs, roomNode.room_def_id)?.name || 'Unnamed room').name
     const path = memberVariableName(parentPath, label)
     add('room', roomNode.instance_id, path, label)
-    ;(roomNode.objects ?? []).forEach((objectNode) => {
-      const name = nameOf(objectDefs, objectNode.object_def_id, 'Unnamed object')
-      add('object', objectNode.instance_id, memberVariableName(path, name), name)
+    standingIn(roomNode, objectDefs, equipmentDefs).forEach(({ node, def, equipment }) => {
+      const name = def?.name || (equipment ? 'Unnamed equipment' : 'Unnamed object')
+      add('object', node.instance_id, memberVariableName(path, name), name)
     })
   }
 
@@ -222,7 +234,7 @@ function roomUsage(questions) {
 // Every node carries `id` — the thing a selection names — plus the ids its
 // edits have to be written at. A question deep in the tree can then be edited
 // without anyone walking back up to work out which section it was in.
-export function buildModel({ buildingId, definition, sections, groups, departments, rooms, objects = [] }) {
+export function buildModel({ buildingId, definition, sections, groups, departments, rooms, objects = [], equipment = [] }) {
   // THE GENERAL NAMES ARE IN SCOPE EVERYWHERE, so they are worked out before the
   // walk and handed to every compile in it. They are the AUTHORED list, never
   // what currently resolves — compileFormula's rule — so an unanswered general
@@ -238,7 +250,7 @@ export function buildModel({ buildingId, definition, sections, groups, departmen
   return [
     generalSection(definition),
     ...resolveVariables(
-      walk({ buildingId, definition, sections, groups, departments, rooms, objects, general, clashes })
+      walk({ buildingId, definition, sections, groups, departments, rooms, objects, equipment, general, clashes })
     ),
   ]
 }
@@ -301,7 +313,7 @@ function generalSection(definition) {
   }
 }
 
-function walk({ buildingId, definition, sections, groups, departments, rooms, objects, general, clashes }) {
+function walk({ buildingId, definition, sections, groups, departments, rooms, objects, equipment, general, clashes }) {
   return sections
     .filter((s) => s.building_id === buildingId)
     .sort(compareSections)
@@ -365,19 +377,23 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
                 // WHAT STANDS IN IT, each a row that may carry a rule of its
                 // own. `count` is the catalog's — what one of that room holds —
                 // and is shown beside the rule rather than read by it.
-                objects: (roomNode.objects ?? []).map((objectNode) => ({
-                  instance_id: objectNode.instance_id,
-                  name: nameOf(objects, objectNode.object_def_id, 'Unnamed object'),
-                  count: catalogObjectCount(objectNode),
+                // Equipment included — see standingIn.
+                objects: standingIn(roomNode, objects, equipment).map(({ node, def, equipment: isEquipment }) => ({
+                  instance_id: node.instance_id,
+                  name: def?.name || (isEquipment ? 'Unnamed equipment' : 'Unnamed object'),
+                  equipment: isEquipment,
+                  count: catalogObjectCount(node),
                   // A FACT ABOUT THE DEFINITION, read live like every name here:
                   // marking a bed in sp_object reaches every placement of it at
                   // once, and the run's bed tally with it. Strictly true, since
                   // the column is nullable and absent until the SQL is run.
-                  isBed: defOf(objects, objectNode.object_def_id)?.is_bed === true,
+                  // sp_equipment has no such column, so equipment is never a bed.
+                  isBed: def?.is_bed === true,
                   // WHAT ONE OF IT TAKES UP — this placement's own area_sqft, or
-                  // sp_object's generic figure. It is what a room with NO area of
-                  // its own is measured by — see roomAreaSqft in useTestRun.jsx.
-                  areaSqft: catalogObjectAreaSqft(objectNode, defOf(objects, objectNode.object_def_id)),
+                  // the definition's generic figure. It is what a room with NO
+                  // area of its own is measured by — see roomAreaSqft in
+                  // useTestRun.jsx.
+                  areaSqft: catalogObjectAreaSqft(node, def),
                 })),
               }
             })
@@ -482,7 +498,7 @@ function walk({ buildingId, definition, sections, groups, departments, rooms, ob
               )
               taken.push(name)
               members.push(
-                ...memberVariables(name, sibling.node, rooms, objects).map((m) => ({
+                ...memberVariables(name, sibling.node, rooms, objects, equipment).map((m) => ({
                   ...m,
                   deptInstanceId: sibling.instance_id,
                   deptLabel: sibling.name,

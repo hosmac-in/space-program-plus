@@ -73,7 +73,7 @@ function seedEquipment(roomNode, catalog) {
   return (roomNode?.equipment ?? []).flatMap((node) => {
     const def = catalog.equipment.find((e) => e.id === node.equipment_def_id)
     if (!def) return []
-    return [{ instance_id: crypto.randomUUID(), equipment_def_id: def.id, count: catalogObjectCount(node) }]
+    return [{ node, wire: { instance_id: crypto.randomUUID(), equipment_def_id: def.id, count: catalogObjectCount(node) } }]
   })
 }
 
@@ -112,10 +112,12 @@ export function optionDataFromRun({ model, run, buildingId, catalog }) {
               const perSet = room.count > 0 ? room.count / (result.connection.grouped ? times || 1 : 1) : DEFAULT_ROOM_COUNT
               const total = perSet * (result.connection.grouped ? times : 1) || 1
               const ruled = new Map(room.objects.filter((o) => o.state === 'ok').map((o) => [o.instance_id, o.count]))
-              const objects = seedObjects(roomNode, catalog, circulationId).map(({ node, wire }) =>
+              // Equipment is ruled exactly as an object is — see standingIn in
+              // questionModel.js — so the same total, divided the same way.
+              const perRoom = ({ node, wire }) =>
                 ruled.has(node.instance_id) ? { ...wire, count: ruled.get(node.instance_id) / total } : wire
-              )
-              const equipment = seedEquipment(roomNode, catalog)
+              const objects = seedObjects(roomNode, catalog, circulationId).map(perRoom)
+              const equipment = seedEquipment(roomNode, catalog).map(perRoom)
 
               rooms.push({
                 instance_id: crypto.randomUUID(),

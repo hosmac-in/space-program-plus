@@ -78,9 +78,10 @@ export default function Hud({
   return (
     <div
       style={{
-        // Fills its eighth of side rather than sizing to its content, so the
-        // 7:1 split holds whatever the figures happen to say.
-        flex: 1,
+        // Fills its QUARTER of side rather than sizing to its content, so the
+        // split holds whatever the figures happen to say. Side's tree is flex 7
+        // (App.jsx); 7:7/3 is a quarter, the same share TestRunHud takes.
+        flex: 7 / 3,
         minHeight: 0,
         borderTop: RULE,
         background: '#fff',

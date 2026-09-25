@@ -274,7 +274,12 @@ export default function DepartmentBlock({
             // whole rooms array. '' rather than deleting the key, so the dirty
             // check compares like with like — see loadInstanceData.
             inheritedName={shown.inherited ?? room.name}
-            onNameCommit={(label) => onRoomChange(room.instanceId, (r) => ({ ...r, label }))}
+            // The field held the CAPITALISED name, so handing back exactly that is
+            // not an edit — or opening "icu bay" would store "Icu Bay" and light
+            // Save Data with nothing changed.
+            onNameCommit={(label) =>
+              (!label || label !== shown.name) && onRoomChange(room.instanceId, (r) => ({ ...r, label }))
+            }
             type={room.type}
             count={room.count}
             // What this many of it comes to. The area of ONE is typed on the

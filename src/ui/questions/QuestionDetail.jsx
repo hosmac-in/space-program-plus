@@ -616,7 +616,8 @@ function splitComment(text) {
 // >>> counted \n as whitespace since it was written, and a comment already ran to
 // >>> the end of ITS line — so a rule laid out over four lines with a note on
 // >>> each needed nothing added to the language. See data/formula.js.
-function FormulaLightbox({ label, value, allowedVars, scope, onSave, onClose }) {
+// `times` / `none` are Result's, so the full-size reading and the row's agree.
+function FormulaLightbox({ label, value, allowedVars, scope, times = 1, none = false, onSave, onClose }) {
   const [draft, setDraft] = useState(value ?? '')
   const area = useRef(null)
   const mirror = useRef(null)
@@ -786,9 +787,16 @@ function FormulaLightbox({ label, value, allowedVars, scope, onSave, onClose }) 
         <div style={{ minHeight: 18, marginTop: 8, fontSize: 12 }}>
           {broken ? (
             <span style={{ color: '#b3261e' }}>{compiled.message}</span>
-          ) : result ? (
+          ) : none && compiled.authored ? (
             <span style={{ color: '#666' }}>
-              At the sample above this comes to <strong style={{ color: '#222' }}>{result.value}</strong>
+              The sample is 0, which builds nothing — this comes to <strong style={{ color: '#222' }}>0</strong>
+            </span>
+          ) : result && times == null ? (
+            <span style={{ color: '#b3261e' }}>The group&apos;s own rule is broken, so nothing in it can be counted</span>
+          ) : result && result.state === 'ok' ? (
+            <span style={{ color: '#666' }}>
+              At the sample above this comes to <strong style={{ color: '#222' }}>{result.value * times}</strong>
+              {times !== 1 && ` (${result.value} in one set × ${times} sets)`}
             </span>
           ) : null}
         </div>
@@ -825,7 +833,7 @@ const LIGHTBOX_BUTTON = {
   cursor: 'pointer',
 }
 
-function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null, label = null, scope = null }) {
+function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null, label = null, scope = null, times = 1, none = false }) {
   const [draft, setDraft] = useState(value ?? '')
   useEffect(() => setDraft(value ?? ''), [value])
 
@@ -857,6 +865,8 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null, labe
       value={draft}
       allowedVars={allowedVars}
       scope={scope}
+      times={times}
+      none={none}
       onSave={(next) => {
         setDraft(next)
         if (next !== (value ?? '')) onCommit(next)
@@ -1070,19 +1080,33 @@ function FormulaField({ value, allowedVars, canEdit, onCommit, tint = null, labe
 //
 // `blank` is what an UNWRITTEN rule works out to, when that is a number rather
 // than nothing — a room group's count, which is one set. Null everywhere else.
-function Result({ compiled, scope, blank = null }) {
-  const { value, state, message } = compiled.evaluate(scope)
+//
+// `times` IS THE GROUP'S RULE AT THE SAME SAMPLE, for a room or object inside a
+// room group — the run builds the two MULTIPLIED (evaluateConnection in
+// useTestRun.jsx), so the preview must too, or `x` in both reads x here and x²
+// in the run. Null when the group's rule is broken: nothing under it can be read.
+//
+// `none` is the run's "0 IS THE NO": a question answered 0 builds nothing and its
+// rules are never read (evaluateRun), so a constant rule previews 0, not itself.
+function Result({ compiled, scope, blank = null, times = 1, none = false }) {
+  if (none) return <Muted>0</Muted>
+  const { value: own, state, message } = compiled.evaluate(scope)
 
   if (state === 'unauthored') return <Muted>{blank ?? '—'}</Muted>
-  if (state !== 'ok') {
+  if (state !== 'ok' || times == null) {
     return (
-      <span title={message} style={{ flexShrink: 0, fontSize: 11, color: '#b3261e', fontWeight: 600 }}>
+      <span
+        title={state !== 'ok' ? message : "The group's own rule is broken, so nothing in it can be counted"}
+        style={{ flexShrink: 0, fontSize: 11, color: '#b3261e', fontWeight: 600 }}
+      >
         !
       </span>
     )
   }
+  const value = own * times
   return (
     <span
+      title={times !== 1 ? `${own} in one set × ${times} sets` : undefined}
       style={{
         flexShrink: 0,
         fontSize: 12,
@@ -1181,7 +1205,7 @@ function RuleRow({ name, detail, title, depth = 0, weight = 400, size = 13, colo
 // The catalog's own count rides along as a title rather than a column: it says
 // what one of that room holds today, which is context for writing the rule and
 // not a figure the rule produces.
-function ObjectBranch({ object, depth, canEdit, allowedVars, scope, onFormula }) {
+function ObjectBranch({ object, depth, canEdit, allowedVars, scope, times = 1, none = false, onFormula }) {
   return (
     <Branch endpoint="dot" head={RULE_HEAD}>
       <RuleRow
@@ -1199,9 +1223,11 @@ function ObjectBranch({ object, depth, canEdit, allowedVars, scope, onFormula })
             onCommit={onFormula}
             label={object.name}
             scope={scope}
+            times={times}
+            none={none}
           />
         }
-        result={<Result compiled={object.compiled} scope={scope} />}
+        result={<Result compiled={object.compiled} scope={scope} times={times} none={none} />}
       />
     </Branch>
   )
@@ -1209,7 +1235,7 @@ function ObjectBranch({ object, depth, canEdit, allowedVars, scope, onFormula })
 
 // OBJECTS FLOW FROM ROOMS, so they hang off the room that holds them and not off
 // the connection: one flat list could not say which room a monitor stood in.
-function objectBranches(room, depth, { canEdit, allowedVars, scope, onObjectFormula }) {
+function objectBranches(room, depth, { canEdit, allowedVars, scope, none, onObjectFormula }, times = 1) {
   return room.objects.map((object) => (
     <ObjectBranch
       key={object.instance_id}
@@ -1218,6 +1244,8 @@ function objectBranches(room, depth, { canEdit, allowedVars, scope, onObjectForm
       canEdit={canEdit}
       allowedVars={allowedVars}
       scope={scope}
+      times={times}
+      none={none}
       onFormula={(formula) => onObjectFormula(object.instance_id, formula)}
     />
   ))
@@ -1237,6 +1265,8 @@ function ConnectionBlock({
   canEdit,
   allowedVars,
   scope,
+  // The sample is 0: the run reads none of these rules — see Result.
+  none = false,
   onFormula,
   onRoomFormula,
   onObjectFormula,
@@ -1247,9 +1277,19 @@ function ConnectionBlock({
   // A supporting department's rows are the catalog's and cannot be taken away —
   // clearing the rule is the whole of it — so there is no remove gesture there.
   const removable = canEdit && !!onRemove
-  const under = { canEdit, allowedVars, scope, onObjectFormula }
+  const under = { canEdit, allowedVars, scope, none, onObjectFormula }
   const own = group ? [] : (connection.rooms[0]?.objects ?? [])
   const children = group ? connection.rooms.length > 0 : own.length > 0
+  // HOW MANY SETS AT THE SAMPLE, which every room and object figure under a
+  // group is multiplied by — the run's connectionMultiplier, read the same way:
+  // unwritten is 1, broken is null.
+  const setCount = !group
+    ? 1
+    : (() => {
+        const { value, state } = compiled.evaluate(scope)
+        if (state === 'unauthored') return 1
+        return state === 'ok' ? value : null
+      })()
 
   return (
     <Branch endpoint={children ? 'caret' : 'dot'} expanded={children} padTop={4} head={4 + RULE_HEAD}>
@@ -1278,13 +1318,14 @@ function ConnectionBlock({
             onCommit={onFormula}
             label={connection.name}
             scope={scope}
+            none={none}
           />
         }
         // A GROUP WITH NO RULE READS 1, NOT —. The em dash is "nothing here",
         // which is true of an unwritten room rule and false of this one: an
         // unwritten multiplier is one set, and the rooms below it are built. It
         // is drawn muted, because nobody typed it.
-        result={<Result compiled={compiled} scope={scope} blank={group ? 1 : null} />}
+        result={<Result compiled={compiled} scope={scope} blank={group ? 1 : null} none={none} />}
       />
 
       {/* The rule's own complaint, on the row that owns it: not a child, so it
@@ -1316,14 +1357,17 @@ function ConnectionBlock({
                   onCommit={(formula) => onRoomFormula(room.instance_id, formula)}
                   label={`${connection.name} → ${room.label}`}
                   scope={scope}
+                  times={setCount}
+                  none={none}
                 />
               }
-              result={<Result compiled={room.compiled} scope={scope} />}
+              // Its own rule × the group's — what the run builds.
+              result={<Result compiled={room.compiled} scope={scope} times={setCount} none={none} />}
             />
             {room.compiled.authored && !room.compiled.ok && (
               <div style={{ fontSize: 11, color: '#b3261e', paddingBottom: 2 }}>{room.compiled.message}</div>
             )}
-            {objectBranches(room, 2, under)}
+            {objectBranches(room, 2, under, setCount)}
           </Branch>
         ))}
     </Branch>
@@ -1706,6 +1750,7 @@ function QuestionFace({ node, department, group, canEdit, editor, general }) {
             canEdit={canEdit}
             allowedVars={vars}
             scope={dummy ? generalPreview(general) : { ...generalPreview(general), x: tryX }}
+            none={!dummy && !(tryX > 0)}
             onFormula={(formula) => edit((q) => questionWithFormula(q, connection.instance_id, formula))}
             onRoomFormula={(roomId, formula) =>
               edit((q) => questionWithRoomFormula(q, connection.instance_id, roomId, formula))
@@ -1858,7 +1903,7 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
   const editor = useQuestionnaireEditorContext()
   // Both hooks before any early return: a hook called conditionally changes the
   // order between renders, which is the one thing React cannot survive.
-  const { sections, groups, departments, rooms, objects } = useCatalog()
+  const { sections, groups, departments, rooms, objects, equipment } = useCatalog()
 
   if (!editor.ready) {
     return (
@@ -1868,7 +1913,7 @@ export default function QuestionDetail({ buildingId, selectedId, canEdit }) {
     )
   }
 
-  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects })
+  const model = buildModel({ buildingId, definition: editor.definition, sections, groups, departments, rooms, objects, equipment })
   const found = locate(model, selectedId)
 
   if (!found) return <PanelNote pad>Pick a section, a group, a department or a question on the left.</PanelNote>
